@@ -1,0 +1,11 @@
+# Optional Arduino libraries for later hardware phases
+#
+# The default sketches do not require these libraries. Keep mock mode enabled
+# until your exact CrowPanel board revision, FQBN, and Elecrow examples are
+# verified.
+
+ArduinoJson
+lvgl@9.2
+MFRC522
+Adafruit PN532 or a compatible PN532 library
+LoRa / SX1262 library - TODO: select after confirming the exact Elecrow module example

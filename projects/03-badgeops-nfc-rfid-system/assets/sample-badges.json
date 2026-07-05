@@ -1,0 +1,29 @@
+[
+  {
+    "badge_id": "badge-demo-001",
+    "uid": "04:A1:22:9C",
+    "name": "Demo Operator",
+    "role": "technician",
+    "status": "active",
+    "allowed_zones": ["lab", "front-desk"],
+    "created_at": "2026-07-01T00:00:00Z"
+  },
+  {
+    "badge_id": "badge-demo-002",
+    "uid": "7A:31:90:0D",
+    "name": "Guest Builder",
+    "role": "guest",
+    "status": "active",
+    "allowed_zones": ["front-desk"],
+    "created_at": "2026-07-01T00:00:00Z"
+  },
+  {
+    "badge_id": "badge-demo-003",
+    "uid": "C2:44:10:AA",
+    "name": "Former Contractor",
+    "role": "contractor",
+    "status": "suspended",
+    "allowed_zones": [],
+    "created_at": "2026-07-01T00:00:00Z"
+  }
+]

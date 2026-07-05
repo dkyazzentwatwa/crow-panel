@@ -1,0 +1,22 @@
+{
+  "events": [
+    {
+      "id": "evt-demo-001",
+      "source": "fieldops",
+      "message": "Mock field node checked in",
+      "created_at": "2026-07-01T00:00:00Z"
+    }
+  ],
+  "badges": [
+    {
+      "badge_id": "demo-001",
+      "uid": "04:A1:22:9C",
+      "name": "Demo Operator",
+      "role": "technician",
+      "status": "active",
+      "allowed_zones": ["lab", "front-desk"],
+      "created_at": "2026-07-01T00:00:00Z"
+    }
+  ],
+  "inspections": []
+}

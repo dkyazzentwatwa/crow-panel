@@ -1,0 +1,26 @@
+.DS_Store
+*.swp
+*.tmp
+
+# Arduino CLI build output
+_arduino-build/
+build/
+*.elf
+*.bin
+*.hex
+*.map
+
+# Local Arduino config and secrets
+arduino-cli.yaml
+secrets.h
+Secrets.h
+config/WiFiSecrets.h
+
+# Node mock API
+node_modules/
+package-lock.json
+npm-debug.log*
+
+# Editor folders
+.idea/
+.vscode/

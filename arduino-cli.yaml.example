@@ -1,0 +1,18 @@
+# Copy this file to arduino-cli.yaml if you want repo-local Arduino CLI state.
+# The default scripts also work with your global Arduino CLI configuration.
+
+board_manager:
+  additional_urls: []
+
+directories:
+  data: .arduino/data
+  downloads: .arduino/staging
+  user: .arduino/user
+
+library:
+  enable_unsafe_install: false
+
+logging:
+  file: ""
+  format: text
+  level: info
