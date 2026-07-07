@@ -92,6 +92,11 @@ void WorldFeedClient::fillMock() {
 
 bool WorldFeedClient::poll(WorldFeeds &out) {
 #if USE_WIFI
+  // One feed per call, rotated, so at most one HTTPS request per loop pass.
+  // Known trade-off: a primed feed whose gate fires but whose fetch then fails
+  // has already consumed its interval (Throttle::ready() advances on true), so
+  // it waits the full interval to retry. Acceptable for v1 - last-good data
+  // stays on screen and dims via the staleness rule.
   uint8_t which = turn_ % 3;
   turn_++;
   bool changed = false;
@@ -258,8 +263,12 @@ bool WorldFeedClient::fetchAurora() {
     return false;
   }
 
-  // Array of ["time_tag","Kp","a_running","station_count"] rows; row 0 is a
-  // header, the last row is the most recent reading.
+  // products/noaa-planetary-k-index.json is an array of OBJECTS (no header
+  // row) with a numeric "Kp" field (capital K, endpoint-specific - sibling
+  // feeds use lowercase); the last element is the most recent 3-hour reading.
+  // Parsed without a Filter on purpose: we need positional tail access (last
+  // two elements), which a key-based filter can't express, and the series is
+  // small enough for 32 MB PSRAM.
   JsonDocument doc;
   DeserializationError err = deserializeJson(doc, http.getStream());
   http.end();
@@ -272,10 +281,10 @@ bool WorldFeedClient::fetchAurora() {
     Logger::warn("world", "aurora feed short");
     return false;
   }
-  JsonArray last = rows[rows.size() - 1];
-  JsonArray prev = rows[rows.size() - 2];
-  float kp = String((const char *)(last[1] | "0")).toFloat();
-  float kpPrev = String((const char *)(prev[1] | "0")).toFloat();
+  JsonObject last = rows[rows.size() - 1];
+  JsonObject prev = rows[rows.size() - 2];
+  float kp = last["Kp"] | 0.0f;
+  float kpPrev = prev["Kp"] | 0.0f;
 
   feeds_.aurora.kp = kp;
   feeds_.aurora.level = gLevel(kp);
