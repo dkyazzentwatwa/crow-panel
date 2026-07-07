@@ -545,11 +545,27 @@ void ControlHubDashboard::drawWorldStrip() {
   drawWorldCard(kRX + (cw + gap), cw, "QUAKES", qBig, world_.quake.place,
                 world_.quakeValid, world_.quakeMs, kAmber);
 
-  String aBig = world_.auroraValid ? ("Kp " + String(world_.aurora.kp, 0)) : "--";
+  String aBig = world_.auroraValid ? ("Kp " + String(world_.aurora.kp, 1)) : "--";
   uint16_t aColor = world_.aurora.verdict == kAuroraLikely ? kGreen
                     : world_.aurora.verdict == kAuroraWatch ? kAmber : kTextMut;
-  drawWorldCard(kRX + 2 * (cw + gap), cw, "AURORA", aBig, world_.aurora.level,
+  int16_t auroraX = kRX + 2 * (cw + gap);
+  drawWorldCard(auroraX, cw, "AURORA", aBig, world_.aurora.level,
                 world_.auroraValid, world_.auroraMs, aColor);
+
+  // Trend arrow at the aurora card's top-right: Kp rising (green up),
+  // falling (amber down), or steady (muted dash).
+  if (world_.auroraValid) {
+    bool aStale = (millis() - world_.auroraMs) > kWorldStaleMs;
+    int16_t ax = auroraX + cw - 18;
+    int16_t ay = kWorldY + 9;
+    if (world_.aurora.trend > 0) {
+      g->fillTriangle(ax, ay, ax - 5, ay + 9, ax + 5, ay + 9, aStale ? kLine : kGreen);
+    } else if (world_.aurora.trend < 0) {
+      g->fillTriangle(ax, ay + 9, ax - 5, ay, ax + 5, ay, aStale ? kLine : kAmber);
+    } else {
+      g->fillRect(ax - 5, ay + 3, 10, 3, aStale ? kLine : kTextMut);
+    }
+  }
 }
 
 void ControlHubDashboard::drawFooter() {

@@ -74,7 +74,7 @@ void ControlHubUi::renderWorld(const WorldFeeds &feeds) {
   }
   if (feeds.auroraValid) {
     Serial.print(F(" | Kp="));
-    Serial.print(feeds.aurora.kp, 0);
+    Serial.print(feeds.aurora.kp, 1);
     Serial.print(F(" "));
     Serial.print(feeds.aurora.level);
   }
