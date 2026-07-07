@@ -3,8 +3,8 @@
 
 #include "../config/ProjectConfig.h"
 #include <Arduino.h>
+#include <WorldFeed.h>
 #include "HubTypes.h"
-#include "WorldFeed.h"
 
 // Operations dashboard for the CrowPanel display, adapted from FieldOps: a
 // header status bar, a live roster down the left mixing SENSOR nodes and

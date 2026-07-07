@@ -3,4 +3,16 @@
 
 #include <AppConfig.h>
 
+#ifndef CARDRF_BRIDGE_UART_RX
+#define CARDRF_BRIDGE_UART_RX -1
+#endif
+
+#ifndef CARDRF_BRIDGE_UART_TX
+#define CARDRF_BRIDGE_UART_TX -1
+#endif
+
+#ifndef CARDRF_BRIDGE_UART_BAUD
+#define CARDRF_BRIDGE_UART_BAUD 115200
+#endif
+
 #endif

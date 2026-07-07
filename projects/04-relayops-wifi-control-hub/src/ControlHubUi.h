@@ -3,9 +3,9 @@
 
 #include "../config/ProjectConfig.h"
 #include <Arduino.h>
+#include <WorldFeed.h>
 #include "HubTypes.h"
 #include "ControlHubDashboard.h"
-#include "WorldFeed.h"
 
 // Thin wrapper over ControlHubDashboard, mirroring FieldOpsUi: it logs each
 // update to Serial (so the demo reads on camera with no display) and forwards

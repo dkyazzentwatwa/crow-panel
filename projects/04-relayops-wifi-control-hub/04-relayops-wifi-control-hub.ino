@@ -5,7 +5,6 @@
 #include "src/SensorServer.h"
 #include "src/MockSensorSource.h"
 #include "src/ControlHubUi.h"
-#include "src/WorldFeedClient.h"
 
 // RelayOps is a Wi-Fi hub, not a radio node: it RUNS a web server so remote
 // ESP32s can POST sensor data in (SensorServer), and it SENDS HTTP GPIO
@@ -235,7 +234,7 @@ void setup() {
   router.on("devices", "list controllable devices and their targets", cmdDevices);
   router.on("set", "set <deviceId> <on|off|toggle> - command a device's GPIO", cmdSet);
   router.on("feed", "inject a sensor frame, e.g. feed SENSOR,ATTIC,29.5,40,88,0,-58", cmdFeed);
-  router.on("world", "print/refresh weather, quakes, aurora", cmdWorld);
+  router.on("world", "print/refresh weather, quakes, aurora, air", cmdWorld);
 }
 
 void loop() {

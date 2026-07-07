@@ -32,6 +32,13 @@ class CrowNetworkClient {
   bool postEvent(const String &eventJson);
   String postSummaryRequest(const String &prompt);
 
+  // HTTPS GET via WiFiClientSecure + setInsecure(). Fills `out` with the
+  // response body and returns the HTTP status code (or a negative HTTPClient
+  // error); returns -1 in mock builds and when disconnected. Sends the given
+  // User-Agent header when non-null. Added for the ADS-B radar (project 14);
+  // any project needing a plain JSON GET can reuse it.
+  int httpGet(const String &url, String &out, const char *userAgent = nullptr);
+
  private:
   String endpoint_ = "http://localhost:8787";
   String ssid_ = "";

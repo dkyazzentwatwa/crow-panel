@@ -36,6 +36,14 @@ static const DisplayTiming DISPLAY_TIMING = {
   1000
 };
 
+// P4<->C6 SDIO pins (see HostedSdioPins in the header). V1.1/V1.2 verified
+// against Elecrow's V1.2 schematic (D0..D3 reversed vs the core default,
+// C6 reset on IO32). V1.0 is specified 1-bit (CMD 19 / CLK 18 / D0 14 / D1 15,
+// reset 32) by Elecrow's upgrade guide; the D2/D3 values below are best-effort
+// for the core's 4-bit build - NOT HARDWARE-VERIFIED on a V1.0 board.
+static const HostedSdioPins HOSTED_SDIO_V1_0 = { 18, 19, 14, 15, 16, 17, 32 };
+static const HostedSdioPins HOSTED_SDIO_V1_1 = { 18, 19, 17, 16, 15, 14, 32 };
+
 static const HardwareProfile PROFILE_V1_0 = {
   CROWPANEL_P4_7IN_V1_0,
   "CROWPANEL_P4_7IN_V1_0",
@@ -55,6 +63,7 @@ static const HardwareProfile PROFILE_V1_0 = {
   AUDIO_OUT,
   DISPLAY_PINS,
   DISPLAY_TIMING,
+  HOSTED_SDIO_V1_0,
   "V1.0 wireless mapping confirmed against Elecrow's official V1.0 Arduino examples (board_config.h). Verify your board revision before driver work."
 };
 
@@ -77,6 +86,7 @@ static const HardwareProfile PROFILE_V1_1 = {
   AUDIO_OUT,
   DISPLAY_PINS,
   DISPLAY_TIMING,
+  HOSTED_SDIO_V1_1,
   "V1.1 keeps the V1.0-style wireless pins (matches Elecrow's V1.1 example tree). Verify against board markings."
 };
 
@@ -99,6 +109,7 @@ static const HardwareProfile PROFILE_V1_2 = {
   AUDIO_OUT,
   DISPLAY_PINS,
   DISPLAY_TIMING,
+  HOSTED_SDIO_V1_1,  // C6 SDIO wiring is V1.1-identical per the V1.2 schematic
   "UNVERIFIED: Official README says V1.2 reallocates wireless socket IO53/IO54 to IO27/IO28 (no V1.2 examples exist upstream yet). If a V1.2 radio fails, try the V1_1 profile before debugging anything else."
 };
 

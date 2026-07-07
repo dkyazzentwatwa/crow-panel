@@ -35,7 +35,7 @@ The first four builds are hardware-path teaching projects:
 The newer ports are mock-first CrowPanel product surfaces inspired by sibling GitHub repos. They compile as standalone sketches and mirror their Serial-driven state onto a shared `OpsDashboard` touch UI when `USE_DISPLAY=1`:
 
 5. `projects/05-cypherdrive-wireless-ops` — safe Wi-Fi/BLE visibility console inspired by `cypher-drive`; no HID or captive-portal capture in v1.
-6. `projects/06-wiretap-benchops-console` — bench protocol console inspired by `WireTap-32`; v1 never drives real GPIO.
+6. `projects/06-wiretap-benchops-console` — bench protocol console inspired by `WireTap-32`; default probe mode is high-Z/read-oriented, and SPI ID clocking requires an explicit lab opt-in.
 7. `projects/07-nfc-field-lab-badgeops-pro` — combined PN532/Cypherbox Mini NFC lab; UID-only and APDU/payment boundaries stay visible.
 8. `projects/08-cypher-gamer-arcade` — large touch arcade launcher inspired by `cardputer-games`; Pong, Snake, and 2048 are the v1 playable set.
 9. `projects/09-cypher-tune-mpc` — touch MPC/groovebox inspired by `cardputer-mpc`; silent/mock audio until `USE_AUDIO` becomes a real hardware path.
@@ -102,7 +102,7 @@ Every sketch runs an interactive command router on Serial (115200 baud, line end
 | 04 RelayOps | `feed <csv>` | Inject a sensor reading — `feed SENSOR,ATTIC,29.5,40,88,0,-58` |
 | 04 RelayOps | `devices` | List controllable devices and their HTTP targets |
 | 05 CypherDrive | `scan wifi`, `scan ble`, `qr set/show`, `logs` | Safe wireless visibility and QR handoff mock console |
-| 06 WireTap | `mode`, `pins`, `i2c`, `spi`, `uart`, `gpio` | Bench protocol mock console; no real GPIO writes |
+| 06 WireTap | `mode`, `pins`, `i2c`, `spi`, `uart`, `gpio` | Bench protocol console; default probes avoid output drive, SPI ID clocking is explicit opt-in |
 | 07 NFC Lab | `scan`, `tap`, `ndef`, `apdu`, `files`, `badges` | Safe NFC lab and BadgeOps Pro mock flows |
 | 08 Arcade | `catalog`, `play`, `score` | Launch and score the v1 touch arcade demos |
 | 09 MPC | `pad`, `step`, `bpm`, `play`, `stop`, `record`, `pattern` | Touch groovebox mock transport and pattern state |
@@ -120,13 +120,22 @@ Each flag gates a compile-verified scaffold. Flip ONE at a time following `docs/
 | Flag | Gates | Status |
 |---|---|---|
 | `USE_DISPLAY` | MIPI-DSI panel + GT911 touch; status screen drawn with the Adafruit-GFX-style API (Arduino_GFX — no LVGL by design) | compile-verified |
-| `USE_WIFI` | STA connect via hosted ESP32-C6 + HTTP POSTs to the mock API | compile-verified |
+| `USE_WIFI` | STA connect via hosted ESP32-C6 + HTTP/HTTPS clients/servers | C6 link field-proven by project 14; per-project network flows still need smoke tests |
 | `USE_LORA_DRIVER` | SX1262 via RadioLib, Elecrow Lesson13 parameters (915 MHz default; EU: override to 868) | compile-verified |
 | `USE_ESPNOW` | FieldOps reads sensor/presence frames over UART from an ESP-NOW↔UART bridge (the P4 can't be an ESP-NOW peer; a plain ESP32 runs the radio). See `espnow/README.md` | compile-verified |
 | `USE_PN532_DRIVER` | PN532 over I2C (shares the touch bus; refuses to start until pins are set in `config/Pins.h`) | compile-verified |
 | `USE_MFRC522_DRIVER` | MFRC522 over SPI (wireless-socket pins — remove socket modules first) | compile-verified |
 | `USE_CAMERA_DRIVER` | Honest stub: esp32-camera does not exist for the P4 in Arduino core 3.3.x; the camera path is ESP-IDF MIPI-CSI only | stub by necessity |
-| `USE_AUDIO` | Reserved, include-only | out of scope |
+| `USE_AUDIO` | Cypher Tune MPC I2S/audio path, with silent mock fallback | hardware-gated |
+| `USE_WIFI_SCAN` | Passive Wi-Fi scan rows for CypherDrive and SurveyOps | C6 pin/firmware path applied; scan rows still need field proof |
+| `USE_BLE_UART_BRIDGE` | CypherDrive BLE sidecar feed over UART | hardware-gated |
+| `USE_QR_PERSISTENCE` | CypherDrive persisted QR URL state | hardware-gated |
+| `USE_BENCH_PROBES` | WireTap high-Z GPIO reads, I2C address scans, UART RX, and opt-in SPI ID clocking | hardware-gated |
+| `USE_SD_HIGHSCORES` | Arcade SD high-score persistence | hardware-gated |
+| `USE_RF_UART_BRIDGE` | CardRF receive-only host/HackRF row bridge | hardware-gated |
+| `USE_CREATOROPS_API` | CreatorOps read-only local/static/API cache source | hardware-gated |
+| `USE_GPS_DRIVER` | SurveyOps GPS parser | hardware-gated |
+| `USE_SD_WIGLE_LOG` | SurveyOps WiGLE-style CSV logging and rotation | hardware-gated |
 
 Per-machine settings live in gitignored files copied from templates: `config/Pins.example.h` → `Pins.h` (radio params, reader pins) and `config/WiFiSecrets.example.h` → `WiFiSecrets.h` (credentials).
 
@@ -149,6 +158,11 @@ Two storage rules keep this readable on camera and safe on a long-running panel:
 - Update the "NOT HARDWARE-VERIFIED" source comments as stages go green — that's the payoff arc of the series.
 
 See `docs/content-plan.md` for the filming outline.
+
+For the newer port folders, use `docs/full-port-proof-matrix.md` as the
+source of truth for which feature flags exist, what hardware path they imply,
+and what proof is still missing before any project can be called uploaded or
+field-proven.
 
 ## Security Note
 

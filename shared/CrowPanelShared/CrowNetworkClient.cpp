@@ -6,10 +6,12 @@
 // see docs/hardware-bringup-checklist.md Stage 5.
 
 #include "CrowNetworkClient.h"
+#include "HostedWiFi.h"
 #include "Logger.h"
 
 #if USE_WIFI
 #include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 #endif
 
 void CrowNetworkClient::begin(const char *endpoint, const char *ssid, const char *password) {
@@ -21,6 +23,7 @@ void CrowNetworkClient::begin(const char *endpoint, const char *ssid, const char
     Logger::warn("network", "USE_WIFI=1 but no credentials; copy config/WiFiSecrets.example.h to WiFiSecrets.h. Running log-only.");
     return;
   }
+  configureCrowPanelHostedWiFiPins("network");
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid_.c_str(), password_.c_str());
   Logger::info("network", "wifi connecting to \"" + ssid_ + "\", endpoint=" + endpoint_);
@@ -100,4 +103,38 @@ String CrowNetworkClient::postSummaryRequest(const String &prompt) {
 #endif
   Logger::info("network", "POST /summary prompt=" + prompt);
   return "Mock summary: conditions are stable, one item needs review.";
+}
+
+int CrowNetworkClient::httpGet(const String &url, String &out, const char *userAgent) {
+  out = "";
+#if USE_WIFI
+  if (connected()) {
+    // Public ADS-B feeds are HTTPS; certificate pinning is out of scope for a
+    // read-only public API, so we accept any cert (setInsecure).
+    WiFiClientSecure client;
+    client.setInsecure();
+    HTTPClient http;
+    http.setConnectTimeout(4000);
+    http.setTimeout(12000);
+    if (!http.begin(client, url)) {
+      Logger::error("network", "GET begin failed");
+      return -1;
+    }
+    if (userAgent != nullptr) http.addHeader("User-Agent", userAgent);
+    int code = http.GET();
+    if (code > 0) out = http.getString();
+    http.end();
+    if (code > 0) {
+      Logger::info("network", "GET -> " + String(code) + " (" + String(out.length()) + "B)");
+    } else {
+      Logger::error("network", "GET failed: " + HTTPClient::errorToString(code));
+    }
+    return code;
+  }
+  return -1;
+#else
+  (void)url;
+  (void)userAgent;
+  return -1;
+#endif
 }

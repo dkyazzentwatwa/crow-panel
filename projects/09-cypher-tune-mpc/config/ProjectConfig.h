@@ -3,4 +3,16 @@
 
 #include <AppConfig.h>
 
+#ifndef CYPHER_TUNE_AUDIO_SAMPLE_RATE
+#define CYPHER_TUNE_AUDIO_SAMPLE_RATE 22050
+#endif
+
+#ifndef CYPHER_TUNE_AUDIO_CLICK_FRAMES
+#define CYPHER_TUNE_AUDIO_CLICK_FRAMES 96
+#endif
+
+#ifndef CYPHER_TUNE_AUDIO_VOLUME
+#define CYPHER_TUNE_AUDIO_VOLUME 96
+#endif
+
 #endif

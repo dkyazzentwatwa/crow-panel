@@ -3,4 +3,28 @@
 
 #include <AppConfig.h>
 
+#ifndef SURVEYOPS_GPS_SERIAL_BAUD
+#define SURVEYOPS_GPS_SERIAL_BAUD 9600
+#endif
+
+#ifndef SURVEYOPS_GPS_RX_PIN
+#define SURVEYOPS_GPS_RX_PIN -1
+#endif
+
+#ifndef SURVEYOPS_GPS_TX_PIN
+#define SURVEYOPS_GPS_TX_PIN -1
+#endif
+
+#ifndef SURVEYOPS_SD_CS_PIN
+#define SURVEYOPS_SD_CS_PIN -1
+#endif
+
+#ifndef SURVEYOPS_WIGLE_FILE_PREFIX
+#define SURVEYOPS_WIGLE_FILE_PREFIX "/wigle"
+#endif
+
+#ifndef SURVEYOPS_WIGLE_ROTATE_ROWS
+#define SURVEYOPS_WIGLE_ROTATE_ROWS 200
+#endif
+
 #endif

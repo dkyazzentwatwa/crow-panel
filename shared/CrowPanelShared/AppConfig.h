@@ -45,6 +45,42 @@
 #define USE_AUDIO 0
 #endif
 
+#ifndef USE_WIFI_SCAN
+#define USE_WIFI_SCAN 0
+#endif
+
+#ifndef USE_BLE_UART_BRIDGE
+#define USE_BLE_UART_BRIDGE 0
+#endif
+
+#ifndef USE_QR_PERSISTENCE
+#define USE_QR_PERSISTENCE 0
+#endif
+
+#ifndef USE_BENCH_PROBES
+#define USE_BENCH_PROBES 0
+#endif
+
+#ifndef USE_SD_HIGHSCORES
+#define USE_SD_HIGHSCORES 0
+#endif
+
+#ifndef USE_RF_UART_BRIDGE
+#define USE_RF_UART_BRIDGE 0
+#endif
+
+#ifndef USE_CREATOROPS_API
+#define USE_CREATOROPS_API 0
+#endif
+
+#ifndef USE_GPS_DRIVER
+#define USE_GPS_DRIVER 0
+#endif
+
+#ifndef USE_SD_WIGLE_LOG
+#define USE_SD_WIGLE_LOG 0
+#endif
+
 #ifndef CROWPANEL_HARDWARE_PROFILE
 #define CROWPANEL_HARDWARE_PROFILE CROWPANEL_P4_7IN_V1_2
 #endif

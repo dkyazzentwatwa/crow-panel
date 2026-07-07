@@ -78,6 +78,12 @@ void ControlHubUi::renderWorld(const WorldFeeds &feeds) {
     Serial.print(F(" "));
     Serial.print(feeds.aurora.level);
   }
+  if (feeds.airValid) {
+    Serial.print(F(" | AQI="));
+    Serial.print(feeds.air.usAqi, 0);
+    Serial.print(F(" "));
+    Serial.print(feeds.air.category);
+  }
   Serial.println();
   dashboard_.onWorldFeeds(feeds);
 }

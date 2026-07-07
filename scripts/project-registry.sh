@@ -17,6 +17,7 @@ projects/10-litego-touch-coach
 projects/11-cardrf-spectrum-console
 projects/12-creatorops-board
 projects/13-surveyops-wardriver-panel
+projects/14-adsb-flight-tracker-radar
 PROJECTS
 }
 
