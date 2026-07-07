@@ -1,6 +1,9 @@
 # Copy this file to arduino-cli.yaml if you want repo-local Arduino CLI state.
 # The default scripts also work with your global Arduino CLI configuration.
 
+# No additional board manager URLs are required: the ESP32-P4 target
+# (esp32:esp32:esp32p4) ships in the official Espressif core index as of
+# esp32 core 3.3.x.
 board_manager:
   additional_urls: []
 

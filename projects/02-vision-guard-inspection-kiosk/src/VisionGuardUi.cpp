@@ -1,25 +1,26 @@
 #include "VisionGuardUi.h"
-#include <CrowPanelShared.h>
-
-#if USE_LVGL
-#include <lvgl.h>
-#endif
 
 void VisionGuardUi::begin() {
   const UiTheme &theme = defaultUiTheme();
   Logger::info("ui", String("theme=") + theme.name + " screens=Live Camera,Scan QR,Checklist,Result,Event History,Settings");
-#if USE_LVGL
-  Logger::warn("ui", "LVGL include enabled; real kiosk layout is still TODO.");
+#if USE_DISPLAY
+  // Single status screen mirroring the Serial output - the full kiosk
+  // layout comes after the panel is hardware-verified.
+  CrowDisplay::begin(activeHardwareProfile(), "Vision Guard Inspection Kiosk");
+#endif
+}
+
+void VisionGuardUi::tick() {
+#if USE_DISPLAY
+  CrowDisplay::tick();
 #endif
 }
 
 void VisionGuardUi::renderCameraStatus(const CameraStatus &status) {
-  static unsigned long lastPrintMs = 0;
-  if (millis() - lastPrintMs < 2000) {
+  if (!printThrottle_.ready()) {
     return;
   }
 
-  lastPrintMs = millis();
   Serial.print(F("[screen:camera] online="));
   Serial.print(status.online ? F("yes") : F("no"));
   Serial.print(F(" size="));
@@ -30,11 +31,18 @@ void VisionGuardUi::renderCameraStatus(const CameraStatus &status) {
   Serial.print(status.mode);
   Serial.print(F(" frame="));
   Serial.println(status.frameId);
+#if USE_DISPLAY
+  CrowDisplay::setLine(0, String("camera ") + (status.online ? "online" : "offline") + "  mode " +
+                              status.mode + "  frame " + String(status.frameId));
+#endif
 }
 
 void VisionGuardUi::renderQr(const String &qr) {
   Serial.print(F("[screen:scan-qr] "));
   Serial.println(qr);
+#if USE_DISPLAY
+  CrowDisplay::setLine(1, "QR: " + qr);
+#endif
 }
 
 void VisionGuardUi::renderChecklist(const InspectionResult &result) {
@@ -44,6 +52,10 @@ void VisionGuardUi::renderChecklist(const InspectionResult &result) {
   Serial.print(result.checksTotal);
   Serial.print(F(" "));
   Serial.println(result.reason);
+#if USE_DISPLAY
+  CrowDisplay::setLine(2, "checks " + String(result.checksPassed) + "/" + String(result.checksTotal) +
+                              "  " + result.reason);
+#endif
 }
 
 void VisionGuardUi::renderResult(const InspectionResult &result, const String &aiNote) {
@@ -54,4 +66,8 @@ void VisionGuardUi::renderResult(const InspectionResult &result, const String &a
   Serial.print(F(" ai=\""));
   Serial.print(aiNote);
   Serial.println(F("\""));
+#if USE_DISPLAY
+  CrowDisplay::setLine(3, result.qr + " -> " + result.status);
+  CrowDisplay::setLine(4, aiNote);
+#endif
 }

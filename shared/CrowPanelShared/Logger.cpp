@@ -21,6 +21,13 @@ void Logger::warn(const char *scope, const String &message) {
   Serial.println(message);
 }
 
+void Logger::error(const char *scope, const String &message) {
+  Serial.print(F("[error] "));
+  Serial.print(scope);
+  Serial.print(F(" "));
+  Serial.println(message);
+}
+
 void Logger::diag(const char *action, const char *status, const String &detail) {
   Serial.print(F("[diag] action="));
   Serial.print(action);

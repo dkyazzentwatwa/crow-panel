@@ -6,8 +6,15 @@
 #include "Logger.h"
 #include "EventBus.h"
 #include "StorageManager.h"
-#include "NetworkClient.h"
+#include "CrowNetworkClient.h"
 #include "MockData.h"
 #include "UiTheme.h"
+#include "Throttle.h"
+#include "SerialCommandRouter.h"
+#include "StatusReport.h"
+#include "EventLog.h"
+#include "DisplayBringup.h"
+#include "DashboardWidgets.h"
+#include "OpsDashboard.h"
 
 #endif

@@ -1,8 +1,11 @@
 # crowpanel-aiot-arduino-suite
 
-Arduino CLI tutorial scaffold for three Elecrow CrowPanel Advanced 7-inch ESP32-P4 HMI AI Display projects.
+Arduino CLI tutorial scaffold for thirteen Elecrow CrowPanel Advanced 7-inch ESP32-P4 HMI AI Display projects.
 
-This repo is intentionally mock-first. Every sketch boots into Serial-driven demo behavior so you can teach, film, and iterate before enabling real LVGL, LoRa, camera, NFC/RFID, Wi-Fi, or audio drivers.
+This repo is mock-first. Every sketch boots into a Serial-driven demo you can teach, film, and iterate on — and every real driver path (Wi-Fi, LoRa, NFC/RFID, display/touch) now exists behind a feature flag as a **compile-verified scaffold**. Display rendering uses the Adafruit-GFX-style API (no LVGL by design). Two words carry this repo's honesty contract:
+
+- **compile-verified** — builds green on the real ESP32-P4 target with esp32 core 3.3.8. Proves nothing about the physical board.
+- **hardware-verified** — observed working on a real CrowPanel. Only live testing moves code into this category. See `docs/hardware-bringup-checklist.md`.
 
 ## Hardware Target
 
@@ -11,115 +14,142 @@ Official grounding sources:
 - Elecrow product page: https://www.elecrow.com/crowpanel-advanced-7inch-esp32-p4-hmi-ai-display-1024x600-ips-touch-screen-with-wifi-6-compatible-with-arduino-lvgl-micropython.html
 - Elecrow GitHub examples: https://github.com/Elecrow-RD/CrowPanel-Advanced-7inch-ESP32-P4-HMI-AI-Display-1024x600-IPS-Touch-Screen
 
-Known target details to keep visible while building:
+Key details:
 
 - Product: CrowPanel Advanced 7-inch ESP32-P4 HMI AI Display
-- Main chip: ESP32-P4NRW32
-- CPU: ESP32-P4 RISC-V high-performance cores up to 400 MHz plus low-power core up to 40 MHz
-- Memory: 16 MB Flash and 32 MB PSRAM
-- Display: 7.0-inch IPS, 1024x600, capacitive 5-point touch
-- Wireless: onboard ESP32-C6 module with 2.4 GHz Wi-Fi 6, Bluetooth 5.3, and BLE
-- Optional modules: Zigbee, LoRa/SX1262, nRF24-style 2.4 GHz module, Matter, and Thread
-- Interfaces: USB2.0, UART, I2C, GPIO headers, SD card holder, battery socket, speaker jack, camera header, and module headers
-- Audio: amplifier, dual microphones, and dual speakers
-- Official LVGL dependency listed by Elecrow: `lvgl/lvgl@9.2`
+- Main chip: ESP32-P4NRW32 (RISC-V up to 400 MHz + low-power core), 16 MB flash, 32 MB PSRAM
+- Display: 7.0-inch IPS 1024x600, MIPI-DSI (EK79007 controller), GT911 5-point capacitive touch
+- Wireless: onboard ESP32-C6 (Wi-Fi 6 / BLE 5.3) reached over SDIO via esp_hosted — the P4 itself has no radio
+- Optional modules: SX1262 LoRa, nRF24-style 2.4 GHz, Zigbee/Matter/Thread
+- Audio: amplifier, dual microphones, dual speakers
 
-## The Three Builds
+## The Builds
 
-1. `projects/01-fieldops-control-center`
-   - LoRa-powered AIoT dashboard for remote field sensors.
-   - Mock mode generates sensor packets, alerts, event logs, and AI-style summaries over Serial.
+The first four builds are hardware-path teaching projects:
 
-2. `projects/02-vision-guard-inspection-kiosk`
-   - Camera check-in and inspection kiosk.
-   - Mock mode simulates camera status, QR scans, checklist results, and event history.
+1. `projects/01-fieldops-control-center` — AIoT dashboard for remote field sensors. Mock packets, alerts, event log, AI-style summaries; real SX1262 scaffold (RadioLib) behind `USE_LORA_DRIVER`, and an **ESP-NOW** transport behind `USE_ESPNOW` (fed by a plain-ESP32 bridge — see `espnow/README.md`).
+2. `projects/02-vision-guard-inspection-kiosk` — camera check-in and inspection kiosk. Mock camera status, QR scans, checklists; camera stays a documented stub on P4 (see below).
+3. `projects/03-badgeops-nfc-rfid-system` — badge enrollment, attendance, and lightweight access control. Mock badge taps and policy decisions; real PN532 (I2C) and MFRC522 (SPI) scaffolds behind flags.
+4. `projects/04-relayops-wifi-control-hub` — Wi-Fi control hub reusing the FieldOps dashboard, no radio module. The panel **runs a web server** so remote ESP32 nodes POST sensor data in, and **sends HTTP GPIO commands out** to toggle their lights/relays. Mock source + `set`/`feed` serial commands drive it fully offline; the real server + controller live behind `USE_WIFI`.
 
-3. `projects/03-badgeops-nfc-rfid-system`
-   - Badge enrollment, attendance, check-in, and lightweight access-control kiosk.
-   - Mock mode simulates badge taps, registry lookup, policy decisions, and event logs.
+The newer ports are mock-first CrowPanel product surfaces inspired by sibling GitHub repos. They compile as standalone sketches and mirror their Serial-driven state onto a shared `OpsDashboard` touch UI when `USE_DISPLAY=1`:
 
-## Hardware Revision Warning
+5. `projects/05-cypherdrive-wireless-ops` — safe Wi-Fi/BLE visibility console inspired by `cypher-drive`; no HID or captive-portal capture in v1.
+6. `projects/06-wiretap-benchops-console` — bench protocol console inspired by `WireTap-32`; v1 never drives real GPIO.
+7. `projects/07-nfc-field-lab-badgeops-pro` — combined PN532/Cypherbox Mini NFC lab; UID-only and APDU/payment boundaries stay visible.
+8. `projects/08-cypher-gamer-arcade` — large touch arcade launcher inspired by `cardputer-games`; Pong, Snake, and 2048 are the v1 playable set.
+9. `projects/09-cypher-tune-mpc` — touch MPC/groovebox inspired by `cardputer-mpc`; silent/mock audio until `USE_AUDIO` becomes a real hardware path.
+10. `projects/10-litego-touch-coach` — local 9x9 Go coach inspired by `ai-go`, rewritten as Arduino C++ logic.
+11. `projects/11-cardrf-spectrum-console` — receive-only spectrum console inspired by `cardputer-hackrf`; no TX/replay/jamming controls.
+12. `projects/12-creatorops-board` — local content pipeline board inspired by `techtiff-brain`; no publishing or external mutations.
+13. `projects/13-surveyops-wardriver-panel` — passive GPS/Wi-Fi survey dashboard inspired by `esp32-gps-wifi-wigle`; no network joins or active testing.
 
-The official Elecrow README lists hardware/software V1.2 as the latest revision and notes a wireless module socket pin reallocation:
-
-- Original IO53 and IO54 adjusted to IO27 and IO28.
-- IO27 and IO28 adjusted to IO53 and IO54.
-
-This repo defaults to `CROWPANEL_P4_7IN_V1_2`, but every wireless module pin definition lives inside `shared/CrowPanelShared/HardwareProfile.*`. Treat those mappings as documented placeholders until you verify your exact shipped board revision and the matching Elecrow Arduino examples.
-
-## Arduino CLI Setup
-
-Install Arduino CLI, then install the ESP32 core:
+## Toolchain
 
 ```sh
-./scripts/install-cores.sh
+./scripts/install-cores.sh   # esp32:esp32@3.3.8 (minimum 3.3.x for the P4 target)
+./scripts/install-libs.sh    # RadioLib, Arduino_GFX, SensorLib, PN532, MFRC522, ...
 ```
 
-Optional library notes are in `libraries.txt`. Hardware-specific libraries are not required by default.
+No third-party board package URL is needed — `esp32:esp32:esp32p4` ships in the official Espressif index. Verified library versions are listed in `libraries.txt`.
 
 ## Compile
 
-The default FQBN is intentionally generic:
+The default FQBN targets the real board:
 
 ```sh
 ./scripts/compile-all.sh
 ```
 
-For real CrowPanel ESP32-P4 work, replace it after installing the correct ESP32 Arduino core and any Elecrow-supported board package:
-
-```sh
-FQBN="verified:vendor:crowpanel_p4_target" ./scripts/compile-all.sh
+```
+esp32:esp32:esp32p4:USBMode=hwcdc,PSRAM=enabled,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,UploadSpeed=921600
 ```
 
-If Arduino CLI fails before code compilation with a local `ctags` architecture error, retry:
+Enable driver paths per build with `EXTRA_FLAGS` (these `-D` defines beat the `#ifndef` defaults and also reach the shared library):
 
 ```sh
-CTAGS_WORKAROUND=1 ./scripts/compile-all.sh
+EXTRA_FLAGS="-DUSE_DISPLAY=1 -DUSE_WIFI=1" ./scripts/compile-all.sh
 ```
+
+Prove every supported flag combination still builds:
+
+```sh
+./scripts/check-flag-matrix.sh
+```
+
+If compilation fails with mangled prototype errors ("expected constructor, destructor, or type conversion"), your local ctags is broken — retry with `CTAGS_WORKAROUND=1` (see `docs/troubleshooting.md`).
 
 ## Upload
 
-Detect your board first:
-
 ```sh
 arduino-cli board list
+./scripts/upload-project.sh projects/03-badgeops-nfc-rfid-system /dev/cu.usbmodem101
 ```
 
-Then upload one project:
+The script compiles and flashes in one step so the binary always matches the FQBN and shared library. First flash tips (BOOT-hold, USB mode fallback) are in `docs/hardware-bringup-checklist.md`, Stage 0.
 
-```sh
-./scripts/upload-project.sh projects/03-badgeops-nfc-rfid-system /dev/cu.usbserial-0001
-```
+## Serial Commands
 
-Uploads are not field proof by themselves. A project is only field-proven after the real CrowPanel runs the expected Serial, display, touch, radio, camera, or badge behavior.
+Every sketch runs an interactive command router on Serial (115200 baud, line ending **Newline**). Shared commands: `help`, `status` (uptime, heap, profile, flags), `history` (event ring buffer, oldest first).
 
-## Enable Real Hardware Later
+| Project | Command | What it does |
+|---|---|---|
+| 01 FieldOps | `inject [node 0-3] [tempC] [batteryPct]` | Simulate a sensor packet — `inject 1 40 12` fires TEMP and LOW_BATTERY alerts on demand |
+| 02 Vision Guard | `scan [text]` | Simulate a QR scan — `scan INSPECT-CUSTOM-1` |
+| 03 BadgeOps | `tap [uid]` | Simulate a badge tap — `tap C2:44:10:AA` (suspended badge), `tap 11:22:33:44` (unknown) |
+| 03 BadgeOps | `badges` | Print the badge registry |
+| 04 RelayOps | `set <id> <on\|off\|toggle>` | Command a device's GPIO — `set shop-light on` (mock: log-only; `USE_WIFI`: real HTTP) |
+| 04 RelayOps | `feed <csv>` | Inject a sensor reading — `feed SENSOR,ATTIC,29.5,40,88,0,-58` |
+| 04 RelayOps | `devices` | List controllable devices and their HTTP targets |
+| 05 CypherDrive | `scan wifi`, `scan ble`, `qr set/show`, `logs` | Safe wireless visibility and QR handoff mock console |
+| 06 WireTap | `mode`, `pins`, `i2c`, `spi`, `uart`, `gpio` | Bench protocol mock console; no real GPIO writes |
+| 07 NFC Lab | `scan`, `tap`, `ndef`, `apdu`, `files`, `badges` | Safe NFC lab and BadgeOps Pro mock flows |
+| 08 Arcade | `catalog`, `play`, `score` | Launch and score the v1 touch arcade demos |
+| 09 MPC | `pad`, `step`, `bpm`, `play`, `stop`, `record`, `pattern` | Touch groovebox mock transport and pattern state |
+| 10 LiteGo | `play`, `cpu`, `pass`, `reset`, `score` | Local 9x9 Go coach actions |
+| 11 CardRF | `scan`, `feed`, `power`, `preset`, `stop` | Receive-only mock spectrum rows |
+| 12 CreatorOps | `pipeline`, `idea`, `draft`, `channel`, `task` | Local content pipeline dashboard |
+| 13 SurveyOps | `gps`, `scan`, `log`, `feed`, `rotate` | Passive GPS/Wi-Fi survey mock console |
 
-Each project has `config/ProjectConfig.h` with these flags:
+Injected events run the exact same pipeline as mock (and future real) drivers — one code path per project (`processPacket` / `processScan` / `processTap` / `onSensor`).
 
-- `MOCK_MODE`
-- `USE_LVGL`
-- `USE_WIFI`
-- `USE_LORA_DRIVER`
-- `USE_CAMERA_DRIVER`
-- `USE_PN532_DRIVER`
-- `USE_MFRC522_DRIVER`
-- `USE_AUDIO`
-- `CROWPANEL_HARDWARE_PROFILE`
+## Enable Real Hardware
 
-Default behavior is `MOCK_MODE = 1` and every real driver disabled. Hardware-specific includes are guarded behind those flags.
+Each flag gates a compile-verified scaffold. Flip ONE at a time following `docs/hardware-bringup-checklist.md`, with `docs/hardware-risk-register.md` open next to it:
+
+| Flag | Gates | Status |
+|---|---|---|
+| `USE_DISPLAY` | MIPI-DSI panel + GT911 touch; status screen drawn with the Adafruit-GFX-style API (Arduino_GFX — no LVGL by design) | compile-verified |
+| `USE_WIFI` | STA connect via hosted ESP32-C6 + HTTP POSTs to the mock API | compile-verified |
+| `USE_LORA_DRIVER` | SX1262 via RadioLib, Elecrow Lesson13 parameters (915 MHz default; EU: override to 868) | compile-verified |
+| `USE_ESPNOW` | FieldOps reads sensor/presence frames over UART from an ESP-NOW↔UART bridge (the P4 can't be an ESP-NOW peer; a plain ESP32 runs the radio). See `espnow/README.md` | compile-verified |
+| `USE_PN532_DRIVER` | PN532 over I2C (shares the touch bus; refuses to start until pins are set in `config/Pins.h`) | compile-verified |
+| `USE_MFRC522_DRIVER` | MFRC522 over SPI (wireless-socket pins — remove socket modules first) | compile-verified |
+| `USE_CAMERA_DRIVER` | Honest stub: esp32-camera does not exist for the P4 in Arduino core 3.3.x; the camera path is ESP-IDF MIPI-CSI only | stub by necessity |
+| `USE_AUDIO` | Reserved, include-only | out of scope |
+
+Per-machine settings live in gitignored files copied from templates: `config/Pins.example.h` → `Pins.h` (radio params, reader pins) and `config/WiFiSecrets.example.h` → `WiFiSecrets.h` (credentials).
+
+## Code Style
+
+Two storage rules keep this readable on camera and safe on a long-running panel:
+
+- **Transient formatting uses Arduino `String`** — events happen at seconds cadence on a chip with 32 MB PSRAM; `snprintf` boilerplate would hurt tutorial clarity for no measurable gain.
+- **Long-lived storage uses fixed buffers** — the shared `EventLog` is a fixed 16-entry ring buffer of char arrays (no heap growth, ever), and the command router reads into a fixed line buffer.
+- Known limit, on purpose: mock JSON built by concatenation is unescaped (commented at each `postEvent` call). Swap in real serialization before a backend ingests it.
+
+## Mock API
+
+`mock-api/` is a small Express server the panels can POST to once `USE_WIFI` is hardware-verified. Not required in mock mode. See `mock-api/README.md`.
 
 ## Content Roadmap
 
-Use this suite as a three-part tutorial series:
+- Build a Serial-first product story (film the mock demo with serial-command beats — each project README has a script).
+- Enable one hardware path at a time, on camera, following the bring-up checklist.
+- Update the "NOT HARDWARE-VERIFIED" source comments as stages go green — that's the payoff arc of the series.
 
-- Build a Serial-first product story.
-- Enable one hardware path at a time.
-- Film the mock demo before driver integration.
-- Replace placeholders only after matching the board revision, pin map, and official Elecrow examples.
-
-See `docs/content-plan.md` for a filming and publishing outline.
+See `docs/content-plan.md` for the filming outline.
 
 ## Security Note
 
-BadgeOps is for demos, check-in, attendance, and low-risk prototypes unless redesigned with stronger credentials and backend validation. See `docs/security-notes.md` before using RFID/NFC language in public material.
+BadgeOps is for demos, check-in, attendance, and low-risk prototypes unless redesigned with stronger credentials and backend validation. UID-only RFID is not secure. See `docs/security-notes.md` before using RFID/NFC language in public material.

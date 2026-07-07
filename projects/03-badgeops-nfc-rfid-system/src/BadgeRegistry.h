@@ -16,6 +16,7 @@ class BadgeRegistry {
  public:
   void begin();
   bool findByUid(const String &uid, BadgeRecord &record) const;
+  void printAll(Stream &out) const;
 };
 
 #endif

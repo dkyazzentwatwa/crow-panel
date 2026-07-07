@@ -6,11 +6,10 @@ void MockLoRaGateway::begin(const HardwareProfile &profile) {
 }
 
 bool MockLoRaGateway::poll(SensorPacket &packet) {
-  if (millis() - lastPacketMs_ < 3000) {
+  if (!cadence_.ready()) {
     return false;
   }
 
-  lastPacketMs_ = millis();
   packet = SensorNode::makeMock(nextNode_);
   nextNode_ = (nextNode_ + 1) % 4;
   Logger::info("lora", "mock packet from " + packet.nodeId);

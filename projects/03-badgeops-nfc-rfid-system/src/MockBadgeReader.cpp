@@ -6,11 +6,10 @@ void MockBadgeReader::begin(const HardwareProfile &profile) {
 }
 
 bool MockBadgeReader::poll(BadgeRead &read) {
-  if (millis() - lastReadMs_ < 4000) {
+  if (!cadence_.ready()) {
     return false;
   }
 
-  lastReadMs_ = millis();
   read.uid = MockData::badgeUid(index_);
   read.reader = "mock";
   read.readAtMs = millis();

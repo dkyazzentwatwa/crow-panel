@@ -1,6 +1,6 @@
 #include "VisionAiClient.h"
 
-void VisionAiClient::begin(NetworkClient *network) {
+void VisionAiClient::begin(CrowNetworkClient *network) {
   network_ = network;
   Logger::info("vision-ai", "mock AI vision client ready");
 }

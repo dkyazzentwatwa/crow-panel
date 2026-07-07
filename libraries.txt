@@ -1,11 +1,28 @@
-# Optional Arduino libraries for later hardware phases
+# Arduino libraries for the CrowPanel AIoT suite
 #
-# The default sketches do not require these libraries. Keep mock mode enabled
-# until your exact CrowPanel board revision, FQBN, and Elecrow examples are
-# verified.
-
-ArduinoJson
-lvgl@9.2
-MFRC522
-Adafruit PN532 or a compatible PN532 library
-LoRa / SX1262 library - TODO: select after confirming the exact Elecrow module example
+# Every entry is COMPILE-VERIFIED against esp32:esp32@3.3.8 on the
+# esp32:esp32:esp32p4 target at the version shown. Nothing is
+# hardware-verified until it runs on the real CrowPanel (see
+# docs/hardware-bringup-checklist.md). Install everything with
+# scripts/install-libs.sh.
+#
+# Library                    Verified version   Used by
+# -------------------------  -----------------  -----------------------------------------
+# ArduinoJson                7.4.3              LoRa packet parsing, later Wi-Fi payloads
+# RadioLib                   7.7.1              USE_LORA_DRIVER - SX1262; Elecrow's own
+#                                               library choice in their Lesson13 example
+# GFX Library for Arduino    1.6.6              USE_DISPLAY - Arduino_GFX: Adafruit-GFX-
+#                                               style API + MIPI-DSI panel classes
+#                                               (Arduino_ESP32DSIPanel). No LVGL in this
+#                                               repo by design.
+# SensorLib                  0.4.1              USE_DISPLAY - GT911 capacitive touch
+# Adafruit PN532             1.3.4              USE_PN532_DRIVER (+ Adafruit BusIO)
+# MFRC522                    1.4.12             USE_MFRC522_DRIVER
+# RF24                       1.6.1              optional nRF24-style socket module
+#
+# Not needed in mock mode: the default sketches compile with no libraries
+# beyond the bundled core.
+#
+# Camera note: there is intentionally no camera library. esp32-camera does
+# not ship for the ESP32-P4 in core 3.3.8; the P4 camera path is MIPI-CSI
+# via ESP-IDF only. See projects/02-vision-guard-inspection-kiosk/README.md.

@@ -21,3 +21,22 @@ bool BadgeRegistry::findByUid(const String &uid, BadgeRecord &record) const {
 
   return false;
 }
+
+void BadgeRegistry::printAll(Stream &out) const {
+  out.println(F("[badges] id | uid | name | role | status | zones"));
+  for (size_t i = 0; i < sizeof(RECORDS) / sizeof(RECORDS[0]); i++) {
+    const BadgeRecord &r = RECORDS[i];
+    out.print(F("  "));
+    out.print(r.badgeId);
+    out.print(F(" | "));
+    out.print(r.uid);
+    out.print(F(" | "));
+    out.print(r.name);
+    out.print(F(" | "));
+    out.print(r.role);
+    out.print(F(" | "));
+    out.print(r.status);
+    out.print(F(" | "));
+    out.println(r.allowedZones);
+  }
+}

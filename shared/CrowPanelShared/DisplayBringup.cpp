@@ -1,0 +1,184 @@
+// COMPILE-VERIFIED on esp32:esp32:esp32p4 (core 3.3.8) with
+// GFX Library for Arduino 1.6.x (Arduino_GFX) and SensorLib 0.4.x.
+// NOT HARDWARE-VERIFIED. Panel timings and pins come from Elecrow's
+// official V1.0 Arduino example (board_config.h): EK79007, 2-lane DSI.
+//
+// The EK79007 needs a vendor init sequence (lane-count, power/timing
+// registers, sleep-out) before it shows anything - Arduino_GFX ships no
+// EK79007 table, so we supply one below. If the screen still stays black
+// while Serial keeps ticking, fall back to Elecrow's ESP32_Display_Panel
+// path from example/V1.0/Arduino_Code/Lesson07-Turn_on_the_screen/ - only
+// this file should need replacing. See docs/hardware-risk-register.md.
+
+#include "DisplayBringup.h"
+
+#if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
+
+#include <Wire.h>
+#include <Arduino_GFX_Library.h>
+#include <TouchDrvGT911.hpp>
+#include "Logger.h"
+#include "Throttle.h"
+#include "UiTheme.h"
+
+namespace {
+
+// EK79007 vendor init, ported 1:1 from Espressif's esp_lcd_ek79007 driver
+// (vendor_specific_init_default), which is the controller used on both the
+// ESP32-P4-Function-EV-Board and the CrowPanel. Format is Arduino_GFX's
+// lcd_init_cmd_t: { cmd, {data...}, data_bytes, delay_ms }. Sent over the
+// DSI DBI/DCS channel by Arduino_ESP32DSIPanel::begin() before the DPI
+// stream starts.
+//   - 0xB2: PAD_CONTROL, 0x10 selects 2 DSI data lanes (matches the panel
+//     constructed with 2 lanes @ 1000 Mbps).
+//   - 0x80-0x86: vendor power/timing registers.
+//   - 0x11: sleep-out, 120 ms settle. (The EK79007 needs no explicit
+//     display-on; the DPI stream drives it once it is awake.)
+static const lcd_init_cmd_t kEk79007InitOperations[] = {
+    {0xB2, (uint8_t[]){0x10}, 1, 0},
+    {0x80, (uint8_t[]){0x8B}, 1, 0},
+    {0x81, (uint8_t[]){0x78}, 1, 0},
+    {0x82, (uint8_t[]){0x84}, 1, 0},
+    {0x83, (uint8_t[]){0x88}, 1, 0},
+    {0x84, (uint8_t[]){0xA8}, 1, 0},
+    {0x85, (uint8_t[]){0xE3}, 1, 0},
+    {0x86, (uint8_t[]){0x88}, 1, 0},
+    {0x11, (uint8_t[]){0x00}, 0, 120},
+};
+
+constexpr uint16_t kWidth = 1024;
+constexpr uint16_t kHeight = 600;
+constexpr uint8_t kLineCount = 6;
+// Adafruit-GFX classic font is 6x8 px at size 1.
+constexpr uint8_t kTitleSize = 4;
+constexpr uint8_t kLineSize = 3;
+constexpr int16_t kMarginX = 24;
+constexpr int16_t kTitleY = 16;
+constexpr int16_t kFirstLineY = 88;
+constexpr int16_t kLinePitch = 44;
+
+Arduino_ESP32DSIPanel *dsiPanel = nullptr;
+Arduino_DSI_Display *gfx = nullptr;
+TouchDrvGT911 touch;
+bool touchReady = false;
+bool displayReady = false;
+uint16_t bgColor = 0;
+uint16_t fgColor = 0;
+uint16_t accentColor = 0;
+Throttle touchLogThrottle(250);
+
+// UiTheme colors are 24-bit 0xRRGGBB; the panel wants RGB565.
+uint16_t toColor565(uint32_t rgb) {
+  return ((rgb >> 8) & 0xF800) | ((rgb >> 5) & 0x07E0) | ((rgb >> 3) & 0x001F);
+}
+
+bool beginPanel(const HardwareProfile &profile) {
+  const DisplayTiming &t = profile.displayTiming;
+  dsiPanel = new Arduino_ESP32DSIPanel(
+      t.hsyncPulse, t.hsyncBackPorch, t.hsyncFrontPorch,
+      t.vsyncPulse, t.vsyncBackPorch, t.vsyncFrontPorch,
+      t.preferSpeedHz, t.laneBitRateMbps);
+  gfx = new Arduino_DSI_Display(kWidth, kHeight, dsiPanel, 0 /*rotation*/,
+                                true /*auto_flush*/, profile.display.lcdReset,
+                                kEk79007InitOperations,
+                                sizeof(kEk79007InitOperations) / sizeof(kEk79007InitOperations[0]));
+  if (!gfx->begin()) {
+    Logger::error("display", "DSI panel init failed");
+    return false;
+  }
+
+  // Backlight: LEDC PWM, 30 kHz, active high (Elecrow board_config.h).
+  ledcAttach(profile.display.backlight, 30000, 8);
+  ledcWrite(profile.display.backlight, 255);
+  return true;
+}
+
+void beginTouch(const HardwareProfile &profile) {
+  touch.setPins(profile.touch.resetPin, profile.touch.interruptPin);
+  // GT911_SLAVE_ADDRESS_UNKNOWN probes both 0x5D and 0x14 - the GT911
+  // picks its address from INT strapping at power-on.
+  touchReady = touch.begin(Wire, GT911_SLAVE_ADDRESS_UNKNOWN,
+                           profile.touch.sda, profile.touch.scl);
+  if (!touchReady) {
+    Logger::error("touch", "GT911 not found on I2C (tried 0x5D and 0x14)");
+    return;
+  }
+  Logger::info("touch", String("GT911 ready, model=") + touch.getModelName());
+}
+
+void buildStatusScreen(const char *title) {
+  gfx->fillScreen(bgColor);
+  gfx->setTextWrap(false);
+  gfx->setTextColor(accentColor);
+  gfx->setTextSize(kTitleSize);
+  gfx->setCursor(kMarginX, kTitleY);
+  gfx->print(title);
+}
+
+}  // namespace
+
+namespace CrowDisplay {
+
+bool begin(const HardwareProfile &profile, const char *title) {
+  const UiTheme &theme = defaultUiTheme();
+  bgColor = toColor565(theme.background);
+  fgColor = toColor565(theme.foreground);
+  accentColor = toColor565(theme.accent);
+
+  if (!beginPanel(profile)) {
+    return false;
+  }
+  beginTouch(profile);
+  buildStatusScreen(title);
+  displayReady = true;
+  Logger::info("display", "DSI status screen up (Adafruit-GFX-style API)");
+  return true;
+}
+
+void setLine(uint8_t index, const String &text) {
+  if (!displayReady || index >= kLineCount) {
+    return;
+  }
+  int16_t y = kFirstLineY + index * kLinePitch;
+  gfx->fillRect(0, y, kWidth, kLinePitch - 8, bgColor);
+  gfx->setTextColor(fgColor);
+  gfx->setTextSize(kLineSize);
+  gfx->setCursor(kMarginX, y);
+  gfx->print(text);
+}
+
+void tick() {
+  if (!displayReady || !touchReady || !touch.isPressed()) {
+    return;
+  }
+  const TouchPoints &points = touch.getTouchPoints();
+  if (points.getPointCount() == 0) {
+    return;
+  }
+  const TouchPoint &p = points.getPoint(0);
+  if (touchLogThrottle.ready()) {
+    Logger::info("touch", "x=" + String(p.x) + " y=" + String(p.y));
+  }
+}
+
+Arduino_GFX *canvas() {
+  return gfx;
+}
+
+bool touchPoint(int16_t &x, int16_t &y) {
+  if (!displayReady || !touchReady || !touch.isPressed()) {
+    return false;
+  }
+  const TouchPoints &points = touch.getTouchPoints();
+  if (points.getPointCount() == 0) {
+    return false;
+  }
+  const TouchPoint &p = points.getPoint(0);
+  x = p.x;
+  y = p.y;
+  return true;
+}
+
+}  // namespace CrowDisplay
+
+#endif  // USE_DISPLAY && CONFIG_IDF_TARGET_ESP32P4

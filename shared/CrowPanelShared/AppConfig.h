@@ -9,8 +9,8 @@
 #define MOCK_MODE 1
 #endif
 
-#ifndef USE_LVGL
-#define USE_LVGL 0
+#ifndef USE_DISPLAY
+#define USE_DISPLAY 0
 #endif
 
 #ifndef USE_WIFI
@@ -19,6 +19,14 @@
 
 #ifndef USE_LORA_DRIVER
 #define USE_LORA_DRIVER 0
+#endif
+
+// FieldOps ESP-NOW transport: the panel reads sensor/presence frames over
+// UART from an ESP-NOW<->UART bridge (a plain ESP32). The ESP32-P4 cannot be
+// an ESP-NOW peer directly (WiFi is remote on the C6), so this flag only
+// enables the UART reader on the panel - the radio lives on the bridge.
+#ifndef USE_ESPNOW
+#define USE_ESPNOW 0
 #endif
 
 #ifndef USE_CAMERA_DRIVER

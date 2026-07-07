@@ -1,6 +1,6 @@
 #include "AiSummaryClient.h"
 
-void AiSummaryClient::begin(NetworkClient *network) {
+void AiSummaryClient::begin(CrowNetworkClient *network) {
   network_ = network;
   Logger::info("ai", "mock summary client ready");
 }

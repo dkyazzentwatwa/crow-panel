@@ -10,7 +10,7 @@ class MockLoRaGateway : public LoRaGateway {
   const char *driverName() const override;
 
  private:
-  unsigned long lastPacketMs_ = 0;
+  Throttle cadence_{3000};
   uint8_t nextNode_ = 0;
 };
 

@@ -11,7 +11,7 @@ class MockBadgeReader : public BadgeReader {
 
  private:
   const HardwareProfile *profile_ = nullptr;
-  unsigned long lastReadMs_ = 0;
+  Throttle cadence_{4000};
   uint8_t index_ = 0;
 };
 

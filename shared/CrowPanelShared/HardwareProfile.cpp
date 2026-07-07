@@ -16,6 +16,26 @@ static const AudioPins AUDIO_OUT = {
   30
 };
 
+// Display wiring and MIPI-DSI timings from Elecrow's official V1.0 Arduino
+// example (board_config.h / esp_panel_board_custom_conf.h): EK79007 panel,
+// 2-lane DSI @ 1000 Mbps, 51 MHz DPI clock, backlight IO31, LCD reset IO41.
+// Identical across V1.0/V1.1/V1.2 as far as the official examples show.
+static const DisplayPins DISPLAY_PINS = {
+  31,
+  41
+};
+
+static const DisplayTiming DISPLAY_TIMING = {
+  70,
+  160,
+  160,
+  10,
+  23,
+  21,
+  51000000,
+  1000
+};
+
 static const HardwareProfile PROFILE_V1_0 = {
   CROWPANEL_P4_7IN_V1_0,
   "CROWPANEL_P4_7IN_V1_0",
@@ -33,7 +53,9 @@ static const HardwareProfile PROFILE_V1_0 = {
     54
   },
   AUDIO_OUT,
-  "Original placeholder wireless mapping from official README notes. Verify your exact V1.0 board before driver work."
+  DISPLAY_PINS,
+  DISPLAY_TIMING,
+  "V1.0 wireless mapping confirmed against Elecrow's official V1.0 Arduino examples (board_config.h). Verify your board revision before driver work."
 };
 
 static const HardwareProfile PROFILE_V1_1 = {
@@ -53,7 +75,9 @@ static const HardwareProfile PROFILE_V1_1 = {
     54
   },
   AUDIO_OUT,
-  "V1.1 placeholder keeps the original README-style wireless pins. Verify against Elecrow examples and board markings."
+  DISPLAY_PINS,
+  DISPLAY_TIMING,
+  "V1.1 keeps the V1.0-style wireless pins (matches Elecrow's V1.1 example tree). Verify against board markings."
 };
 
 static const HardwareProfile PROFILE_V1_2 = {
@@ -73,7 +97,9 @@ static const HardwareProfile PROFILE_V1_2 = {
     28
   },
   AUDIO_OUT,
-  "TODO: Official README says V1.2 reallocates wireless socket IO53/IO54 to IO27/IO28 and IO27/IO28 to IO53/IO54. This profile maps the old 53/54 module placeholders to 27/28; verify the shipped board revision before enabling a real radio driver."
+  DISPLAY_PINS,
+  DISPLAY_TIMING,
+  "UNVERIFIED: Official README says V1.2 reallocates wireless socket IO53/IO54 to IO27/IO28 (no V1.2 examples exist upstream yet). If a V1.2 radio fails, try the V1_1 profile before debugging anything else."
 };
 
 const HardwareProfile &profileFor(int profileId) {
@@ -113,6 +139,10 @@ void printHardwareProfile(Stream &out, const HardwareProfile &profile) {
   out.print(profile.wireless.sx1262Irq);
   out.print(F(" sx_reset="));
   out.println(profile.wireless.sx1262Reset);
+  out.print(F("[hardware] display backlight="));
+  out.print(profile.display.backlight);
+  out.print(F(" lcd_reset="));
+  out.println(profile.display.lcdReset);
   out.print(F("[hardware] note="));
   out.println(profile.revisionNote);
 }

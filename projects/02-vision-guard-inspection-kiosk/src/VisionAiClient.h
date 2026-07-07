@@ -7,11 +7,11 @@
 
 class VisionAiClient {
  public:
-  void begin(NetworkClient *network);
+  void begin(CrowNetworkClient *network);
   String classify(const String &qr, const CameraStatus &status);
 
  private:
-  NetworkClient *network_ = nullptr;
+  CrowNetworkClient *network_ = nullptr;
 };
 
 #endif

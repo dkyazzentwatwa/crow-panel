@@ -7,11 +7,11 @@
 
 class AiSummaryClient {
  public:
-  void begin(NetworkClient *network);
+  void begin(CrowNetworkClient *network);
   String summarize(const SensorPacket &packet, const String &alert);
 
  private:
-  NetworkClient *network_ = nullptr;
+  CrowNetworkClient *network_ = nullptr;
 };
 
 #endif

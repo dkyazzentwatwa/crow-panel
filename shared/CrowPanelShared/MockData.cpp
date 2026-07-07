@@ -1,6 +1,8 @@
 #include "MockData.h"
 
 float MockData::wave(float base, float span, uint32_t periodMs) {
+  // millis() % period jumps phase when millis() wraps (~49.7 days).
+  // Acceptable for mock data; real timing gates use Throttle instead.
   uint32_t phase = millis() % periodMs;
   float normalized = phase / (float)periodMs;
   float triangle = normalized < 0.5f ? normalized * 2.0f : (1.0f - normalized) * 2.0f;

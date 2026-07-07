@@ -21,7 +21,7 @@ https://github.com/Elecrow-RD/CrowPanel-Advanced-7inch-ESP32-P4-HMI-AI-Display-1
 
 Useful facts reflected in this scaffold:
 
-- Official LVGL dependency: `lvgl/lvgl@9.2`
+- Official LVGL dependency: `lvgl/lvgl@9.2` (Elecrow's examples use LVGL; this repo deliberately renders with the Adafruit-GFX-style API via Arduino_GFX instead)
 - README lists hardware/software V1.2 as latest
 - V1.2 changes wireless module socket pin allocation
 

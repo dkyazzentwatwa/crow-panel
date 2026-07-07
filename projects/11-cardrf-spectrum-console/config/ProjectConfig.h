@@ -1,0 +1,6 @@
+#ifndef CARDRF_SPECTRUM_PROJECT_CONFIG_H
+#define CARDRF_SPECTRUM_PROJECT_CONFIG_H
+
+#include <AppConfig.h>
+
+#endif

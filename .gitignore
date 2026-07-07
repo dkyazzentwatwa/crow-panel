@@ -11,10 +11,14 @@ build/
 *.map
 
 # Local Arduino config and secrets
+# (**/ prefix: patterns with a slash are otherwise anchored to the repo
+# root and would miss projects/*/config/)
 arduino-cli.yaml
 secrets.h
 Secrets.h
-config/WiFiSecrets.h
+**/config/WiFiSecrets.h
+**/config/Pins.h
+**/config/Devices.h
 
 # Node mock API
 node_modules/

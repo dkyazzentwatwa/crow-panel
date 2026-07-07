@@ -18,41 +18,52 @@ Default mode is a Serial-only mock demo:
 - AI Summary
 - Settings
 
+## Serial Commands
+
+115200 baud, line ending **Newline**:
+
+- `help` / `status` / `history` — shared commands
+- `inject [node 0-3] [tempC] [batteryPct]` — simulate a packet through the same pipeline the mock and real drivers use. `inject 1 40 12` fires TEMP_WARNING and LOW_BATTERY on demand.
+- `feed <csv>` — inject a raw ESP-NOW bridge frame (bench-test the ESP-NOW path with no radio). `feed SENSOR,ATTIC,29.5,40,88,0,-58` adds a telemetry node; `feed PRESENCE,CYPHER_NODE,-70,chat` adds a presence tile.
+
 ## Compile
 
 ```sh
 ../../scripts/compile-all.sh
 ```
 
-Or compile only this sketch:
-
-```sh
-arduino-cli compile --fqbn "${FQBN:-esp32:esp32:esp32}" --libraries ../../shared .
-```
-
-The generic FQBN is not a final CrowPanel hardware target. Verify the ESP32-P4/CrowPanel FQBN before uploading to real hardware.
+The default FQBN targets the real ESP32-P4 (see the root README). Everything is compile-verified; nothing is hardware-verified until it runs on your CrowPanel.
 
 ## Upload
 
 ```sh
 arduino-cli board list
-../../scripts/upload-project.sh projects/01-fieldops-control-center /dev/cu.usbserial-0001
+../../scripts/upload-project.sh projects/01-fieldops-control-center /dev/cu.usbmodem101
 ```
 
-## LoRa / SX1262 Plan
+## LoRa / SX1262
 
-The official README lists SX1262 pins, but V1.2 reallocates the wireless module socket. This project reads radio placeholders through `HardwareProfile` instead of hardcoding final pins.
+A real RadioLib SX1262 scaffold lives in `src/LoRaGateway.cpp` behind `USE_LORA_DRIVER` — compile-verified, not hardware-verified. Pins come from the active `HardwareProfile`; radio parameters mirror Elecrow's Lesson13 example (915 MHz default — EU boards must override to 868 in `config/Pins.h`, copied from `Pins.example.h`).
 
-Enable real LoRa only after:
+Enable it only per `docs/hardware-bringup-checklist.md` Stage 6:
 
-1. Confirming the exact board revision.
-2. Confirming the exact SX1262 module and Elecrow example.
-3. Updating `config/Pins.example.h` into a real local pins file if needed.
-4. Setting `USE_LORA_DRIVER 1`.
+1. Confirm the board revision (Stage 2) — the V1.2 wireless pin remap is unverified upstream.
+2. Fit the SX1262 module and an antenna.
+3. Build with `EXTRA_FLAGS="-DUSE_LORA_DRIVER=1"`.
+4. Have a second device transmitting (Elecrow's Lesson13 TX example).
+
+## ESP-NOW
+
+An alternative transport (`USE_ESPNOW`) feeds the same dashboard from an ESP-NOW mesh of plain ESP32s — sensor nodes plus cypher-chat chat nodes. The ESP32-P4 can't be an ESP-NOW peer (WiFi is remote on the C6), so a spare ESP32 runs the radio and bridges to the panel over UART. The dashboard shows sensor nodes with telemetry and chat nodes as presence tiles; tap a node to pin it. Full architecture, wiring, and flashing: [`espnow/README.md`](../../espnow/README.md).
+
+```sh
+CTAGS_WORKAROUND=1 EXTRA_FLAGS="-DUSE_ESPNOW=1 -DUSE_DISPLAY=1" \
+  ../../scripts/upload-project.sh projects/01-fieldops-control-center <PORT>
+```
 
 ## What To Film
 
 - Serial boot log showing `CROWPANEL_P4_7IN_V1_2`.
 - Mock packets turning into dashboard rows.
-- A simulated alert.
+- `inject 1 40 12` firing LOW_BATTERY live, then `history` replaying the event log.
 - The hardware profile warning explaining why pins are revision-aware.

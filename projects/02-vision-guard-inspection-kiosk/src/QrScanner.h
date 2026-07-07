@@ -2,6 +2,7 @@
 #define VISION_GUARD_QR_SCANNER_H
 
 #include <Arduino.h>
+#include <CrowPanelShared.h>
 
 class QrScanner {
  public:
@@ -9,7 +10,7 @@ class QrScanner {
   bool poll(String &qr);
 
  private:
-  unsigned long lastScanMs_ = 0;
+  Throttle cadence_{5000};
   uint8_t index_ = 0;
 };
 

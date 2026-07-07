@@ -11,6 +11,10 @@ class Pn532Reader : public BadgeReader {
 
  private:
   const HardwareProfile *profile_ = nullptr;
+  bool ready_ = false;
+  Throttle pollGate_{250};
+  String lastUid_ = "";
+  unsigned long lastUidMs_ = 0;
 };
 
 #endif

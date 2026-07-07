@@ -33,12 +33,31 @@ struct AudioPins {
   uint8_t control;
 };
 
+struct DisplayPins {
+  uint8_t backlight;  // LEDC PWM, active high
+  uint8_t lcdReset;
+};
+
+// MIPI-DSI panel timings (EK79007 controller, 1024x600 RGB565).
+struct DisplayTiming {
+  uint16_t hsyncPulse;
+  uint16_t hsyncBackPorch;
+  uint16_t hsyncFrontPorch;
+  uint16_t vsyncPulse;
+  uint16_t vsyncBackPorch;
+  uint16_t vsyncFrontPorch;
+  uint32_t preferSpeedHz;    // DPI pixel clock
+  uint32_t laneBitRateMbps;  // per-lane MIPI-DSI bit rate (2 lanes)
+};
+
 struct HardwareProfile {
   int id;
   const char *name;
   TouchPins touch;
   WirelessPins wireless;
   AudioPins audio;
+  DisplayPins display;
+  DisplayTiming displayTiming;
   const char *revisionNote;
 };
 

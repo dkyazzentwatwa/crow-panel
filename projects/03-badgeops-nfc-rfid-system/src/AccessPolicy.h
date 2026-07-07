@@ -16,6 +16,8 @@ class AccessPolicy {
   AccessDecision evaluate(const BadgeRead &read, const BadgeRecord &record, bool found) const;
 
  private:
+  static bool zoneAllowed(const String &allowedZones, const String &zone);
+
   String zone_ = "lab";
 };
 

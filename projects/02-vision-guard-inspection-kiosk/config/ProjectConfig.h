@@ -1,43 +1,40 @@
 #ifndef VISION_GUARD_PROJECT_CONFIG_H
 #define VISION_GUARD_PROJECT_CONFIG_H
 
-#ifndef MOCK_MODE
-#define MOCK_MODE 1
-#endif
-
-#ifndef USE_LVGL
-#define USE_LVGL 0
-#endif
-
-#ifndef USE_WIFI
-#define USE_WIFI 0
-#endif
-
-#ifndef USE_LORA_DRIVER
-#define USE_LORA_DRIVER 0
-#endif
-
-#ifndef USE_CAMERA_DRIVER
-#define USE_CAMERA_DRIVER 0
-#endif
-
-#ifndef USE_PN532_DRIVER
-#define USE_PN532_DRIVER 0
-#endif
-
-#ifndef USE_MFRC522_DRIVER
-#define USE_MFRC522_DRIVER 0
-#endif
-
-#ifndef USE_AUDIO
-#define USE_AUDIO 0
-#endif
-
-#ifndef CROWPANEL_HARDWARE_PROFILE
-#define CROWPANEL_HARDWARE_PROFILE 120
-#endif
+// Per-project overrides go here, BEFORE the AppConfig include: AppConfig.h
+// only fills in defaults for flags left undefined. The CROWPANEL_P4_7IN_*
+// names may be used here even though AppConfig.h defines them later,
+// because macros expand where they are USED, not where they are defined.
+//
+// Examples:
+// #define USE_CAMERA_DRIVER 1
+// #define CROWPANEL_HARDWARE_PROFILE CROWPANEL_P4_7IN_V1_1
+//
+// Note: overrides here only reach files that include this header (the .ino
+// and this project's src/). The shared library's .cpp files compile with
+// AppConfig defaults; flags that gate shared code (e.g. USE_WIFI in
+// CrowNetworkClient.cpp) must be set as compiler -D flags instead:
+//   EXTRA_FLAGS="-DUSE_WIFI=1" ./scripts/compile-all.sh
 
 #define VISION_GUARD_API_ENDPOINT "http://localhost:8787"
+
+// Local hardware worksheet (gitignored copy of Pins.example.h).
+#if __has_include("Pins.h")
+#include "Pins.h"
+#endif
+
+// Wi-Fi credentials (gitignored copy of WiFiSecrets.example.h); only
+// meaningful when built with -DUSE_WIFI=1. Empty defaults keep every
+// build compiling; the network client warns and runs log-only.
+#if __has_include("WiFiSecrets.h")
+#include "WiFiSecrets.h"
+#endif
+#ifndef WIFI_SSID
+#define WIFI_SSID ""
+#endif
+#ifndef WIFI_PASS
+#define WIFI_PASS ""
+#endif
 
 #include <AppConfig.h>
 

@@ -6,11 +6,10 @@ void QrScanner::begin() {
 }
 
 bool QrScanner::poll(String &qr) {
-  if (millis() - lastScanMs_ < 5000) {
+  if (!cadence_.ready()) {
     return false;
   }
 
-  lastScanMs_ = millis();
   qr = "INSPECT-" + String(1000 + index_);
   index_ = (index_ + 1) % 12;
   Logger::info("qr", "mock scan " + qr);

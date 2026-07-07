@@ -6,19 +6,37 @@ if ! command -v arduino-cli >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "Installing safe/common optional library..."
-arduino-cli lib install ArduinoJson
+echo "Updating library index..."
+arduino-cli lib update-index
+
+# Everything below is compile-verified against esp32:esp32@3.3.8 on the
+# esp32p4 target. See libraries.txt for the exact verified versions and
+# which feature flag each library serves. `lib install` is idempotent:
+# already-installed libraries are skipped or upgraded.
+LIBRARIES=(
+  "ArduinoJson"          # packet/JSON parsing (USE_LORA_DRIVER payloads, later Wi-Fi work)
+  "RadioLib"             # SX1262 LoRa driver - Elecrow's own choice in their Lesson13 example
+  "GFX Library for Arduino"  # Arduino_GFX: Adafruit-GFX-style API + MIPI-DSI classes for USE_DISPLAY
+  "SensorLib"            # GT911 capacitive touch driver
+  "Adafruit PN532"       # USE_PN532_DRIVER (pulls in Adafruit BusIO)
+  "MFRC522"              # USE_MFRC522_DRIVER
+  "RF24"                 # optional nRF24-style module in the wireless socket
+)
+
+for LIB in "${LIBRARIES[@]}"; do
+  echo "==> $LIB"
+  arduino-cli lib install "$LIB"
+done
 
 cat <<'NOTE'
 
-Hardware-specific libraries are intentionally not installed by default.
+Library install complete.
 
-Enable and install them only after verifying the real board revision, wiring,
-and Elecrow Arduino example for your module:
+Rendering note: this repo deliberately uses the Adafruit-GFX-style API
+(via Arduino_GFX's DSI display class) instead of LVGL. No lv_conf.h or
+LVGL install is needed.
 
-  # arduino-cli lib install "lvgl"
-  # arduino-cli lib install "MFRC522"
-  # arduino-cli lib install "Adafruit PN532"
-  # TODO: choose a LoRa/SX1262 library after confirming the module example.
-
+All libraries here are compile-verified only. Cross-check each driver
+against the official Elecrow examples before first power-on:
+https://github.com/Elecrow-RD/CrowPanel-Advanced-7inch-ESP32-P4-HMI-AI-Display-1024x600-IPS-Touch-Screen
 NOTE

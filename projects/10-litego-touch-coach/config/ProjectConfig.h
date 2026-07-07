@@ -1,0 +1,6 @@
+#ifndef LITEGO_TOUCH_COACH_PROJECT_CONFIG_H
+#define LITEGO_TOUCH_COACH_PROJECT_CONFIG_H
+
+#include <AppConfig.h>
+
+#endif
