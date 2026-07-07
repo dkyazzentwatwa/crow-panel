@@ -5,6 +5,7 @@
 #include "src/SensorServer.h"
 #include "src/MockSensorSource.h"
 #include "src/ControlHubUi.h"
+#include "src/WorldFeedClient.h"
 
 // RelayOps is a Wi-Fi hub, not a radio node: it RUNS a web server so remote
 // ESP32s can POST sensor data in (SensorServer), and it SENDS HTTP GPIO
@@ -19,6 +20,8 @@ EventLog eventLog;
 StorageManager storage;
 CrowNetworkClient network;
 SerialCommandRouter router;
+WorldFeedClient world;
+WorldFeeds worldFeeds;
 #if !USE_WIFI
 MockSensorSource mockSource;
 #endif
@@ -186,6 +189,16 @@ void cmdFeed(const String &args) {
   }
 }
 
+void cmdWorld(const String &args) {
+  String which = args;
+  which.trim();
+  if (which.length() == 0) which = "all";
+  Logger::info("cmd", "world refresh " + which);
+  if (world.refresh(worldFeeds, which)) {
+    ui.renderWorld(worldFeeds);
+  }
+}
+
 void setup() {
   Logger::begin(115200);
   Logger::info("app", "CrowPanel RelayOps WiFi Control Hub");
@@ -209,6 +222,8 @@ void setup() {
     ui.renderDevice(devices.at(i));
   }
 
+  world.begin(RELAYOPS_LAT, RELAYOPS_LON, RELAYOPS_PLACE, RELAYOPS_KP_THRESHOLD);
+
 #if !USE_WIFI
   mockSource.begin();
 #endif
@@ -220,6 +235,7 @@ void setup() {
   router.on("devices", "list controllable devices and their targets", cmdDevices);
   router.on("set", "set <deviceId> <on|off|toggle> - command a device's GPIO", cmdSet);
   router.on("feed", "inject a sensor frame, e.g. feed SENSOR,ATTIC,29.5,40,88,0,-58", cmdFeed);
+  router.on("world", "print/refresh weather, quakes, aurora", cmdWorld);
 }
 
 void loop() {
@@ -242,6 +258,10 @@ void loop() {
     onSensor(reading);
   }
 #endif
+
+  if (world.poll(worldFeeds)) {
+    ui.renderWorld(worldFeeds);
+  }
 
   // Small yield only; demo cadence comes from Throttle gates.
   delay(20);

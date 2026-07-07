@@ -4,6 +4,7 @@
 #include "../config/ProjectConfig.h"
 #include <Arduino.h>
 #include "HubTypes.h"
+#include "WorldFeed.h"
 
 // Operations dashboard for the CrowPanel display, adapted from FieldOps: a
 // header status bar, a live roster down the left mixing SENSOR nodes and
@@ -25,6 +26,7 @@ class ControlHubDashboard {
   void onSensor(const SensorReading &reading);  // upsert sensor (telemetry or presence)
   void onDevice(const ControlDevice &device);   // upsert actuator tile
   void onEvent(const String &message);          // banner + footer ticker
+  void onWorldFeeds(const WorldFeeds &feeds);   // latest weather/quake/aurora
   void tick();                                  // touch select/toggle + repaint + clock
 
   // Drains a queued actuator tap. Returns true and fills deviceId/desiredOn
@@ -89,6 +91,7 @@ class ControlHubDashboard {
 
   String banner_ = "hub online";
   uint32_t sensorEvents_ = 0;
+  WorldFeeds world_;
 
   String pendingId_ = "";
   bool pendingOn_ = false;

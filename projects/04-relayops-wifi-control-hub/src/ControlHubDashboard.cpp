@@ -199,6 +199,11 @@ void ControlHubDashboard::onEvent(const String &message) {
   dirty_ = true;
 }
 
+void ControlHubDashboard::onWorldFeeds(const WorldFeeds &feeds) {
+  world_ = feeds;
+  dirty_ = true;
+}
+
 bool ControlHubDashboard::takePendingToggle(String &deviceId, bool &desiredOn) {
   if (!hasPending_) return false;
   deviceId = pendingId_;
@@ -526,6 +531,7 @@ void ControlHubDashboard::begin() {}
 void ControlHubDashboard::onSensor(const SensorReading &) {}
 void ControlHubDashboard::onDevice(const ControlDevice &) {}
 void ControlHubDashboard::onEvent(const String &) {}
+void ControlHubDashboard::onWorldFeeds(const WorldFeeds &) {}
 void ControlHubDashboard::tick() {}
 bool ControlHubDashboard::takePendingToggle(String &, bool &) { return false; }
 

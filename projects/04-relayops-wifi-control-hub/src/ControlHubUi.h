@@ -5,6 +5,7 @@
 #include <Arduino.h>
 #include "HubTypes.h"
 #include "ControlHubDashboard.h"
+#include "WorldFeed.h"
 
 // Thin wrapper over ControlHubDashboard, mirroring FieldOpsUi: it logs each
 // update to Serial (so the demo reads on camera with no display) and forwards
@@ -16,6 +17,7 @@ class ControlHubUi {
   void renderSensor(const SensorReading &reading);
   void renderDevice(const ControlDevice &device);
   void renderEvent(const String &message);
+  void renderWorld(const WorldFeeds &feeds);
 
   // Drains a queued actuator tap for the sketch to act on. Always false with
   // USE_DISPLAY=0 (no touch surface).

@@ -57,3 +57,27 @@ void ControlHubUi::renderEvent(const String &message) {
 bool ControlHubUi::takePendingToggle(String &deviceId, bool &desiredOn) {
   return dashboard_.takePendingToggle(deviceId, desiredOn);
 }
+
+void ControlHubUi::renderWorld(const WorldFeeds &feeds) {
+  Serial.print(F("[screen:world]"));
+  if (feeds.weatherValid) {
+    Serial.print(F(" wx="));
+    Serial.print(feeds.weather.tempC, 1);
+    Serial.print(F("C "));
+    Serial.print(feeds.weather.condition);
+  }
+  if (feeds.quakeValid) {
+    Serial.print(F(" | quake=M"));
+    Serial.print(feeds.quake.mag, 1);
+    Serial.print(F(" "));
+    Serial.print(feeds.quake.place);
+  }
+  if (feeds.auroraValid) {
+    Serial.print(F(" | Kp="));
+    Serial.print(feeds.aurora.kp, 0);
+    Serial.print(F(" "));
+    Serial.print(feeds.aurora.level);
+  }
+  Serial.println();
+  dashboard_.onWorldFeeds(feeds);
+}
