@@ -28,3 +28,6 @@ npm-debug.log*
 # Editor folders
 .idea/
 .vscode/
+
+# Brainstorming visual-companion mockups
+.superpowers/
