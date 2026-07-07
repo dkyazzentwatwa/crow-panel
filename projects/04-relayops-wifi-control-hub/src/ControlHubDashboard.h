@@ -76,6 +76,9 @@ class ControlHubDashboard {
   void drawDetail();    // gauges for a sensor, control panel for an actuator
   void drawStats();
   void drawSparkline();
+  void drawWorldStrip();
+  void drawWorldCard(int16_t x, int16_t w, const char *label, const String &big,
+                     const String &sub, bool valid, unsigned long ms, uint16_t accent);
   void drawFooter();
 
   int8_t findOrAddEntry(const String &name, EntryKind kind);

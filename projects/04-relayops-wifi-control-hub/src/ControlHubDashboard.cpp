@@ -30,7 +30,10 @@ constexpr int16_t kGaugeRIn = 68;
 
 constexpr int16_t kStatsY = 344;
 constexpr int16_t kSparkY = 404;
-constexpr int16_t kSparkH = 104;
+constexpr int16_t kSparkH = 60;             // shortened to make room for the world strip
+constexpr int16_t kWorldY = 472;
+constexpr int16_t kWorldH = 60;
+constexpr unsigned long kWorldStaleMs = 45UL * 60UL * 1000UL;  // dim if no update in 45 min
 
 constexpr int16_t kFooterY = 540;
 constexpr int16_t kFooterH = 60;
@@ -255,6 +258,7 @@ void ControlHubDashboard::tick() {
     drawHeaderStatus();
     drawRoster();
     drawFooter();
+    drawWorldStrip();
   }
 }
 
@@ -279,6 +283,7 @@ void ControlHubDashboard::repaint() {
   drawStats();
   drawSparkline();
   drawFooter();
+  drawWorldStrip();
 }
 
 void ControlHubDashboard::drawHeaderStatus() {
@@ -507,6 +512,44 @@ void ControlHubDashboard::drawSparkline() {
   } else {
     text(g, kRX + 14, kSparkY + 48, "select a sensor node for its trend", fontS(), kTextMut, kLeft);
   }
+}
+
+void ControlHubDashboard::drawWorldCard(int16_t x, int16_t w, const char *label,
+                                        const String &big, const String &sub, bool valid,
+                                        unsigned long ms, uint16_t accent) {
+  Arduino_GFX *g = CrowDisplay::canvas();
+  if (!g) return;
+  bool stale = !valid || (millis() - ms) > kWorldStaleMs;
+  uint16_t bodyColor = stale ? kTextMut : kTextHi;
+  uint16_t accentColor = stale ? kLine : accent;
+
+  panel(g, x, kWorldY, w, kWorldH, 8, kSurface);
+  text(g, x + 10, kWorldY + 8, label, fontS(), accentColor, kLeft);
+  text(g, x + 10, kWorldY + 22, fit(g, big, fontL(), w - 20).c_str(), fontL(), bodyColor, kLeft);
+  text(g, x + 10, kWorldY + 44, fit(g, sub, fontS(), w - 20).c_str(), fontS(), kTextMut, kLeft);
+}
+
+void ControlHubDashboard::drawWorldStrip() {
+  Arduino_GFX *g = CrowDisplay::canvas();
+  if (!g) return;
+  g->fillRect(kRX, kWorldY, kRW, kWorldH, kBg);
+
+  const int16_t gap = 8;
+  const int16_t cw = (kRW - 2 * gap) / 3;
+
+  String wxBig = world_.weatherValid ? (String(world_.weather.tempC, 0) + "C") : "--";
+  drawWorldCard(kRX, cw, "WEATHER", wxBig, world_.weather.condition,
+                world_.weatherValid, world_.weatherMs, kAccent);
+
+  String qBig = world_.quakeValid ? ("M" + String(world_.quake.mag, 1)) : "--";
+  drawWorldCard(kRX + (cw + gap), cw, "QUAKES", qBig, world_.quake.place,
+                world_.quakeValid, world_.quakeMs, kAmber);
+
+  String aBig = world_.auroraValid ? ("Kp " + String(world_.aurora.kp, 0)) : "--";
+  uint16_t aColor = world_.aurora.verdict == kAuroraLikely ? kGreen
+                    : world_.aurora.verdict == kAuroraWatch ? kAmber : kTextMut;
+  drawWorldCard(kRX + 2 * (cw + gap), cw, "AURORA", aBig, world_.aurora.level,
+                world_.auroraValid, world_.auroraMs, aColor);
 }
 
 void ControlHubDashboard::drawFooter() {
