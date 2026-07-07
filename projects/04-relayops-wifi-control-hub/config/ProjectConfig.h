@@ -53,6 +53,24 @@
 #define WIFI_PASS ""
 #endif
 
+// Location for the weather + aurora feeds (gitignored copy of
+// Location.example.h). Defaults keep every build compiling.
+#if __has_include("Location.h")
+#include "Location.h"
+#endif
+#ifndef RELAYOPS_LAT
+#define RELAYOPS_LAT 44.05
+#endif
+#ifndef RELAYOPS_LON
+#define RELAYOPS_LON -123.09
+#endif
+#ifndef RELAYOPS_PLACE
+#define RELAYOPS_PLACE "Eugene, OR"
+#endif
+#ifndef RELAYOPS_KP_THRESHOLD
+#define RELAYOPS_KP_THRESHOLD 6
+#endif
+
 #include <AppConfig.h>
 
 #endif

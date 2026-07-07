@@ -19,6 +19,7 @@ Secrets.h
 **/config/WiFiSecrets.h
 **/config/Pins.h
 **/config/Devices.h
+**/config/Location.h
 
 # Node mock API
 node_modules/
