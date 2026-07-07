@@ -37,6 +37,7 @@ The left roster mixes two kinds of card:
 - `feed <csv>` — inject a sensor reading through the same pipeline a real
   `POST /sensor` uses. `feed SENSOR,ATTIC,29.5,40,88,0,-58` adds a telemetry
   node; `feed PRESENCE,GARAGE,-70,heartbeat` adds a presence tile.
+- `world [all|weather|quake|aurora]` — print / force-refresh the internet feeds. Mock mode returns canned Eugene, OR data; `USE_WIFI` fetches live.
 
 ## Compile
 
@@ -74,6 +75,15 @@ The panel has no radio of its own — Wi-Fi rides the onboard ESP32-C6
    hardware-free way to try both directions.
 
 Follow `docs/hardware-bringup-checklist.md` Stage 5 for the C6 hosted-firmware caveats.
+
+## World feeds (weather / earthquakes / aurora)
+
+The bottom strip shows live internet data pulled directly by the panel over
+HTTPS (`WiFiClientSecure`, no key): weather (Open-Meteo), the newest M4.5+
+earthquake (USGS), and the planetary Kp / aurora verdict (NOAA SWPC). Set
+your location in `config/Location.h` (copied from `Location.example.h`).
+Fetches are staggered and non-blocking; with `USE_WIFI=0` the strip shows
+canned data so the demo runs offline. Compile-verified, not hardware-verified.
 
 ## What To Film
 

@@ -20,6 +20,11 @@ EXTRA_FLAGS="-DUSE_DISPLAY=1 -DUSE_WIFI=1" ../../scripts/compile-all.sh
   compiled into the `USE_WIFI` path (`SensorServer.cpp`).
 - `GFX Library for Arduino` + `SensorLib` — only for `USE_DISPLAY`.
 - `WebServer.h` and `HTTPClient.h` ship with the esp32 core; no extra install.
+- The world-feeds path (`WorldFeedClient`, `USE_WIFI`) uses `WiFiClientSecure`
+  + `HTTPClient` (esp32 core) and `ArduinoJson` with a `Filter` to parse only
+  the shown fields. `setInsecure()` skips cert validation (public read-only
+  data). `configTime()` provides UTC for quake age. `USE_WIFI=0` compiles none
+  of this and serves canned data.
 
 ## Mock vs. real, by class
 
