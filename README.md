@@ -1,6 +1,6 @@
 # crowpanel-aiot-arduino-suite
 
-Arduino CLI tutorial scaffold for thirteen Elecrow CrowPanel Advanced 7-inch ESP32-P4 HMI AI Display projects.
+Arduino CLI tutorial scaffold for fifteen Elecrow CrowPanel Advanced 7-inch ESP32-P4 HMI AI Display projects.
 
 This repo is mock-first. Every sketch boots into a Serial-driven demo you can teach, film, and iterate on — and every real driver path (Wi-Fi, LoRa, NFC/RFID, display/touch) now exists behind a feature flag as a **compile-verified scaffold**. Display rendering uses the Adafruit-GFX-style API (no LVGL by design). Two words carry this repo's honesty contract:
 
@@ -32,7 +32,7 @@ The first four builds are hardware-path teaching projects:
 3. `projects/03-badgeops-nfc-rfid-system` — badge enrollment, attendance, and lightweight access control. Mock badge taps and policy decisions; real PN532 (I2C) and MFRC522 (SPI) scaffolds behind flags.
 4. `projects/04-relayops-wifi-control-hub` — Wi-Fi control hub reusing the FieldOps dashboard, no radio module. The panel **runs a web server** so remote ESP32 nodes POST sensor data in, and **sends HTTP GPIO commands out** to toggle their lights/relays. Mock source + `set`/`feed` serial commands drive it fully offline; the real server + controller live behind `USE_WIFI`.
 
-The newer ports are mock-first CrowPanel product surfaces inspired by sibling GitHub repos. They compile as standalone sketches and mirror their Serial-driven state onto a shared `OpsDashboard` touch UI when `USE_DISPLAY=1`:
+The newer ports are mock-first CrowPanel product surfaces inspired by sibling GitHub repos. They compile as standalone sketches and mirror their Serial-driven state onto a touch dashboard when `USE_DISPLAY=1`:
 
 5. `projects/05-cypherdrive-wireless-ops` — safe Wi-Fi/BLE visibility console inspired by `cypher-drive`; no HID or captive-portal capture in v1.
 6. `projects/06-wiretap-benchops-console` — bench protocol console inspired by `WireTap-32`; default probe mode is high-Z/read-oriented, and SPI ID clocking requires an explicit lab opt-in.
@@ -43,6 +43,8 @@ The newer ports are mock-first CrowPanel product surfaces inspired by sibling Gi
 11. `projects/11-cardrf-spectrum-console` — receive-only spectrum console inspired by `cardputer-hackrf`; no TX/replay/jamming controls.
 12. `projects/12-creatorops-board` — local content pipeline board inspired by `techtiff-brain`; no publishing or external mutations.
 13. `projects/13-surveyops-wardriver-panel` — passive GPS/Wi-Fi survey dashboard inspired by `esp32-gps-wifi-wigle`; no network joins or active testing.
+14. `projects/14-adsb-flight-tracker-radar` — live/mock aircraft radar inspired by ADS-B tracker projects; public APIs and world-feed panels behind Wi-Fi.
+15. `projects/15-pokedex-panel` — large touch Pokedex inspired by `esp32-pokedex`; offline mock catalog by default, source SD catalog behind `USE_SD_POKEDEX`.
 
 ## Toolchain
 
@@ -110,6 +112,8 @@ Every sketch runs an interactive command router on Serial (115200 baud, line end
 | 11 CardRF | `scan`, `feed`, `power`, `preset`, `stop` | Receive-only mock spectrum rows |
 | 12 CreatorOps | `pipeline`, `idea`, `draft`, `channel`, `task` | Local content pipeline dashboard |
 | 13 SurveyOps | `gps`, `scan`, `log`, `feed`, `rotate` | Passive GPS/Wi-Fi survey mock console |
+| 14 ADS-B Radar | `planes`, `range`, `poll`, `mock`, `screen`, `world` | Mock/live aircraft radar plus weather, quake, aurora, and air screens |
+| 15 Pokedex | `browse`, `search`, `open`, `page`, `demo`, `source` | Offline Pokedex catalog browser and detail cards |
 
 Injected events run the exact same pipeline as mock (and future real) drivers — one code path per project (`processPacket` / `processScan` / `processTap` / `onSensor`).
 
@@ -136,6 +140,7 @@ Each flag gates a compile-verified scaffold. Flip ONE at a time following `docs/
 | `USE_CREATOROPS_API` | CreatorOps read-only local/static/API cache source | hardware-gated |
 | `USE_GPS_DRIVER` | SurveyOps GPS parser | hardware-gated |
 | `USE_SD_WIGLE_LOG` | SurveyOps WiGLE-style CSV logging and rotation | hardware-gated |
+| `USE_SD_POKEDEX` | Pokedex Panel streams the source `/pokemon/index.csv` and detail JSON from SD_MMC | hardware-gated |
 
 Per-machine settings live in gitignored files copied from templates: `config/Pins.example.h` → `Pins.h` (radio params, reader pins) and `config/WiFiSecrets.example.h` → `WiFiSecrets.h` (credentials).
 

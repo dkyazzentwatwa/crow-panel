@@ -25,6 +25,8 @@ still need their own scan logs before their rows move beyond compile-ready.
 | 11 CardRF Spectrum Console | `USE_RF_UART_BRIDGE` | receive-only host/HackRF `SCANROW` and `POWER` serial bridge | compile-ready until host bridge feed is captured |
 | 12 CreatorOps Board | `USE_CREATOROPS_API` | read-only local/static/API cache source | compile-ready until read-only data fetch/cache is observed |
 | 13 SurveyOps Wardriver Panel | `USE_GPS_DRIVER`, `USE_WIFI_SCAN`, `USE_SD_WIGLE_LOG` | GPS parser, passive Wi-Fi scan with shared SDIO pin remap, WiGLE-style CSV logging/rotation | compile-ready until GPS, passive scan, and storage logs are captured |
+| 14 ADS-B Flight Tracker Radar | `USE_DISPLAY`, `USE_WIFI` | touch radar plus airplanes.live / adsb.fi, weather, quake, aurora, and air-quality feeds | field-proven for the tested live Wi-Fi path; new changes still need their own proof |
+| 15 Pokedex Panel | `USE_DISPLAY`, `USE_SD_POKEDEX` | touch Pokedex UI plus source `esp32-pokedex` SD catalog streaming | compile-ready until SD_MMC mount, touch navigation, and JSON detail browsing are captured |
 
 ## Safety Boundaries
 
@@ -35,6 +37,8 @@ still need their own scan logs before their rows move beyond compile-ready.
 - SurveyOps must not join networks, deauth clients, inject frames, or collect
   credentials.
 - CreatorOps must not publish, post, delete, or mutate external services.
+- Pokedex Panel must stay offline/source-only; it must not connect to Pokemon GO,
+  scrape accounts, or imply official game-service integration.
 
 ## Coordinator Acceptance
 

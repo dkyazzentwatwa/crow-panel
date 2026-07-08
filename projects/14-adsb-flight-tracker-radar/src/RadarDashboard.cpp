@@ -12,6 +12,7 @@ using namespace Widgets;
 
 namespace {
 constexpr int16_t kScreenW = 1024;
+constexpr int16_t kScreenH = 600;
 constexpr int16_t kHeaderH = 56;
 constexpr int16_t kScopeX = 76;
 constexpr int16_t kScopeY = 122;
@@ -26,6 +27,12 @@ constexpr int16_t kLocY = 350;
 constexpr int16_t kTimeY = 426;
 constexpr int16_t kFooterY = 548;
 constexpr int16_t kFooterH = 52;
+constexpr int16_t kTabsX = 380;
+constexpr int16_t kTabsY = 14;
+constexpr int16_t kTabH = 28;
+constexpr int16_t kTabGap = 8;
+constexpr uint16_t kTouchDebounceMs = 120;
+constexpr uint16_t kScreenChangeCooldownMs = 1100;
 constexpr int16_t kWorldTop = 76;
 constexpr int16_t kWorldLeft = 48;
 constexpr int16_t kWorldRight = kScreenW - 48;
@@ -108,6 +115,28 @@ const char *screenTitleFor(RadarScreen screen) {
     case kAuroraScreen: return "AURORA WATCH";
     case kAirScreen: return "AIR QUALITY";
     default: return "DASHBOARD";
+  }
+}
+
+const char *screenTabLabelFor(RadarScreen screen) {
+  switch (screen) {
+    case kRadarScreen: return "RADAR";
+    case kWeatherScreen: return "WX";
+    case kQuakeScreen: return "QUAKE";
+    case kAuroraScreen: return "AURORA";
+    case kAirScreen: return "AIR";
+    default: return "?";
+  }
+}
+
+int16_t screenTabWidthFor(RadarScreen screen) {
+  switch (screen) {
+    case kRadarScreen: return 66;
+    case kWeatherScreen: return 46;
+    case kQuakeScreen: return 72;
+    case kAuroraScreen: return 86;
+    case kAirScreen: return 48;
+    default: return 48;
   }
 }
 
@@ -284,37 +313,152 @@ void RadarDashboard::blitScope_() {
 }
 
 void RadarDashboard::handleTouch_() {
-  int16_t tx, ty;
-  bool touched = CrowDisplay::touchPoint(tx, ty);
-  if (touched && !wasTouched_) {
-    if (tx >= nextPillX_ && tx <= nextPillX_ + nextPillW_ && ty >= 8 && ty <= 46) {
-      nextScreen();
-    } else if (screen_ != kRadarScreen) {
-      // World screens are read-only for v1; the header NEXT control advances.
-    } else if (tx >= rangePillX_ && tx <= rangePillX_ + rangePillW_ && ty >= 8 && ty <= 46) {
-      cycleRange_();
-    } else if (detailOpen_) {
-      bool inside = tx >= detailX_ && tx <= detailX_ + detailW_ && ty >= detailY_ &&
-                    ty <= detailY_ + detailH_;
-      if (!inside) {
-        detailOpen_ = false;
-        selectedIdx_ = -1;
+  int16_t rx, ry;
+  bool touched = CrowDisplay::touchPoint(rx, ry);
+  uint32_t now = millis();
+  bool shouldProcess = touched && !wasTouched_ && (now - lastTouchActionMs_) > kTouchDebounceMs;
+  if (shouldProcess) {
+    struct TouchCandidate {
+      int16_t x;
+      int16_t y;
+      const char *name;
+    };
+    const TouchCandidate candidates[] = {
+        {rx, ry, "raw"},
+        {ry, rx, "swap"},
+        {(int16_t)(kScreenW - 1 - rx), ry, "flipX"},
+        {rx, (int16_t)(kScreenH - 1 - ry), "flipY"},
+        {(int16_t)(kScreenW - 1 - rx), (int16_t)(kScreenH - 1 - ry), "flipXY"},
+        {(int16_t)(kScreenW - 1 - ry), rx, "swapFlipX"},
+        {ry, (int16_t)(kScreenH - 1 - rx), "swapFlipY"},
+        {(int16_t)(kScreenW - 1 - ry), (int16_t)(kScreenH - 1 - rx), "swapFlipXY"},
+    };
+
+    bool handled = false;
+    for (uint8_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
+      int16_t tx = candidates[i].x;
+      int16_t ty = candidates[i].y;
+      if (tx < 0 || tx >= kScreenW || ty < 0 || ty >= kScreenH) continue;
+
+      bool duplicate = false;
+      for (uint8_t j = 0; j < i; j++) {
+        if (candidates[j].x == tx && candidates[j].y == ty) {
+          duplicate = true;
+          break;
+        }
       }
-    } else {
-      int8_t hit = hitTestBlip_(tx, ty);
-      if (hit < 0) hit = hitTestRow_(tx, ty);
-      if (hit >= 0) {
-        selectedIdx_ = hit;
-        detailOpen_ = true;
+      if (duplicate) continue;
+
+      if (handleTouchAt_(tx, ty, candidates[i].name)) {
+        handled = true;
+        break;
       }
     }
+
+    if (!handled) {
+      Logger::info("touch", "ignored raw=" + String(rx) + "," + String(ry));
+    }
+    lastTouchActionMs_ = now;
   }
   wasTouched_ = touched;
 }
 
+bool RadarDashboard::isNextHit_(int16_t tx, int16_t ty) const {
+  if (tx < 0 || tx >= kScreenW || ty < 0 || ty >= kScreenH) return false;
+  return nextPillX_ > 0 &&
+         tx >= nextPillX_ - 6 && tx <= nextPillX_ + nextPillW_ + 6 &&
+         ty >= 10 && ty <= 46;
+}
+
+bool RadarDashboard::isRangeHit_(int16_t tx, int16_t ty) const {
+  if (tx < 0 || tx >= kScreenW || ty < 0 || ty >= kScreenH) return false;
+  return rangePillX_ > 0 &&
+         tx >= rangePillX_ - 22 && tx <= rangePillX_ + rangePillW_ + 22 &&
+         ty >= 8 && ty <= 52;
+}
+
+bool RadarDashboard::tabScreenAt_(int16_t tx, int16_t ty, RadarScreen &screen) const {
+  if (tx < 0 || tx >= kScreenW || ty < kTabsY - 4 || ty > kTabsY + kTabH + 4) return false;
+
+  int16_t x = kTabsX;
+  for (uint8_t i = 0; i < (uint8_t)kRadarScreenCount; i++) {
+    RadarScreen candidate = (RadarScreen)i;
+    int16_t w = screenTabWidthFor(candidate);
+    if (tx >= x - 2 && tx <= x + w + 2) {
+      screen = candidate;
+      return true;
+    }
+    x += w + kTabGap;
+  }
+  return false;
+}
+
+bool RadarDashboard::changeScreenFromTouch_(RadarScreen screen, const String &where,
+                                            const char *action) {
+  if (screen >= kRadarScreenCount) screen = kRadarScreen;
+  if (screen == screen_) {
+    Logger::info("touch", where + " action=" + action + "-current");
+    return true;
+  }
+
+  uint32_t now = millis();
+  if ((now - lastScreenChangeMs_) < kScreenChangeCooldownMs) {
+    Logger::info("touch", where + " action=" + action + "-cooldown");
+    return true;
+  }
+
+  setScreen_(screen);
+  lastScreenChangeMs_ = now;
+  Logger::info("touch", where + " action=" + action + " screen=" + screenNameFor(screen));
+  return true;
+}
+
+bool RadarDashboard::handleTouchAt_(int16_t tx, int16_t ty, const char *mapping) {
+  String where = String("map=") + mapping + " x=" + tx + " y=" + ty;
+  RadarScreen tabScreen = kRadarScreen;
+
+  if (tabScreenAt_(tx, ty, tabScreen)) {
+    return changeScreenFromTouch_(tabScreen, where, "tab");
+  }
+
+  if (screen_ == kRadarScreen && isRangeHit_(tx, ty)) {
+    cycleRange_();
+    screenDirty_ = true;
+    Logger::info("touch", where + " action=range");
+    return true;
+  }
+
+  if (isNextHit_(tx, ty)) {
+    RadarScreen next = (RadarScreen)(((uint8_t)screen_ + 1) % (uint8_t)kRadarScreenCount);
+    return changeScreenFromTouch_(next, where, "next");
+  }
+
+  if (screen_ != kRadarScreen) return false;
+
+  if (detailOpen_) {
+    detailOpen_ = false;
+    selectedIdx_ = -1;
+    screenDirty_ = true;
+    Logger::info("touch", where + " action=close-detail");
+    return true;
+  }
+
+  int8_t hit = hitTestBlip_(tx, ty);
+  if (hit < 0) hit = hitTestRow_(tx, ty);
+  if (hit >= 0) {
+    selectedIdx_ = hit;
+    detailOpen_ = true;
+    screenDirty_ = true;
+    Logger::info("touch", where + " action=detail idx=" + String(hit));
+    return true;
+  }
+
+  return false;
+}
+
 int8_t RadarDashboard::hitTestBlip_(int16_t tx, int16_t ty) const {
   int8_t best = -1;
-  long bestD = 22 * 22;
+  long bestD = 36 * 36;
   for (uint8_t i = 0; i < snap_.count; i++) {
     if (blipX_[i] < 0) continue;
     long dx = tx - (kScopeX + blipX_[i]);
@@ -329,11 +473,11 @@ int8_t RadarDashboard::hitTestBlip_(int16_t tx, int16_t ty) const {
 }
 
 int8_t RadarDashboard::hitTestRow_(int16_t tx, int16_t ty) const {
-  if (tx < kPanelX || tx > kPanelX + kPanelW) return -1;
+  if (tx < kPanelX - 24 || tx > kPanelX + kPanelW + 8) return -1;
   uint8_t rows = snap_.count < kMaxRows ? snap_.count : kMaxRows;
   for (uint8_t i = 0; i < rows; i++) {
     int16_t y = kListTop + i * kRowH;
-    if (ty >= y - 2 && ty <= y + kRowH - 2) return (int8_t)i;
+    if (ty >= y - 8 && ty <= y + kRowH + 8) return (int8_t)i;
   }
   return -1;
 }
@@ -350,12 +494,41 @@ void RadarDashboard::cycleRange_() {
   rangeRingKm_ = steps[(idx + 1) % 5];
 }
 
+void RadarDashboard::drawScreenTabs_(Arduino_GFX *g) {
+  if (!g) return;
+
+  int16_t x = kTabsX;
+  for (uint8_t i = 0; i < (uint8_t)kRadarScreenCount; i++) {
+    RadarScreen tab = (RadarScreen)i;
+    int16_t w = screenTabWidthFor(tab);
+    const char *label = screenTabLabelFor(tab);
+    bool active = tab == screen_;
+    uint16_t fill = active ? kAccent : kBg;
+    uint16_t line = active ? kAccent : kLine;
+    uint16_t fg = active ? kBg : kTextMut;
+
+    g->fillRoundRect(x, kTabsY, w, kTabH, 7, fill);
+    g->drawRoundRect(x, kTabsY, w, kTabH, 7, line);
+
+    int16_t bx, by;
+    uint16_t bw, bh;
+    g->setFont(fontS());
+    g->setTextSize(1);
+    g->getTextBounds(label, 0, 0, &bx, &by, &bw, &bh);
+    int16_t ty = kTabsY + (kTabH - (int16_t)bh) / 2;
+    text(g, x + w / 2, ty, label, fontS(), fg, kCenter);
+
+    x += w + kTabGap;
+  }
+}
+
 void RadarDashboard::drawHeader_() {
   Arduino_GFX *g = CrowDisplay::canvas();
   g->fillRect(0, 0, kScreenW, kHeaderH, kSurface);
   g->fillRect(0, kHeaderH - 2, kScreenW, 2, kAccent);
   text(g, 20, 10, "ADS-B RADAR", fontL(), kTextHi, kLeft);
   text(g, 20, 34, "LIVE AIRCRAFT TRACKER", fontS(), kTextMut, kLeft);
+  drawScreenTabs_(g);
 
   const char *linkLabel = USE_WIFI ? "LIVE" : "MOCK";
   uint16_t linkFill = USE_WIFI ? kGreen : kSurfaceHi;
@@ -369,18 +542,17 @@ void RadarDashboard::drawHeader_() {
   auto pillW = [&](const char *s) { return (int16_t)(textWidth(g, s, fontS()) + 24); };
   int16_t gap = 10;
   int16_t cntW = textWidth(g, cntBuf, fontS());
-  int16_t total = cntW + 16 + pillW(rangeBuf) + gap + pillW("NEXT") + gap + pillW(linkLabel);
+  int16_t total = cntW + 16 + pillW(rangeBuf) + gap + pillW(linkLabel);
   int16_t x = kScreenW - 16 - total;
   int16_t y = 14;
+  nextPillX_ = 0;
+  nextPillW_ = 0;
 
   text(g, x, 20, cntBuf, fontS(), kTextMut, kLeft);
   x += cntW + 16;
   rangePillX_ = x;
   rangePillW_ = pill(g, x, y, rangeBuf, fontS(), kBg, kAccent);
   x += rangePillW_ + gap;
-  nextPillX_ = x;
-  nextPillW_ = pill(g, x, y, "NEXT", fontS(), kTextHi, kSurfaceHi);
-  x += nextPillW_ + gap;
   pill(g, x, y, linkLabel, fontS(), linkText, linkFill);
 }
 
@@ -479,6 +651,7 @@ void RadarDashboard::drawDetail_() {
   int16_t x = detailX_ + 18;
   statusDot(g, x + 4, detailY_ + 24, 6, altColor(a));
   text(g, x + 20, detailY_ + 12, a.callsign[0] ? a.callsign : "UNKNOWN", fontXL(), kTextHi, kLeft);
+  pill(g, detailX_ + detailW_ - 82, detailY_ + 12, "CLOSE", fontS(), kBg, kAccent);
   text(g, x, detailY_ + 52, a.icao, fontS(), kTextMut, kLeft);
   if (a.type[0]) text(g, detailX_ + detailW_ - 14, detailY_ + 52, a.type, fontS(), kTextMut, kRight);
 
@@ -495,7 +668,7 @@ void RadarDashboard::drawDetail_() {
   text(g, x, detailY_ + 82, l1, fontM(), kTextHi, kLeft);
   text(g, x, detailY_ + 110, l2, fontM(), kTextHi, kLeft);
   text(g, x, detailY_ + 138, l3, fontM(), kTextHi, kLeft);
-  text(g, detailX_ + detailW_ - 14, detailY_ + detailH_ - 22, "tap outside to close", fontS(),
+  text(g, detailX_ + detailW_ - 14, detailY_ + detailH_ - 22, "tap anywhere to close", fontS(),
        kTextMut, kRight);
 }
 
@@ -506,6 +679,7 @@ void RadarDashboard::drawWorldHeader_(const char *title, const char *subtitle) {
   g->fillRect(0, kHeaderH - 2, kScreenW, 2, kAccent);
   text(g, 20, 10, title, fontL(), kTextHi, kLeft);
   text(g, 20, 34, subtitle, fontS(), kTextMut, kLeft);
+  drawScreenTabs_(g);
 
   char pageBuf[16];
   snprintf(pageBuf, sizeof(pageBuf), "%u/%u", (unsigned)((uint8_t)screen_ + 1),
@@ -516,13 +690,12 @@ void RadarDashboard::drawWorldHeader_(const char *title, const char *subtitle) {
 
   auto pillW = [&](const char *s) { return (int16_t)(textWidth(g, s, fontS()) + 24); };
   int16_t gap = 10;
-  int16_t total = pillW(pageBuf) + gap + pillW("NEXT") + gap + pillW(linkLabel);
+  int16_t total = pillW(pageBuf) + gap + pillW(linkLabel);
   int16_t x = kScreenW - 16 - total;
   int16_t y = 14;
+  nextPillX_ = 0;
+  nextPillW_ = 0;
   x += pill(g, x, y, pageBuf, fontS(), kTextHi, kSurfaceHi) + gap;
-  nextPillX_ = x;
-  nextPillW_ = pill(g, x, y, "NEXT", fontS(), kBg, kAccent);
-  x += nextPillW_ + gap;
   pill(g, x, y, linkLabel, fontS(), linkText, linkFill);
 }
 
@@ -544,8 +717,7 @@ void RadarDashboard::drawWorldFooter_(bool valid, unsigned long ms, const String
   text(g, 38, kFooterY + 18, fit(g, left, fontS(), 560).c_str(), fontS(),
        valid ? kTextHi : kTextMut, kLeft);
 
-  text(g, kScreenW / 2 + 160, kFooterY + 18, ADSB_SITE_NAME, fontS(), kTextMut, kCenter);
-  text(g, kScreenW - 16, kFooterY + 18, "tap NEXT", fontS(), kTextMut, kRight);
+  text(g, kScreenW - 16, kFooterY + 18, "tabs", fontS(), kTextMut, kRight);
 }
 
 void RadarDashboard::drawWorldScreen_() {

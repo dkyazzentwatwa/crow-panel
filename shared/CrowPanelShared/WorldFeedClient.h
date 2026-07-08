@@ -22,6 +22,7 @@ class WorldFeedClient {
   void fillMock();
   AuroraVerdict verdictFor(float kp) const;
 #if USE_WIFI
+  bool httpGetBody(const String &url, String &body, String &errorSlot, const char *label);
   bool fetchWeather();
   bool fetchQuake();
   bool fetchAurora();
@@ -41,8 +42,12 @@ class WorldFeedClient {
   Throttle quakeGate_{5UL * 60UL * 1000UL};
   Throttle auroraGate_{10UL * 60UL * 1000UL};
   Throttle airGate_{20UL * 60UL * 1000UL};
-  // Until a feed's first success, attempts are spaced by this instead.
-  Throttle startupGate_{5000};
+  // Until a feed's first success, attempts are spaced per feed so weather,
+  // quake, aurora, and air can all populate quickly without sharing one gate.
+  Throttle weatherStartupGate_{1000};
+  Throttle quakeStartupGate_{1000};
+  Throttle auroraStartupGate_{1000};
+  Throttle airStartupGate_{1000};
   uint8_t turn_ = 0;  // rotates which feed is eligible, so at most one/call
 };
 

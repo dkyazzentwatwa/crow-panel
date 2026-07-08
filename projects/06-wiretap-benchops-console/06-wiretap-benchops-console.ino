@@ -1,8 +1,9 @@
 #include "config/ProjectConfig.h"
 #include "src/BenchProbeBus.h"
+#include "src/WireTapDashboard.h"
 #include <CrowPanelShared.h>
 
-OpsDashboard dashboard;
+WireTapDashboard dashboard;
 SerialCommandRouter router;
 EventLog eventLog;
 StorageManager storage;

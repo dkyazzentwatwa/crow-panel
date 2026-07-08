@@ -9,6 +9,7 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <time.h>
+#include "HostedWiFi.h"
 
 namespace {
 const char *weatherText(int code) {
@@ -71,6 +72,7 @@ void WorldFeedClient::begin(float lat, float lon, const char *place, int kpThres
   place_ = (place != nullptr) ? place : "";
   kpThreshold_ = kpThreshold;
 #if USE_WIFI
+  configureCrowPanelHostedWiFiPins("world");
   configTime(0, 0, "pool.ntp.org", "time.nist.gov");
   Logger::info("world", "feeds: direct HTTPS, loc=" + place_);
 #else
@@ -134,16 +136,16 @@ bool WorldFeedClient::poll(WorldFeeds &out) {
   bool changed = false;
   switch (which) {
     case 0:
-      if (feeds_.weatherValid ? weatherGate_.ready() : startupGate_.ready()) changed = fetchWeather();
+      if (feeds_.weatherValid ? weatherGate_.ready() : weatherStartupGate_.ready()) changed = fetchWeather();
       break;
     case 1:
-      if (feeds_.quakeValid ? quakeGate_.ready() : startupGate_.ready()) changed = fetchQuake();
+      if (feeds_.quakeValid ? quakeGate_.ready() : quakeStartupGate_.ready()) changed = fetchQuake();
       break;
     case 2:
-      if (feeds_.auroraValid ? auroraGate_.ready() : startupGate_.ready()) changed = fetchAurora();
+      if (feeds_.auroraValid ? auroraGate_.ready() : auroraStartupGate_.ready()) changed = fetchAurora();
       break;
     case 3:
-      if (feeds_.airValid ? airGate_.ready() : startupGate_.ready()) changed = fetchAirQuality();
+      if (feeds_.airValid ? airGate_.ready() : airStartupGate_.ready()) changed = fetchAirQuality();
       break;
   }
   if (changed) out = feeds_;
@@ -185,25 +187,45 @@ bool WorldFeedClient::setError(String &slot, const String &message) {
 
 void WorldFeedClient::clearError(String &slot) { slot = ""; }
 
+bool WorldFeedClient::httpGetBody(const String &url, String &body, String &errorSlot,
+                                  const char *label) {
+  body = "";
+  if (WiFi.status() != WL_CONNECTED) return setError(errorSlot, "wifi down");
+
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  http.setConnectTimeout(4000);
+  http.setTimeout(9000);
+  // Disable chunked transfer before parsing. This mirrors the stable ADS-B
+  // path, where we parse a complete body instead of a live TLS stream.
+  http.useHTTP10(true);
+  if (!http.begin(client, url)) return setError(errorSlot, "begin failed");
+  http.addHeader("User-Agent", "CrowPanel-AirRadar/1.0");
+  int code = http.GET();
+  if (code != 200) {
+    http.end();
+    Logger::warn("world", String(label) + " HTTP " + String(code));
+    return setError(errorSlot, "HTTP " + String(code));
+  }
+  body = http.getString();
+  http.end();
+  if (body.length() == 0) {
+    Logger::warn("world", String(label) + " empty body");
+    return setError(errorSlot, "empty body");
+  }
+  Logger::info("world", String(label) + " body " + String(body.length()) + "B");
+  return true;
+}
+
 bool WorldFeedClient::fetchWeather() {
-  if (WiFi.status() != WL_CONNECTED) return setError(feeds_.weatherError, "wifi down");
   String url = String("https://api.open-meteo.com/v1/forecast?latitude=") + String(lat_, 4) +
                "&longitude=" + String(lon_, 4) +
                "&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m" +
                "&daily=temperature_2m_max,temperature_2m_min&wind_speed_unit=kn" +
                "&temperature_unit=celsius&timezone=auto&forecast_days=1";
-  WiFiClientSecure client;
-  client.setInsecure();
-  HTTPClient http;
-  http.setConnectTimeout(4000);
-  http.setTimeout(5000);
-  if (!http.begin(client, url)) return setError(feeds_.weatherError, "begin failed");
-  int code = http.GET();
-  if (code != 200) {
-    http.end();
-    Logger::warn("world", "weather HTTP " + String(code));
-    return setError(feeds_.weatherError, "HTTP " + String(code));
-  }
+  String body;
+  if (!httpGetBody(url, body, feeds_.weatherError, "weather")) return false;
 
   JsonDocument filter;
   filter["current"]["temperature_2m"] = true;
@@ -214,9 +236,7 @@ bool WorldFeedClient::fetchWeather() {
   filter["daily"]["temperature_2m_min"] = true;
 
   JsonDocument doc;
-  DeserializationError err = deserializeJson(doc, http.getStream(),
-                                             DeserializationOption::Filter(filter));
-  http.end();
+  DeserializationError err = deserializeJson(doc, body, DeserializationOption::Filter(filter));
   if (err) {
     Logger::warn("world", String("weather json ") + err.c_str());
     return setError(feeds_.weatherError, String("json ") + err.c_str());
@@ -236,19 +256,10 @@ bool WorldFeedClient::fetchWeather() {
 }
 
 bool WorldFeedClient::fetchQuake() {
-  if (WiFi.status() != WL_CONNECTED) return setError(feeds_.quakeError, "wifi down");
-  const char *url = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_day.geojson";
-  WiFiClientSecure client;
-  client.setInsecure();
-  HTTPClient http;
-  http.setConnectTimeout(4000);
-  http.setTimeout(5000);
-  if (!http.begin(client, url)) return setError(feeds_.quakeError, "begin failed");
-  int code = http.GET();
-  if (code != 200) {
-    http.end();
-    Logger::warn("world", "quake HTTP " + String(code));
-    return setError(feeds_.quakeError, "HTTP " + String(code));
+  String body;
+  if (!httpGetBody("https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_day.geojson",
+                   body, feeds_.quakeError, "quake")) {
+    return false;
   }
 
   JsonDocument filter;
@@ -259,9 +270,7 @@ bool WorldFeedClient::fetchQuake() {
   filter["features"][0]["geometry"]["coordinates"] = true;
 
   JsonDocument doc;
-  DeserializationError err = deserializeJson(doc, http.getStream(),
-                                             DeserializationOption::Filter(filter));
-  http.end();
+  DeserializationError err = deserializeJson(doc, body, DeserializationOption::Filter(filter));
   if (err) {
     Logger::warn("world", String("quake json ") + err.c_str());
     return setError(feeds_.quakeError, String("json ") + err.c_str());
@@ -293,24 +302,14 @@ bool WorldFeedClient::fetchQuake() {
 }
 
 bool WorldFeedClient::fetchAurora() {
-  if (WiFi.status() != WL_CONNECTED) return setError(feeds_.auroraError, "wifi down");
-  const char *url = "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json";
-  WiFiClientSecure client;
-  client.setInsecure();
-  HTTPClient http;
-  http.setConnectTimeout(4000);
-  http.setTimeout(5000);
-  if (!http.begin(client, url)) return setError(feeds_.auroraError, "begin failed");
-  int code = http.GET();
-  if (code != 200) {
-    http.end();
-    Logger::warn("world", "aurora HTTP " + String(code));
-    return setError(feeds_.auroraError, "HTTP " + String(code));
+  String body;
+  if (!httpGetBody("https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json",
+                   body, feeds_.auroraError, "aurora")) {
+    return false;
   }
 
   JsonDocument doc;
-  DeserializationError err = deserializeJson(doc, http.getStream());
-  http.end();
+  DeserializationError err = deserializeJson(doc, body);
   if (err) {
     Logger::warn("world", String("aurora json ") + err.c_str());
     return setError(feeds_.auroraError, String("json ") + err.c_str());
@@ -337,22 +336,11 @@ bool WorldFeedClient::fetchAurora() {
 }
 
 bool WorldFeedClient::fetchAirQuality() {
-  if (WiFi.status() != WL_CONNECTED) return setError(feeds_.airError, "wifi down");
   String url = String("https://air-quality-api.open-meteo.com/v1/air-quality?latitude=") +
                String(lat_, 4) + "&longitude=" + String(lon_, 4) +
                "&current=us_aqi,pm10,pm2_5,ozone,uv_index&timezone=auto";
-  WiFiClientSecure client;
-  client.setInsecure();
-  HTTPClient http;
-  http.setConnectTimeout(4000);
-  http.setTimeout(5000);
-  if (!http.begin(client, url)) return setError(feeds_.airError, "begin failed");
-  int code = http.GET();
-  if (code != 200) {
-    http.end();
-    Logger::warn("world", "air HTTP " + String(code));
-    return setError(feeds_.airError, "HTTP " + String(code));
-  }
+  String body;
+  if (!httpGetBody(url, body, feeds_.airError, "air")) return false;
 
   JsonDocument filter;
   filter["current"]["us_aqi"] = true;
@@ -362,9 +350,7 @@ bool WorldFeedClient::fetchAirQuality() {
   filter["current"]["uv_index"] = true;
 
   JsonDocument doc;
-  DeserializationError err = deserializeJson(doc, http.getStream(),
-                                             DeserializationOption::Filter(filter));
-  http.end();
+  DeserializationError err = deserializeJson(doc, body, DeserializationOption::Filter(filter));
   if (err) {
     Logger::warn("world", String("air json ") + err.c_str());
     return setError(feeds_.airError, String("json ") + err.c_str());

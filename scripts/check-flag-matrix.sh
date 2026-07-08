@@ -44,6 +44,7 @@ P11="projects/11-cardrf-spectrum-console"
 P12="projects/12-creatorops-board"
 P13="projects/13-surveyops-wardriver-panel"
 P14="projects/14-adsb-flight-tracker-radar"
+P15="projects/15-pokedex-panel"
 
 # Rows: "<project>|<tag>|<flags>|<required libs, comma-separated>"
 ROWS=(
@@ -61,6 +62,7 @@ ROWS=(
   "$P12|baseline||"
   "$P13|baseline||"
   "$P14|baseline||"
+  "$P15|baseline||"
   "$P1|display|-DUSE_DISPLAY=1|GFX Library for Arduino,SensorLib"
   "$P2|display|-DUSE_DISPLAY=1|GFX Library for Arduino,SensorLib"
   "$P3|display|-DUSE_DISPLAY=1|GFX Library for Arduino,SensorLib"
@@ -75,6 +77,7 @@ ROWS=(
   "$P12|display|-DUSE_DISPLAY=1|GFX Library for Arduino,SensorLib"
   "$P13|display|-DUSE_DISPLAY=1|GFX Library for Arduino,SensorLib"
   "$P14|display|-DUSE_DISPLAY=1|GFX Library for Arduino,SensorLib"
+  "$P15|display|-DUSE_DISPLAY=1|GFX Library for Arduino,SensorLib"
   "$P1|wifi|-DUSE_WIFI=1|"
   "$P2|wifi|-DUSE_WIFI=1|"
   "$P3|wifi|-DUSE_WIFI=1|"
@@ -110,6 +113,8 @@ ROWS=(
   "$P13|wifi-scan|-DUSE_WIFI_SCAN=1|"
   "$P13|sd-wigle|-DUSE_SD_WIGLE_LOG=1|"
   "$P13|survey-hardware-gated|-DUSE_GPS_DRIVER=1 -DUSE_WIFI_SCAN=1 -DUSE_SD_WIGLE_LOG=1|TinyGPSPlus"
+  "$P15|sd-pokedex|-DUSE_SD_POKEDEX=1|ArduinoJson"
+  "$P15|display-sd-pokedex|-DUSE_DISPLAY=1 -DUSE_SD_POKEDEX=1|ArduinoJson,GFX Library for Arduino,SensorLib"
 )
 
 echo "Flag matrix: ${#ROWS[@]} rows on $FQBN"

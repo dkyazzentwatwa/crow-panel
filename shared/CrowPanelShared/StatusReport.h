@@ -51,7 +51,9 @@ inline void printSystemStatus(Stream &out, const char *appName, uint32_t eventCo
   out.print(F(" USE_GPS_DRIVER="));
   out.print(USE_GPS_DRIVER);
   out.print(F(" USE_SD_WIGLE_LOG="));
-  out.println(USE_SD_WIGLE_LOG);
+  out.print(USE_SD_WIGLE_LOG);
+  out.print(F(" USE_SD_POKEDEX="));
+  out.println(USE_SD_POKEDEX);
   out.print(F("[status] events="));
   out.println(eventCount);
 }

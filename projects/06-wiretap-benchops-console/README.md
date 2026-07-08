@@ -6,6 +6,21 @@ Default builds never touch real probe pins. They visualize safe pin guidance
 and mock bus results so the CrowPanel can become the large touch surface before
 any bench wiring.
 
+## Display UI
+
+`USE_DISPLAY=1` now uses a project-local WireTap dashboard instead of the
+generic shared tile board. The screen is organized as a bench console:
+
+- Protocol lanes for Mode, Pins, I2C, SPI, UART, and GPIO.
+- A visible safety gate that keeps `READ-FIRST`, `NO DEFAULT DRIVE`, and
+  `3.3V TTL` in the first viewport.
+- A SPI status card that says `BLOCKED` unless
+  `WIRETAP_ALLOW_SPI_ID_CLOCKING=1` is compiled in.
+- A detail panel that mirrors the latest Serial command result.
+
+This is a display polish upgrade only. It does not change probe behavior or
+raise the proof state beyond compile-ready.
+
 `USE_BENCH_PROBES=1` enables project-local read-oriented probe scaffolds:
 
 - GPIO read: configures the requested GPIO as `INPUT` only (high-Z, no pullup,
@@ -84,6 +99,10 @@ active CrowPanel hardware profile printed at boot.
 Safety rules:
 
 - 3.3V targets only. Use level shifting for 5V boards.
+- Treat every unknown target as unpowered/untrusted until its logic level is
+  confirmed. The CrowPanel GPIOs are not 5V tolerant.
+- Share ground before any logic-level read, and remove power before changing
+  clip leads.
 - Do not use display, touch, or audio pins for GPIO reads unless you explicitly
   set `WIRETAP_ALLOW_PANEL_RESERVED_PINS=1` for a controlled lab diagnostic.
 - Remove wireless-socket modules before reusing those pins for SPI or GPIO.

@@ -22,6 +22,7 @@ CrowNetworkClient network;
 WorldFeedClient world;
 WorldFeeds worldFeeds;
 SemaphoreHandle_t worldMutex = nullptr;
+SemaphoreHandle_t worldClientMutex = nullptr;
 volatile bool worldDirty = false;
 Throttle worldUiGate{1000};
 #if USE_WIFI
@@ -51,6 +52,20 @@ bool copyWorldFeeds(WorldFeeds &out) {
   worldDirty = false;
   if (worldMutex != nullptr) xSemaphoreGive(worldMutex);
   return dirty;
+}
+
+bool pollWorldFeeds(WorldFeeds &out) {
+  if (worldClientMutex != nullptr) xSemaphoreTake(worldClientMutex, portMAX_DELAY);
+  bool changed = world.poll(out);
+  if (worldClientMutex != nullptr) xSemaphoreGive(worldClientMutex);
+  return changed;
+}
+
+bool refreshWorldFeeds(WorldFeeds &out, const String &which) {
+  if (worldClientMutex != nullptr) xSemaphoreTake(worldClientMutex, portMAX_DELAY);
+  bool changed = world.refresh(out, which);
+  if (worldClientMutex != nullptr) xSemaphoreGive(worldClientMutex);
+  return changed;
 }
 
 void printWorldSummary(const WorldFeeds &feeds) {
@@ -86,7 +101,7 @@ void printWorldSummary(const WorldFeeds &feeds) {
 void worldTaskLoop(void *) {
   WorldFeeds latest;
   for (;;) {
-    if (world.poll(latest)) {
+    if (pollWorldFeeds(latest)) {
       publishWorldFeeds(latest);
     }
     vTaskDelay(pdMS_TO_TICKS(1000));
@@ -188,6 +203,30 @@ void cmdScreen(const String &args) {
   Logger::info("cmd", String("screen = ") + ui.screenName());
 }
 
+void cmdWorld(const String &args) {
+  String which = args;
+  which.trim();
+  which.toLowerCase();
+  if (which.length() == 0) which = "all";
+  if (!(which == "all" || which == "weather" || which == "wx" || which == "quake" ||
+        which == "quakes" || which == "earthquake" || which == "earthquakes" ||
+        which == "aurora" || which == "kp" || which == "air" || which == "aqi")) {
+    Serial.println(F("[world] use: world [all|weather|quake|aurora|air]"));
+    return;
+  }
+  if (which == "wx") which = "weather";
+  if (which == "quakes" || which == "earthquake" || which == "earthquakes") which = "quake";
+  if (which == "kp") which = "aurora";
+  if (which == "aqi") which = "air";
+
+  WorldFeeds latest;
+  bool changed = refreshWorldFeeds(latest, which);
+  publishWorldFeeds(latest);
+  ui.setWorldFeeds(latest);
+  printWorldSummary(latest);
+  Logger::info("cmd", String("world refresh ") + which + (changed ? " updated" : " no-change"));
+}
+
 void setup() {
   Logger::begin(115200);
   Logger::info("app", "CrowPanel ADS-B Flight Tracker Radar");
@@ -197,6 +236,7 @@ void setup() {
 
   store.begin();
   worldMutex = xSemaphoreCreateMutex();
+  worldClientMutex = xSemaphoreCreateMutex();
 
   // Bring the display up FIRST so the radar always renders, even if Wi-Fi
   // bring-up is slow or unavailable: Wi-Fi rides the onboard ESP32-C6 over
@@ -219,7 +259,7 @@ void setup() {
 #else
   mockSource.begin(ADSB_HOME_LAT, ADSB_HOME_LON, (float)ADSB_RANGE_KM);
   WorldFeeds mockFeeds;
-  if (world.poll(mockFeeds)) {
+  if (pollWorldFeeds(mockFeeds)) {
     publishWorldFeeds(mockFeeds);
     ui.setWorldFeeds(mockFeeds);
   }
@@ -232,6 +272,7 @@ void setup() {
   router.on("poll", "poll <sec> - live fetch interval (1-120)", cmdPoll);
   router.on("mock", "report the active data source", cmdMock);
   router.on("screen", "screen next|radar|weather|quake|aurora|air", cmdScreen);
+  router.on("world", "world [all|weather|quake|aurora|air] - refresh public feeds", cmdWorld);
 }
 
 void loop() {
@@ -252,7 +293,7 @@ void loop() {
 #else
   mockSource.tick(store);
   WorldFeeds mockFeeds;
-  if (world.poll(mockFeeds)) {
+  if (pollWorldFeeds(mockFeeds)) {
     publishWorldFeeds(mockFeeds);
     ui.setWorldFeeds(mockFeeds);
   }
@@ -261,7 +302,7 @@ void loop() {
 #if USE_WIFI
   if (worldTaskHandle == nullptr) {
     WorldFeeds latest;
-    if (world.poll(latest)) {
+    if (pollWorldFeeds(latest)) {
       publishWorldFeeds(latest);
     }
   }
@@ -269,7 +310,7 @@ void loop() {
 
   WorldFeeds feeds;
   bool feedChanged = copyWorldFeeds(feeds);
-  if (feedChanged || worldUiGate.ready()) {
+  if (feedChanged) {
     ui.setWorldFeeds(feeds);
   }
   ui.tick(store);

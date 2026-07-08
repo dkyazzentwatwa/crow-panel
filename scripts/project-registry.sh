@@ -18,6 +18,7 @@ projects/11-cardrf-spectrum-console
 projects/12-creatorops-board
 projects/13-surveyops-wardriver-panel
 projects/14-adsb-flight-tracker-radar
+projects/15-pokedex-panel
 PROJECTS
 }
 

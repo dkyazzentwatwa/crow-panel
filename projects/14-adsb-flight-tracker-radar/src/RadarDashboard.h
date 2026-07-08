@@ -45,10 +45,16 @@ class RadarDashboard {
 
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
   void handleTouch_();
+  bool handleTouchAt_(int16_t tx, int16_t ty, const char *mapping);
+  bool isNextHit_(int16_t tx, int16_t ty) const;
+  bool isRangeHit_(int16_t tx, int16_t ty) const;
+  bool tabScreenAt_(int16_t tx, int16_t ty, RadarScreen &screen) const;
+  bool changeScreenFromTouch_(RadarScreen screen, const String &where, const char *action);
   int8_t hitTestBlip_(int16_t tx, int16_t ty) const;
   int8_t hitTestRow_(int16_t tx, int16_t ty) const;
   void cycleRange_();
   void setScreen_(RadarScreen screen);
+  void drawScreenTabs_(Arduino_GFX *g);
   void drawWorldScreen_();
   void drawWorldHeader_(const char *title, const char *subtitle);
   void drawWorldFooter_(bool valid, unsigned long ms, const String &error);
@@ -73,6 +79,8 @@ class RadarDashboard {
   int8_t selectedIdx_ = -1;
   bool detailOpen_ = false;
   bool wasTouched_ = false;
+  uint32_t lastTouchActionMs_ = 0;
+  uint32_t lastScreenChangeMs_ = 0;
   bool ready_ = false;
   int16_t rangePillX_ = 0, rangePillW_ = 0;  // header range pill rect (touch)
   int16_t nextPillX_ = 0, nextPillW_ = 0;     // header NEXT pill rect (touch)
@@ -82,7 +90,7 @@ class RadarDashboard {
   bool screenDirty_ = true;
   Throttle listRefreshGate_{2000};
   Throttle clockGate_{1000};
-  Throttle worldRefreshGate_{1000};
+  Throttle worldRefreshGate_{30000};
   uint32_t frameAccumUs_ = 0;
   uint16_t frameCount_ = 0;
   Throttle statGate_{2000};
