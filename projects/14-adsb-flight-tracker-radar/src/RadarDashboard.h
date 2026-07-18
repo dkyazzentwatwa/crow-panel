@@ -62,6 +62,9 @@ class RadarDashboard {
   void drawQuakeScreen_();
   void drawAuroraScreen_();
   void drawAirScreen_();
+  void drawIntroSplash_();
+  void drawIntroStatic_();
+  void drawIntroFrame_(uint32_t elapsedMs);
   void blitScope_();
   void drawHeader_();
   void drawList_();

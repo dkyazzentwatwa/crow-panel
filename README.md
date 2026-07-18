@@ -1,6 +1,6 @@
 # crowpanel-aiot-arduino-suite
 
-Arduino CLI tutorial scaffold for fifteen Elecrow CrowPanel Advanced 7-inch ESP32-P4 HMI AI Display projects.
+Arduino CLI tutorial scaffold for eighteen Elecrow CrowPanel Advanced 7-inch ESP32-P4 HMI AI Display projects.
 
 This repo is mock-first. Every sketch boots into a Serial-driven demo you can teach, film, and iterate on — and every real driver path (Wi-Fi, LoRa, NFC/RFID, display/touch) now exists behind a feature flag as a **compile-verified scaffold**. Display rendering uses the Adafruit-GFX-style API (no LVGL by design). Two words carry this repo's honesty contract:
 
@@ -45,12 +45,16 @@ The newer ports are mock-first CrowPanel product surfaces inspired by sibling Gi
 13. `projects/13-surveyops-wardriver-panel` — passive GPS/Wi-Fi survey dashboard inspired by `esp32-gps-wifi-wigle`; no network joins or active testing.
 14. `projects/14-adsb-flight-tracker-radar` — live/mock aircraft radar inspired by ADS-B tracker projects; public APIs and world-feed panels behind Wi-Fi.
 15. `projects/15-pokedex-panel` — large touch Pokedex inspired by `esp32-pokedex`; offline mock catalog by default, source SD catalog behind `USE_SD_POKEDEX`.
+16. `projects/16-cypher-flock-panel` — passive dual-band detector UI; a BW16 scans 2.4/5 GHz Wi-Fi, an ESP32 scans BLE and aggregates both UART streams, and the P4 renders/persists derived detections.
+17. `projects/17-littlehakr-rf-lab` — touch-first nRF24 and CC1101 register-proof lab with fixed, authorized receive-only activity profiles; no TX, payload reads, IDs, replay, or jamming. The onboard C6 has separate aggregate Wi-Fi and firmware-gated BLE status pages.
+18. `projects/18-cypher-desk-panel` — Cypher Desk OS creator workstation with a 3x4 app grid, reusable touch keyboard, the complete legacy Writer, local calendar/contacts/clock/calculator/files, hosted-C6 Wi-Fi setup, and honest hardware-gated media apps.
 
 ## Toolchain
 
 ```sh
 ./scripts/install-cores.sh   # esp32:esp32@3.3.8 (minimum 3.3.x for the P4 target)
 ./scripts/install-libs.sh    # RadioLib, Arduino_GFX, SensorLib, PN532, MFRC522, ...
+./scripts/build-flock-bridge.sh  # generic ESP32 companion for Project 16
 ```
 
 No third-party board package URL is needed — `esp32:esp32:esp32p4` ships in the official Espressif index. Verified library versions are listed in `libraries.txt`.
@@ -71,6 +75,14 @@ Enable driver paths per build with `EXTRA_FLAGS` (these `-D` defines beat the `#
 
 ```sh
 EXTRA_FLAGS="-DUSE_DISPLAY=1 -DUSE_WIFI=1" ./scripts/compile-all.sh
+```
+
+Project 16's complete three-board panel build is:
+
+```sh
+CTAGS_WORKAROUND=1 \
+EXTRA_FLAGS="-DUSE_DISPLAY=1 -DUSE_FLOCK_UART_BRIDGE=1 -DUSE_FLOCK_PERSISTENCE=1 -DUSE_FLOCK_C6_WITNESS=1" \
+./scripts/upload-project.sh projects/16-cypher-flock-panel <DETECTED_PANEL_PORT>
 ```
 
 Prove every supported flag combination still builds:
@@ -114,6 +126,8 @@ Every sketch runs an interactive command router on Serial (115200 baud, line end
 | 13 SurveyOps | `gps`, `scan`, `log`, `feed`, `rotate` | Passive GPS/Wi-Fi survey mock console |
 | 14 ADS-B Radar | `planes`, `range`, `poll`, `mock`, `screen`, `world` | Mock/live aircraft radar plus weather, quake, aurora, and air screens |
 | 15 Pokedex | `browse`, `search`, `open`, `page`, `demo`, `source` | Offline Pokedex catalog browser and detail cards |
+| 16 Cypher Flock | `demo`, `inject`, `bridge`, `witness`, `screen`, `filter`, `source`, `save`, `session`, `stealth` | Detector feed, C6 nearby-Wi-Fi witness, UART controls, and sessions |
+| 18 Cypher Desk | `files`, `new`, `open`, `type`, `save`, `back`, `demo`, `touch`, `page`, `daily`, `scrap`, `focus`, `ritual`, `theme`, `sound`, `stats`, `time`, `storage` | Offline-first lofi notebook, scraps, focus sessions, prompt rituals, and SD-backed plain-text workspace |
 
 Injected events run the exact same pipeline as mock (and future real) drivers — one code path per project (`processPacket` / `processScan` / `processTap` / `onSensor`).
 
@@ -141,6 +155,13 @@ Each flag gates a compile-verified scaffold. Flip ONE at a time following `docs/
 | `USE_GPS_DRIVER` | SurveyOps GPS parser | hardware-gated |
 | `USE_SD_WIGLE_LOG` | SurveyOps WiGLE-style CSV logging and rotation | hardware-gated |
 | `USE_SD_POKEDEX` | Pokedex Panel streams the source `/pokemon/index.csv` and detail JSON from SD_MMC | hardware-gated |
+| `USE_FLOCK_UART_BRIDGE` | Project 16 reads the ESP32 BLE/BW16 Wi-Fi aggregate stream and sends routed controls over UART | compile-verified; both links and pins need field proof |
+| `USE_FLOCK_PERSISTENCE` | Project 16 stores CRC-v2 current/previous sessions and sanitized calibration observations in FFat, while loading v1 sessions | compile-verified; reboot recovery needs hardware proof |
+| `USE_FLOCK_C6_WITNESS` | Project 16 runs asynchronous passive 2.4 GHz AP scans through the hosted C6 and displays ephemeral metadata on a separate screen | compile-verified; live scan rows need panel proof and never affect Flock confidence |
+| `USE_CYPHER_DESK_SD` | Project 18 mounts SD_MMC and reads/writes the source-compatible `/cypher-puter/desk/notes/` workspace | compile-verified; mount, save, reboot persistence, and cross-device card use need hardware proof |
+| `USE_CYPHER_DESK_AUDIO` | Project 18 enables generated key sounds and 16 kHz mono WAV ambience with silent failure fallback | compile target only until the speaker and mixing bench pass |
+| `USE_CYPHER_DESK_MEDIA` | Project 18 indexes local music/podcast/recording folders and enables the guarded media surface | compile-ready; speaker playback remains bench-gated |
+| `USE_CYPHER_DESK_RECORDER` | Project 18 compiles the recorder surface without claiming an unverified microphone path | compile-ready guard only; microphone pins, input format, record, reboot, and playback need device proof |
 
 Per-machine settings live in gitignored files copied from templates: `config/Pins.example.h` → `Pins.h` (radio params, reader pins) and `config/WiFiSecrets.example.h` → `WiFiSecrets.h` (credentials).
 

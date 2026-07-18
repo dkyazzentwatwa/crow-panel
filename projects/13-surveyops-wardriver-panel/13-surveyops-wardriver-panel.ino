@@ -1,10 +1,11 @@
 #include "config/ProjectConfig.h"
 #include "src/SurveyGps.h"
+#include "src/SurveyUi.h"
 #include "src/WiFiSurveyScanner.h"
 #include "src/WigleCsvLogger.h"
 #include <CrowPanelShared.h>
 
-OpsDashboard dashboard;
+SurveyUi surveyUi;
 SerialCommandRouter router;
 EventLog eventLog;
 StorageManager storage;
@@ -21,14 +22,7 @@ String topAp = "StudioNet";
 void refreshSurvey(const String &banner) {
   GpsFix fix = gpsSource.latest();
   WigleStorageHealth health = wigleLogger.health();
-  dashboard.setTile(0, "GPS", fix.valid ? "fix" : "waiting", fix.coordinateText());
-  dashboard.setTile(1, "APs", String(apCount), String(lastRowCount) + " last rows");
-  dashboard.setTile(2, "Logging", health.loggingEnabled ? "ON" : "OFF", health.activeFile);
-  dashboard.setTile(3, "Top AP", topAp, "strongest signal");
-  dashboard.setTile(4, "Rotate", String(health.rotations), "log files");
-  dashboard.setTile(5, "Storage", health.ready ? "ok" : "check", health.detail);
-  dashboard.setBanner(banner);
-  dashboard.setFooter("SurveyOps is passive survey/logging only; no join, injection, deauth, or credential capture");
+  surveyUi.update(fix, lastRows, lastRowCount, apCount, topAp, health, banner);
 }
 
 String nextWord(String &line) {
@@ -95,9 +89,9 @@ void cmdGps(const String &) {
   gpsSource.poll();
   GpsFix fix = gpsSource.latest();
   Serial.println(gpsSource.statusLine());
-  dashboard.setDetail("GPS Fix", String("Lat/Lon ") + fix.coordinateText() +
-                                     "|Quality " + fix.qualityText() +
-                                     "|Source " + fix.source);
+  surveyUi.setDetail("GPS Fix", String("Lat/Lon ") + fix.coordinateText() +
+                                    "|Quality " + fix.qualityText() +
+                                    "|Source " + fix.source);
   refreshSurvey("GPS fix shown");
 }
 
@@ -116,7 +110,7 @@ void cmdScan(const String &) {
   }
 
   eventLog.add(lastRowCount > 0 ? "Passive Wi-Fi scan" : "Passive Wi-Fi scan empty");
-  dashboard.setDetail("Wi-Fi Scan", scanDetail(lastRows, lastRowCount));
+  surveyUi.setDetail("Wi-Fi Scan", scanDetail(lastRows, lastRowCount));
   refreshSurvey(lastRowCount > 0 ? "passive scan complete" : "scan returned no rows");
 }
 
@@ -136,7 +130,7 @@ void cmdLog(const String &args) {
                     : F("[log] unavailable"));
   Serial.println(wigleLogger.statusLine());
   eventLog.add(wigleLogger.enabled() ? "Logging enabled" : "Logging disabled");
-  dashboard.setDetail("Logging", wigleLogger.statusLine());
+  surveyUi.setDetail("Logging", wigleLogger.statusLine());
   refreshSurvey("logging state changed");
 }
 
@@ -161,7 +155,7 @@ void cmdFeed(const String &args) {
       wigleLogger.logRows(&row, 1, gpsSource.latest());
     }
     Serial.println(String("[feed] ap ssid=") + ssid + " rssi=" + String(row.rssi));
-    dashboard.setDetail("Fed AP", ssid + "|RSSI " + String(row.rssi) + "|Added to mock WiGLE row set");
+    surveyUi.setDetail("Fed AP", ssid + "|RSSI " + String(row.rssi) + "|Added to mock WiGLE row set");
     refreshSurvey("AP row fed");
   } else {
     Serial.println(F("[feed] use: feed ap <ssid> <rssi>"));
@@ -173,13 +167,13 @@ void cmdRotate(const String &) {
   Serial.println(ok ? F("[rotate] ok") : F("[rotate] unavailable"));
   Serial.println(wigleLogger.statusLine());
   eventLog.add(ok ? "Log rotated" : "Log rotate unavailable");
-  dashboard.setDetail("Rotate", wigleLogger.statusLine());
+  surveyUi.setDetail("Rotate", wigleLogger.statusLine());
   refreshSurvey(ok ? "log rotated" : "log rotate unavailable");
 }
 
 void cmdStorage(const String &) {
   Serial.println(wigleLogger.statusLine());
-  dashboard.setDetail("Storage", wigleLogger.statusLine());
+  surveyUi.setDetail("Storage", wigleLogger.statusLine());
   refreshSurvey("storage health shown");
 }
 
@@ -193,7 +187,7 @@ void cmdNmea(const String &args) {
   bool ok = gpsSource.feedNmea(sentence);
   Serial.println(ok ? F("[nmea] accepted") : F("[nmea] unavailable; compile with USE_GPS_DRIVER=1 and TinyGPSPlus"));
   Serial.println(gpsSource.statusLine());
-  dashboard.setDetail("NMEA", gpsSource.statusLine());
+  surveyUi.setDetail("NMEA", gpsSource.statusLine());
   refreshSurvey(ok ? "NMEA parsed" : "NMEA parser unavailable");
 }
 
@@ -205,7 +199,7 @@ void setup() {
   gpsSource.begin();
   wifiScanner.begin();
   wigleLogger.begin();
-  dashboard.begin("SURVEYOPS", "WARDRIVER PANEL", "PASSIVE");
+  surveyUi.begin();
   refreshSurvey("survey dashboard ready");
   eventLog.add("SurveyOps booted");
   router.begin(Serial, "surveyops");
@@ -223,6 +217,6 @@ void setup() {
 void loop() {
   gpsSource.poll();
   router.poll();
-  dashboard.tick();
+  surveyUi.tick();
   delay(20);
 }

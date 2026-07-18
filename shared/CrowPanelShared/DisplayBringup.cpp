@@ -62,10 +62,43 @@ Arduino_DSI_Display *gfx = nullptr;
 TouchDrvGT911 touch;
 bool touchReady = false;
 bool displayReady = false;
+bool touchSampled = false;
+bool touchPressed = false;
+int16_t touchX = 0;
+int16_t touchY = 0;
+uint32_t lastTouchSampleMs = 0;
 uint16_t bgColor = 0;
 uint16_t fgColor = 0;
 uint16_t accentColor = 0;
 Throttle touchLogThrottle(250);
+
+void sampleTouch() {
+  if (!displayReady || !touchReady) {
+    touchPressed = false;
+    return;
+  }
+
+  // The GT911 point-info register is cleared by getTouchPoints(). Cache one
+  // sample so CrowDisplay::tick() cannot consume the event before the app's
+  // touchPoint() call in the same loop. Polling also matches Elecrow's
+  // official touch example and avoids depending on the IRQ trigger polarity.
+  uint32_t now = millis();
+  if (touchSampled && now - lastTouchSampleMs < 8) {
+    return;
+  }
+  touchSampled = true;
+  lastTouchSampleMs = now;
+  touchPressed = false;
+
+  const TouchPoints &points = touch.getTouchPoints();
+  if (points.getPointCount() == 0) {
+    return;
+  }
+  const TouchPoint &point = points.getPoint(0);
+  touchX = point.x;
+  touchY = point.y;
+  touchPressed = true;
+}
 
 // UiTheme colors are 24-bit 0xRRGGBB; the panel wants RGB565.
 uint16_t toColor565(uint32_t rgb) {
@@ -148,16 +181,9 @@ void setLine(uint8_t index, const String &text) {
 }
 
 void tick() {
-  if (!displayReady || !touchReady || !touch.isPressed()) {
-    return;
-  }
-  const TouchPoints &points = touch.getTouchPoints();
-  if (points.getPointCount() == 0) {
-    return;
-  }
-  const TouchPoint &p = points.getPoint(0);
-  if (touchLogThrottle.ready()) {
-    Logger::info("touch", "x=" + String(p.x) + " y=" + String(p.y));
+  sampleTouch();
+  if (touchPressed && touchLogThrottle.ready()) {
+    Logger::info("touch", "x=" + String(touchX) + " y=" + String(touchY));
   }
 }
 
@@ -166,16 +192,12 @@ Arduino_GFX *canvas() {
 }
 
 bool touchPoint(int16_t &x, int16_t &y) {
-  if (!displayReady || !touchReady || !touch.isPressed()) {
+  sampleTouch();
+  if (!touchPressed) {
     return false;
   }
-  const TouchPoints &points = touch.getTouchPoints();
-  if (points.getPointCount() == 0) {
-    return false;
-  }
-  const TouchPoint &p = points.getPoint(0);
-  x = p.x;
-  y = p.y;
+  x = touchX;
+  y = touchY;
   return true;
 }
 

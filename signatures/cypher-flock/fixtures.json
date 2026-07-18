@@ -1,0 +1,14 @@
+[
+  {"id":"wifi-owned-5g","radio":"wifi","channel":36,"mac":"b4:1e:52:7f:68:ff","ssid":"Flock-7F68FF","role":"addr2","expected":"high","direct_rssi":true},
+  {"id":"wifi-name-no-suffix","radio":"wifi","channel":149,"mac":"70:c9:4e:00:11:22","ssid":"Flock-7F68FF","role":"addr2","expected":"medium","direct_rssi":true},
+  {"id":"wifi-wildcard-one-channel","radio":"wifi","channels":[6],"mac":"82:6b:f2:12:34:56","wildcard":true,"expected":"candidate","direct_rssi":true},
+  {"id":"wifi-wildcard-two-channel","radio":"wifi","channels":[1,6],"window_ms":9000,"mac":"82:6b:f2:12:34:56","wildcard":true,"expected":"high","direct_rssi":true},
+  {"id":"wifi-indirect-peer","radio":"wifi","channel":44,"mac":"b4:1e:52:01:02:03","role":"addr3","expected":"high","direct_rssi":false},
+  {"id":"wifi-sony-negative","radio":"wifi","channel":1,"mac":"f8:a2:d6:01:02:03","expected":"reject","direct_rssi":true},
+  {"id":"wifi-ubiquiti-negative","radio":"wifi","channel":36,"mac":"94:2a:6f:01:02:03","expected":"reject","direct_rssi":true},
+  {"id":"ble-penguin","radio":"ble","name":"Penguin-3101300881","expected":"high","identity":"Penguin-3101300881"},
+  {"id":"ble-raven-single","radio":"ble","custom_uuids":["3100"],"context_uuids":["180A"],"expected":"medium"},
+  {"id":"ble-raven-multiple","radio":"ble","custom_uuids":["3100","3200","3300"],"expected":"high"},
+  {"id":"ble-context-only","radio":"ble","context_uuids":["180A","1809","1819"],"expected":"reject"},
+  {"id":"ble-xuntong-only","radio":"ble","company_id":"0x09C8","expected":"candidate"}
+]

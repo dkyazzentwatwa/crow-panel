@@ -1,0 +1,88 @@
+{
+  "schema": 1,
+  "version": "2026.07.08.1",
+  "description": "Evidence-ranked passive Flock ecosystem radio signatures.",
+  "provenance": {
+    "detector_source": "/Users/cypher/Documents/GitHub/flock-you",
+    "detector_commit": "9da9ea6",
+    "historical_records": 803,
+    "flock_name_mac_suffix_rate": 0.971,
+    "verified": "2026-07-08"
+  },
+  "rules": [
+    {"id":"wifi.ssid.flock6","family":"wifi_ssid","pattern":"^Flock-[0-9A-F]{6}$","evidence":"medium","source":"local historical corpus","source_commit":"9da9ea6","verified":"2026-07-08","false_positive_risk":"low","alert_eligible":"corroborated","rejection_reason":""},
+    {"id":"wifi.ssid_mac_suffix","family":"wifi_relationship","pattern":"ssid suffix equals transmitting MAC suffix","evidence":"high","source":"803-record local historical corpus","source_commit":"9da9ea6","verified":"2026-07-08","false_positive_risk":"low","alert_eligible":"yes","rejection_reason":""},
+    {"id":"wifi.wildcard_multichannel","family":"wifi_behavior","pattern":"same source wildcard probes on >=2 channels within 10 seconds","evidence":"high","source":"field behavior","source_commit":"9da9ea6","verified":"2026-07-08","false_positive_risk":"medium","alert_eligible":"yes","rejection_reason":"single-channel wildcard remains candidate"},
+    {"id":"ble.name.flock6","family":"ble_name","pattern":"^Flock-[0-9A-F]{6}$","evidence":"medium","source":"local historical corpus","source_commit":"9da9ea6","verified":"2026-07-08","false_positive_risk":"low","alert_eligible":"corroborated","rejection_reason":""},
+    {"id":"ble.name.penguin10","family":"ble_name","pattern":"^Penguin-[0-9]{10}$","evidence":"high","source":"local historical corpus","source_commit":"9da9ea6","verified":"2026-07-08","false_positive_risk":"low","alert_eligible":"yes","rejection_reason":""},
+    {"id":"ble.name.battery","family":"ble_name","pattern":"^FS Ext Battery$","evidence":"medium","source":"local battery corpus","source_commit":"9da9ea6","verified":"2026-07-08","false_positive_risk":"medium","alert_eligible":"balanced","rejection_reason":""},
+    {"id":"ble.company.xuntong","family":"ble_company_id","pattern":"0x09C8","evidence":"candidate","source":"Bluetooth SIG Assigned Numbers","source_commit":"assigned-numbers","verified":"2026-07-08","false_positive_risk":"high","alert_eligible":"no","rejection_reason":"XUNTONG company ID is not Flock-specific"},
+    {"id":"ble.raven.custom","family":"ble_service_uuid","pattern":"one or more custom 31xx-35xx UUIDs","evidence":"medium","source":"local Raven observations","source_commit":"9da9ea6","verified":"2026-07-08","false_positive_risk":"medium","alert_eligible":"one=balanced,multiple=high","rejection_reason":"standard 180A/1809/1819 services are context only"}
+  ],
+  "wifi_ouis": [
+    {"id":"wifi.oui.flock_owned","value":"b4:1e:52","owner":"Flock Safety","evidence":"high","standalone":true,"enabled":true,"source":"https://standards-oui.ieee.org/oui/oui.txt","last_verified":"2026-07-08","risk":"low"},
+    {"id":"wifi.oui.field_local","value":"82:6b:f2","owner":"locally administered","evidence":"medium","standalone":false,"enabled":true,"source":"DeflockJoplin field observation","last_verified":"2026-06-18","risk":"medium"},
+    {"id":"wifi.oui.liteon.70c94e","value":"70:c9:4e","owner":"Lite-On","evidence":"medium","standalone":false,"enabled":true,"source":"local Flock SSID corpus","last_verified":"2026-07-08","risk":"medium"},
+    {"id":"wifi.oui.liteon.3c9180","value":"3c:91:80","owner":"Lite-On","evidence":"medium","standalone":false,"enabled":true,"source":"local Flock SSID corpus","last_verified":"2026-07-08","risk":"medium"},
+    {"id":"wifi.oui.liteon.d8f3bc","value":"d8:f3:bc","owner":"Lite-On","evidence":"medium","standalone":false,"enabled":true,"source":"local Flock SSID corpus","last_verified":"2026-07-08","risk":"medium"},
+    {"id":"wifi.oui.liteon.803049","value":"80:30:49","owner":"Lite-On","evidence":"medium","standalone":false,"enabled":true,"source":"local Flock SSID corpus","last_verified":"2026-07-08","risk":"medium"},
+    {"id":"wifi.oui.liteon.145afc","value":"14:5a:fc","owner":"Lite-On","evidence":"medium","standalone":false,"enabled":true,"source":"local Flock SSID corpus","last_verified":"2026-07-08","risk":"medium"},
+    {"id":"wifi.oui.liteon.744ca1","value":"74:4c:a1","owner":"Lite-On","evidence":"medium","standalone":false,"enabled":true,"source":"local Flock SSID corpus","last_verified":"2026-07-08","risk":"medium"},
+    {"id":"wifi.oui.ugsi.083a88","value":"08:3a:88","owner":"UGSI","evidence":"medium","standalone":false,"enabled":true,"source":"local Flock SSID corpus; Ring conflict","last_verified":"2026-07-08","risk":"high"},
+    {"id":"wifi.oui.liteon.9c2f9d","value":"9c:2f:9d","owner":"Lite-On","evidence":"medium","standalone":false,"enabled":true,"source":"local Flock SSID corpus","last_verified":"2026-07-08","risk":"medium"},
+    {"id":"wifi.oui.liteon.c03532","value":"c0:35:32","owner":"Lite-On","evidence":"medium","standalone":false,"enabled":true,"source":"community field observations","last_verified":"2026-07-08","risk":"medium"},
+    {"id":"wifi.oui.liteon.940853","value":"94:08:53","owner":"Lite-On","evidence":"medium","standalone":false,"enabled":true,"source":"local Flock SSID corpus","last_verified":"2026-07-08","risk":"medium"},
+    {"id":"wifi.oui.liteon.e4aaea","value":"e4:aa:ea","owner":"Lite-On","evidence":"medium","standalone":false,"enabled":true,"source":"local Flock SSID corpus","last_verified":"2026-07-08","risk":"medium"},
+    {"id":"wifi.oui.liteon.f46add","value":"f4:6a:dd","owner":"Lite-On","evidence":"medium","standalone":false,"enabled":true,"source":"local Flock SSID corpus","last_verified":"2026-07-08","risk":"medium"},
+    {"id":"wifi.oui.liteon.24b2b9","value":"24:b2:b9","owner":"Lite-On","evidence":"medium","standalone":false,"enabled":true,"source":"community field observations","last_verified":"2026-07-08","risk":"medium"},
+    {"id":"wifi.oui.liteon.00f48d","value":"00:f4:8d","owner":"Lite-On","evidence":"medium","standalone":false,"enabled":true,"source":"local Flock SSID corpus","last_verified":"2026-07-08","risk":"medium"},
+    {"id":"wifi.oui.liteon.d03957","value":"d0:39:57","owner":"Lite-On","evidence":"medium","standalone":false,"enabled":true,"source":"local Flock SSID corpus","last_verified":"2026-07-08","risk":"medium"},
+    {"id":"wifi.oui.liteon.e8d0fc","value":"e8:d0:fc","owner":"Lite-On","evidence":"medium","standalone":false,"enabled":true,"source":"local Flock SSID corpus","last_verified":"2026-07-08","risk":"medium"},
+    {"id":"wifi.oui.ugsi.e04f43","value":"e0:4f:43","owner":"UGSI","evidence":"medium","standalone":false,"enabled":true,"source":"community field observations","last_verified":"2026-07-08","risk":"medium"},
+    {"id":"wifi.oui.liteon.b81ea4","value":"b8:1e:a4","owner":"Lite-On","evidence":"medium","standalone":false,"enabled":true,"source":"community field observations","last_verified":"2026-07-08","risk":"medium"},
+    {"id":"wifi.oui.liteon.700894","value":"70:08:94","owner":"Lite-On","evidence":"candidate","standalone":false,"enabled":true,"source":"community field observations","last_verified":"2026-07-08","risk":"high"},
+    {"id":"wifi.oui.silabs.588e81","value":"58:8e:81","owner":"Silicon Labs","evidence":"medium","standalone":false,"enabled":true,"source":"FS Ext Battery corpus","last_verified":"2026-07-08","risk":"medium"},
+    {"id":"wifi.oui.silabs.ec1bbd","value":"ec:1b:bd","owner":"Silicon Labs","evidence":"medium","standalone":false,"enabled":true,"source":"FS Ext Battery corpus","last_verified":"2026-07-08","risk":"medium"},
+    {"id":"wifi.oui.espressif.3c71bf","value":"3c:71:bf","owner":"Espressif","evidence":"candidate","standalone":false,"enabled":true,"source":"community field observations","last_verified":"2026-07-08","risk":"high"},
+    {"id":"wifi.oui.liteon.5800e3","value":"58:00:e3","owner":"Lite-On","evidence":"candidate","standalone":false,"enabled":true,"source":"community field observations","last_verified":"2026-07-08","risk":"high"},
+    {"id":"wifi.oui.silabs.9035ea","value":"90:35:ea","owner":"Silicon Labs","evidence":"medium","standalone":false,"enabled":true,"source":"FS Ext Battery corpus","last_verified":"2026-07-08","risk":"medium"},
+    {"id":"wifi.oui.liteon.5c93a2","value":"5c:93:a2","owner":"Lite-On","evidence":"candidate","standalone":false,"enabled":true,"source":"community field observations","last_verified":"2026-07-08","risk":"high"},
+    {"id":"wifi.oui.liteon.646e69","value":"64:6e:69","owner":"Lite-On","evidence":"candidate","standalone":false,"enabled":true,"source":"community field observations","last_verified":"2026-07-08","risk":"high"},
+    {"id":"wifi.oui.samsung.4827ea","value":"48:27:ea","owner":"Samsung","evidence":"candidate","standalone":false,"enabled":true,"source":"crowdsource only","last_verified":"2026-07-08","risk":"high"},
+    {"id":"wifi.oui.espressif.a4cf12","value":"a4:cf:12","owner":"Espressif","evidence":"candidate","standalone":false,"enabled":true,"source":"crowdsource only","last_verified":"2026-07-08","risk":"high"},
+    {"id":"wifi.oui.silabs.040d84","value":"04:0d:84","owner":"Silicon Labs","evidence":"medium","standalone":false,"enabled":true,"source":"FS Ext Battery corpus","last_verified":"2026-07-08","risk":"medium"},
+    {"id":"wifi.oui.silabs.f082c0","value":"f0:82:c0","owner":"Silicon Labs","evidence":"medium","standalone":false,"enabled":true,"source":"FS Ext Battery corpus","last_verified":"2026-07-08","risk":"medium"},
+    {"id":"wifi.oui.silabs.1c34f1","value":"1c:34:f1","owner":"Silicon Labs","evidence":"medium","standalone":false,"enabled":true,"source":"FS Ext Battery corpus","last_verified":"2026-07-08","risk":"medium"},
+    {"id":"wifi.oui.silabs.385b44","value":"38:5b:44","owner":"Silicon Labs","evidence":"medium","standalone":false,"enabled":true,"source":"FS Ext Battery corpus","last_verified":"2026-07-08","risk":"medium"},
+    {"id":"wifi.oui.silabs.943469","value":"94:34:69","owner":"Silicon Labs","evidence":"medium","standalone":false,"enabled":true,"source":"FS Ext Battery corpus","last_verified":"2026-07-08","risk":"medium"},
+    {"id":"wifi.oui.silabs.b4e3f9","value":"b4:e3:f9","owner":"Silicon Labs","evidence":"medium","standalone":false,"enabled":true,"source":"FS Ext Battery corpus","last_verified":"2026-07-08","risk":"medium"}
+  ],
+  "ble_names": [
+    {"id":"ble.name.battery","value":"FS Ext Battery","match":"exact","evidence":"medium","enabled":true},
+    {"id":"ble.name.flockcam","value":"FlockCam","match":"prefix","evidence":"candidate","enabled":true},
+    {"id":"ble.name.pigvision","value":"Pigvision","match":"prefix","evidence":"medium","enabled":true}
+  ],
+  "ble_manufacturers": [
+    {"id":"ble.company.xuntong","value":2504,"owner":"XUNTONG","evidence":"candidate","standalone":false,"enabled":true}
+  ],
+  "raven_custom_uuids": [
+    {"id":"ble.raven.gps","value":"00003100-0000-1000-8000-00805f9b34fb"},
+    {"id":"ble.raven.power","value":"00003200-0000-1000-8000-00805f9b34fb"},
+    {"id":"ble.raven.network","value":"00003300-0000-1000-8000-00805f9b34fb"},
+    {"id":"ble.raven.upload","value":"00003400-0000-1000-8000-00805f9b34fb"},
+    {"id":"ble.raven.error","value":"00003500-0000-1000-8000-00805f9b34fb"}
+  ],
+  "raven_context_uuids": [
+    {"id":"ble.context.device_info","value":"0000180a-0000-1000-8000-00805f9b34fb"},
+    {"id":"ble.context.health","value":"00001809-0000-1000-8000-00805f9b34fb"},
+    {"id":"ble.context.location","value":"00001819-0000-1000-8000-00805f9b34fb"}
+  ],
+  "rejected": [
+    {"type":"wifi_oui","value":"f8:a2:d6","reason":"Sony media player false positive"},
+    {"type":"wifi_oui","value":"00:0c:e7","reason":"disputed MediaTek observation"},
+    {"type":"wifi_oui","value":"cc:cc:cc","reason":"placeholder/no reliable hits"},
+    {"type":"wifi_oui","value":"94:2a:6f","reason":"Ubiquiti"},
+    {"type":"wifi_oui","value":"f4:e2:c6","reason":"Ubiquiti"},
+    {"type":"wifi_oui","value":"d4:11:d6","reason":"ShotSpotter, outside Flock scope"}
+  ]
+}

@@ -8,20 +8,23 @@
 #
 # Library                    Verified version   Used by
 # -------------------------  -----------------  -----------------------------------------
-# ArduinoJson                7.4.3              LoRa packet parsing, later Wi-Fi payloads
+# ArduinoJson                7.4.3              LoRa/Wi-Fi payloads and Project 16 bridge JSON
 # RadioLib                   7.7.1              USE_LORA_DRIVER - SX1262; Elecrow's own
 #                                               library choice in their Lesson13 example
 # GFX Library for Arduino    1.6.6              USE_DISPLAY - Arduino_GFX: Adafruit-GFX-
 #                                               style API + MIPI-DSI panel classes
 #                                               (Arduino_ESP32DSIPanel). No LVGL in this
 #                                               repo by design.
+# U8g2                      2.36.19             Project 18 compact typography through
+#                                               Arduino_GFX's native U8g2 font path
 # SensorLib                  0.4.1              USE_DISPLAY - GT911 capacitive touch
 # Adafruit PN532             1.3.4              USE_PN532_DRIVER (+ Adafruit BusIO)
 # MFRC522                    1.4.12             USE_MFRC522_DRIVER
 # RF24                       1.6.1              optional nRF24-style socket module
+# NimBLE-Arduino             2.5.0              Cypher Flock ESP32 BLE aggregator
 #
-# Not needed in mock mode: the default sketches compile with no libraries
-# beyond the bundled core.
+# Most mock sketches need only the bundled core. Project 16 also uses
+# ArduinoJson in mock mode so injected and UART events share one parser.
 #
 # Camera note: there is intentionally no camera library. esp32-camera does
 # not ship for the ESP32-P4 in core 3.3.8; the P4 camera path is MIPI-CSI

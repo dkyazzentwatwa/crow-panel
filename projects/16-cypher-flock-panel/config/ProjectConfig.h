@@ -1,0 +1,70 @@
+#ifndef CYPHER_FLOCK_PANEL_PROJECT_CONFIG_H
+#define CYPHER_FLOCK_PANEL_PROJECT_CONFIG_H
+
+#ifndef USE_FLOCK_UART_BRIDGE
+#define USE_FLOCK_UART_BRIDGE 0
+#endif
+
+#ifndef USE_FLOCK_PERSISTENCE
+#define USE_FLOCK_PERSISTENCE 0
+#endif
+
+#ifndef USE_FLOCK_C6_WITNESS
+#define USE_FLOCK_C6_WITNESS 0
+#endif
+
+#ifndef FLOCK_C6_WITNESS_INTERVAL_MS
+#define FLOCK_C6_WITNESS_INTERVAL_MS 15000UL
+#endif
+
+#ifndef FLOCK_C6_WITNESS_DWELL_MS
+#define FLOCK_C6_WITNESS_DWELL_MS 250UL
+#endif
+
+#ifndef FLOCK_C6_WITNESS_MAX_NETWORKS
+#define FLOCK_C6_WITNESS_MAX_NETWORKS 64
+#endif
+
+#if __has_include("Pins.h")
+#include "Pins.h"
+#endif
+
+#ifndef FLOCK_UART_PORT
+#define FLOCK_UART_PORT 1
+#endif
+
+#ifndef FLOCK_UART_RX_PIN
+#define FLOCK_UART_RX_PIN 48
+#endif
+
+#ifndef FLOCK_UART_TX_PIN
+#define FLOCK_UART_TX_PIN 47
+#endif
+
+#ifndef FLOCK_UART_BAUD
+#define FLOCK_UART_BAUD 115200
+#endif
+
+#ifndef FLOCK_UART_MAX_LINE
+#define FLOCK_UART_MAX_LINE 768
+#endif
+
+#ifndef FLOCK_MAX_DETECTIONS
+#define FLOCK_MAX_DETECTIONS 200
+#endif
+
+#ifndef FLOCK_REDISCOVER_MS
+#define FLOCK_REDISCOVER_MS 300000UL
+#endif
+
+#ifndef FLOCK_BRIDGE_STALE_MS
+#define FLOCK_BRIDGE_STALE_MS 5000UL
+#endif
+
+#ifndef FLOCK_BRIDGE_OFFLINE_MS
+#define FLOCK_BRIDGE_OFFLINE_MS 10000UL
+#endif
+
+#include <AppConfig.h>
+
+#endif

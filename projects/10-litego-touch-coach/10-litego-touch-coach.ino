@@ -3,7 +3,6 @@
 #include "src/LiteGoGame.h"
 #include "src/LiteGoTouchView.h"
 
-OpsDashboard dashboard;
 SerialCommandRouter router;
 EventLog eventLog;
 StorageManager storage;
@@ -35,16 +34,7 @@ void printBoard() {
 }
 
 void refreshGo(const String &banner) {
-  LiteGoGame::ScoreEstimate score = game.estimateScore();
-  dashboard.setTile(0, "Board", "9x9", game.gameEndedByPasses() ? "two passes" : "touch or serial");
-  dashboard.setTile(1, "To Move", String(game.currentPlayer()), "Black starts");
-  dashboard.setTile(2, "Moves", String(game.moveCount()), "plays + passes");
-  dashboard.setTile(3, "Caps", String("B") + String(game.blackCaptures()) + " W" + String(game.whiteCaptures()), "prisoners");
-  dashboard.setTile(4, "Score", String(score.margin), "rough area");
-  dashboard.setTile(5, "Coach", score.neutralPoints > 0 ? "open" : "settled", "liberties + atari");
-  dashboard.setBanner(banner);
-  dashboard.setFooter("LiteGo v1 is local/offline Go logic; compile-ready is not field-proven");
-  touchView.requestRepaint();
+  touchView.setStatus(banner);
 }
 
 void reportMove(const LiteGoGame::MoveResult &result, const char *source) {
@@ -61,8 +51,7 @@ void reportMove(const LiteGoGame::MoveResult &result, const char *source) {
   }
 
   printBoard();
-  dashboard.setDetail("Coach", game.lastCoach() + "|" + game.scoreSummary());
-  refreshGo(game.describeMove(result));
+  touchView.setLastResult(result, source);
 }
 
 void cmdStatus(const String &) {
@@ -83,8 +72,7 @@ void cmdBoard(const String &) {
 void cmdHint(const String &) {
   Serial.print(F("[coach] "));
   Serial.println(game.lastCoach());
-  dashboard.setDetail("Coach", game.lastCoach() + "|" + game.scoreSummary());
-  refreshGo("coach hint");
+  refreshGo(String("Hint: ") + game.lastCoach());
 }
 
 void cmdPlay(const String &args) {
@@ -92,8 +80,7 @@ void cmdPlay(const String &args) {
   int8_t y;
   if (!parsePoint(args, x, y)) {
     Serial.println(F("[go] usage: play <x> <y> with coordinates 0-8"));
-    dashboard.setDetail("Illegal Move", "Use play <x> <y>|Coordinates are 0-8");
-    refreshGo("bad play command");
+    touchView.setStatus("Use play <x> <y> with coordinates 0-8.", true);
     return;
   }
 
@@ -113,10 +100,10 @@ void cmdPass(const String &) {
 
 void cmdReset(const String &) {
   game.reset();
+  touchView.clearLastMove();
   eventLog.add("Board reset");
   Serial.println(F("[go] board reset; Black to move"));
   printBoard();
-  dashboard.setDetail("New Game", "9x9 board reset|Black to move|Use play x y or touch");
   refreshGo("new game");
 }
 
@@ -130,9 +117,19 @@ void cmdScore(const String &) {
                  " territory B" + String(score.blackTerritory) +
                  " W" + String(score.whiteTerritory) +
                  " neutral=" + String(score.neutralPoints));
-  dashboard.setDetail("Score Estimate", game.scoreSummary() +
-                                      "|Area = stones + enclosed empty points|No komi or seki adjudication");
-  refreshGo("score estimate");
+  refreshGo(String("Score: ") + game.scoreSummary() +
+            ". Territory B" + String(score.blackTerritory) +
+            " W" + String(score.whiteTerritory) +
+            " neutral " + String(score.neutralPoints) +
+            ". No komi or seki adjudication.");
+}
+
+void cmdSelfTest(const String &) {
+  bool ok = LiteGoGame::runSelfTest(Serial);
+  eventLog.add(ok ? "Selftest PASS" : "Selftest FAIL");
+  touchView.setStatus(ok ? "Selftest PASS. Serial scenarios covered capture, suicide, pass, score, CPU, and ko."
+                         : "Selftest FAIL. Check Serial output for the failing scenario.",
+                      !ok);
 }
 
 void setup() {
@@ -141,7 +138,6 @@ void setup() {
   printHardwareProfile(Serial, activeHardwareProfile());
   storage.begin("litego");
   game.reset();
-  dashboard.begin("LITEGO", "TOUCH COACH", "LOCAL");
   touchView.begin(&game);
   refreshGo("coach board ready");
   eventLog.add("LiteGo Touch Coach booted");
@@ -155,18 +151,37 @@ void setup() {
   router.on("pass", "pass turn", cmdPass);
   router.on("reset", "reset board", cmdReset);
   router.on("score", "rough area score estimate", cmdScore);
+  router.on("selftest", "run rules smoke scenarios", cmdSelfTest);
   printBoard();
 }
 
 void loop() {
   router.poll();
-  dashboard.tick();
 
-  int8_t touchX;
-  int8_t touchY;
-  if (touchView.tick(touchX, touchY)) {
-    LiteGoGame::MoveResult result = game.play(touchX, touchY);
-    reportMove(result, "touch");
+  LiteGoTouchView::Action action;
+  if (touchView.tick(action)) {
+    switch (action.type) {
+      case LiteGoTouchView::kActionPlay:
+        reportMove(game.play(action.x, action.y), "touch");
+        break;
+      case LiteGoTouchView::kActionPass:
+        reportMove(game.pass(), "touch-pass");
+        break;
+      case LiteGoTouchView::kActionCpu:
+        reportMove(game.cpuMove(), "touch-cpu");
+        break;
+      case LiteGoTouchView::kActionReset:
+        cmdReset(String());
+        break;
+      case LiteGoTouchView::kActionScore:
+        cmdScore(String());
+        break;
+      case LiteGoTouchView::kActionHint:
+        cmdHint(String());
+        break;
+      case LiteGoTouchView::kActionNone:
+        break;
+    }
   }
 
   delay(20);

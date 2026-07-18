@@ -6,6 +6,11 @@ V1 is mock-first. It visualizes GPS fix state, Wi-Fi AP rows, logging state,
 rotation, and storage health. Hardware paths are opt-in compile scaffolds only
 until the exact CrowPanel, wiring, upload, and runtime behavior are verified.
 
+The `USE_DISPLAY=1` path now uses a SurveyOps-specific full-screen UI rather
+than the shared generic tile grid: an animated passive survey scope, AP row
+list, GPS fix card, WiGLE/logging detail panel, touch row selection, and a
+footer that keeps the passive-only boundary visible on camera.
+
 This port is passive survey/logging only. It does not join networks, capture
 credentials, inject packets, deauth clients, or run active tests.
 
@@ -19,7 +24,7 @@ CTAGS_WORKAROUND=1 EXTRA_FLAGS="-DUSE_GPS_DRIVER=1" ./scripts/compile-all.sh
 
 | Flag | What it gates | Proof state |
 |---|---|---|
-| `USE_DISPLAY=1` | Shared CrowPanel dashboard rendering | compile-ready only unless uploaded and observed |
+| `USE_DISPLAY=1` | SurveyOps full-screen scope, AP list, GPS card, logging panel, and touch row selection | compile-ready only unless uploaded and observed |
 | `USE_GPS_DRIVER=1` | TinyGPSPlus NMEA parsing from `Serial1` when available | compile-ready; not field-proven |
 | `USE_WIFI_SCAN=1` | Passive station Wi-Fi scan rows through `WiFi.scanNetworks(... passive=true ...)` | compile-ready; not field-proven |
 | `USE_SD_WIGLE_LOG=1` | WiGLE-style CSV file creation, row append, rotation, and storage health on SD | compile-ready; not field-proven |
@@ -66,6 +71,10 @@ artifacts and avoid publishing them raw.
 - `rotate`
 - `storage`
 - `nmea <gps sentence>`
+
+With `USE_DISPLAY=1`, Serial remains the control surface. Touch selects AP rows
+or cycles the highlighted AP on the scope; it does not start scans, logging, or
+network actions.
 
 ## Serial Smoke Script
 

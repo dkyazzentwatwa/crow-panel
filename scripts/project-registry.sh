@@ -19,6 +19,9 @@ projects/12-creatorops-board
 projects/13-surveyops-wardriver-panel
 projects/14-adsb-flight-tracker-radar
 projects/15-pokedex-panel
+projects/16-cypher-flock-panel
+projects/17-littlehakr-rf-lab
+projects/18-cypher-desk-panel
 PROJECTS
 }
 

@@ -17,10 +17,12 @@ LIBRARIES=(
   "ArduinoJson"          # packet/JSON parsing (USE_LORA_DRIVER payloads, later Wi-Fi work)
   "RadioLib"             # SX1262 LoRa driver - Elecrow's own choice in their Lesson13 example
   "GFX Library for Arduino"  # Arduino_GFX: Adafruit-GFX-style API + MIPI-DSI classes for USE_DISPLAY
+  "U8g2"                 # Project 18 compact fonts through Arduino_GFX's native U8g2 support
   "SensorLib"            # GT911 capacitive touch driver
   "Adafruit PN532"       # USE_PN532_DRIVER (pulls in Adafruit BusIO)
   "MFRC522"              # USE_MFRC522_DRIVER
   "RF24"                 # optional nRF24-style module in the wireless socket
+  "NimBLE-Arduino"       # generic ESP32 Cypher Flock BLE detector companion
 )
 
 for LIB in "${LIBRARIES[@]}"; do

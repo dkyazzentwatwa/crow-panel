@@ -49,6 +49,14 @@
 #define USE_WIFI_SCAN 0
 #endif
 
+#ifndef USE_FLOCK_C6_WITNESS
+#define USE_FLOCK_C6_WITNESS 0
+#endif
+
+#ifndef USE_RF_LAB_C6_WIFI
+#define USE_RF_LAB_C6_WIFI 0
+#endif
+
 #ifndef USE_BLE_UART_BRIDGE
 #define USE_BLE_UART_BRIDGE 0
 #endif

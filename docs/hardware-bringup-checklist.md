@@ -140,6 +140,20 @@ the readers share buses (SPI: SCK=8, MOSI=6, MISO=7; I2C: SDA=45, SCL=46).
   `feed SENSOR,ATTIC,29.5,40,88,0,-58`. **Success:** a sensor node's telemetry
   appears on the dashboard; a running cypher-chat node shows as a presence
   tile. Full flow and wiring in `espnow/README.md`.
+- **Cypher Flock three-board bridge** (`-DUSE_FLOCK_UART_BRIDGE=1`, project 16):
+  build the ESP32 BLE aggregator and BW16 Wi-Fi scanner with
+  `scripts/build-flock-bridge.sh` and `scripts/build-flock-bw16.sh`. Power all
+  boards separately over USB. Connect ESP32 TX17→P4 RX48, ESP32 RX16←P4 TX47,
+  BW16 PB1/pin4 TX→ESP32 RX32, BW16 PB2/pin5 RX←ESP32 TX33, and shared ground.
+  IO48/IO47 and PB1/PB2 are initial candidates and must
+  be checked against the board silk and Elecrow UART example before use.
+  **Success:** both `hello` streams arrive, BLE reports continue during BW16
+  scanning, raw counters rise first on channels 1 and 36, and controls receive
+  acknowledgments. This is `uploaded`; dual-band and field proof remain separate.
+- **Cypher Flock C6 witness** (`-DUSE_FLOCK_C6_WITNESS=1`, project 16): open the
+  `C6 WIFI` screen or run `witness scan`, then `witness list`. **Success:** the
+  hosted C6 returns passive 2.4 GHz AP rows and the screen pages without freezing
+  touch. Confirm the same APs do not change Flock alerts or lifetime counters.
 
 ## Stage 7 — Camera (project 02)
 

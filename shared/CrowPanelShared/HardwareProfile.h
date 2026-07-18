@@ -31,6 +31,9 @@ struct AudioPins {
   uint8_t bclk;
   uint8_t sdata;
   uint8_t control;
+  uint8_t micClk;
+  uint8_t micDin;
+  bool controlActiveHigh;
 };
 
 struct DisplayPins {

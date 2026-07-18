@@ -13,7 +13,10 @@ static const AudioPins AUDIO_OUT = {
   21,
   22,
   23,
-  30
+  30,
+  24,
+  26,
+  true
 };
 
 // Display wiring and MIPI-DSI timings from Elecrow's official V1.0 Arduino

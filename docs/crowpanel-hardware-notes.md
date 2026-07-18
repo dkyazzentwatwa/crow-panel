@@ -26,12 +26,15 @@ Placeholder touch pins in `HardwareProfile`:
 
 ## Audio Notes
 
-Placeholder audio output pins:
+Audio pins from Elecrow's P4 audio examples (verify amplifier polarity on the
+specific board revision before promoting to field-proven):
 
 - `AUDIO_GPIO_LRCLK`: IO21
 - `AUDIO_GPIO_BCLK`: IO22
 - `AUDIO_GPIO_SDATA`: IO23
 - `AUDIO_GPIO_CTRL`: IO30
+- `AUDIO_PDM_MIC_CLK`: IO24
+- `AUDIO_PDM_MIC_DIN`: IO26
 
 ## Revision Boundary
 

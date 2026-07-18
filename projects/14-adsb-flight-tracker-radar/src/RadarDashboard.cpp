@@ -37,6 +37,8 @@ constexpr int16_t kWorldTop = 76;
 constexpr int16_t kWorldLeft = 48;
 constexpr int16_t kWorldRight = kScreenW - 48;
 constexpr int16_t kWorldW = kWorldRight - kWorldLeft;
+constexpr uint32_t kIntroSplashMs = 8000;
+constexpr uint16_t kIntroFrameMs = 33;
 constexpr uint32_t kWorldStaleMs = 45UL * 60UL * 1000UL;
 constexpr float kDegPerMs = 360.0f / 4500.0f;  // ~4.5 s per revolution
 
@@ -170,6 +172,8 @@ void RadarDashboard::begin(uint16_t initialRangeKm) {
   memset(blipX_, 0xFF, sizeof(blipX_));  // -1
   memset(blipY_, 0xFF, sizeof(blipY_));
   memset(&snap_, 0, sizeof(snap_));
+
+  drawIntroSplash_();
   lastFrameMs_ = millis();
 
   CrowDisplay::canvas()->fillScreen(kBg);
@@ -297,6 +301,7 @@ void RadarDashboard::tick(AircraftStore &store) {
   if (changed) {
     chromeSig_ = sig;
     drawHeader_();
+    drawFooter_();
   }
   if (changed || listRefreshGate_.ready()) drawList_();
   if (clockGate_.ready()) {
@@ -536,24 +541,136 @@ void RadarDashboard::drawHeader_() {
 
   char rangeBuf[16];
   snprintf(rangeBuf, sizeof(rangeBuf), "RANGE %ukm", (unsigned)rangeRingKm_);
-  char cntBuf[20];
-  snprintf(cntBuf, sizeof(cntBuf), "%u contacts", (unsigned)snap_.count);
 
   auto pillW = [&](const char *s) { return (int16_t)(textWidth(g, s, fontS()) + 24); };
   int16_t gap = 10;
-  int16_t cntW = textWidth(g, cntBuf, fontS());
-  int16_t total = cntW + 16 + pillW(rangeBuf) + gap + pillW(linkLabel);
+  int16_t total = pillW(rangeBuf) + gap + pillW(linkLabel);
   int16_t x = kScreenW - 16 - total;
   int16_t y = 14;
   nextPillX_ = 0;
   nextPillW_ = 0;
 
-  text(g, x, 20, cntBuf, fontS(), kTextMut, kLeft);
-  x += cntW + 16;
   rangePillX_ = x;
   rangePillW_ = pill(g, x, y, rangeBuf, fontS(), kBg, kAccent);
   x += rangePillW_ + gap;
   pill(g, x, y, linkLabel, fontS(), linkText, linkFill);
+}
+
+void RadarDashboard::drawIntroSplash_() {
+  Arduino_GFX *g = CrowDisplay::canvas();
+  if (!g) return;
+
+  drawIntroStatic_();
+  uint32_t start = millis();
+  while ((millis() - start) < kIntroSplashMs) {
+    drawIntroFrame_(millis() - start);
+    delay(kIntroFrameMs);
+  }
+}
+
+void RadarDashboard::drawIntroStatic_() {
+  Arduino_GFX *g = CrowDisplay::canvas();
+  if (!g) return;
+
+  const int16_t cx = kScreenW / 2;
+  uint16_t glow = rgb(0, 235, 255);
+  uint16_t dimCyan = rgb(0, 68, 82);
+
+  g->fillScreen(kBg);
+  for (int16_t y = 0; y < kScreenH; y += 14) {
+    g->drawFastHLine(0, y, kScreenW, rgb(0, 18, 22));
+  }
+
+  g->drawRect(22, 20, kScreenW - 44, kScreenH - 40, dimCyan);
+  g->drawRect(28, 26, kScreenW - 56, kScreenH - 52, rgb(0, 36, 42));
+
+  text(g, cx, 54, "ADS-B RADAR", fontXL(), kTextHi, kCenter);
+  text(g, cx, 104, "LIVE AIRCRAFT TRACKER", fontM(), glow, kCenter);
+  text(g, cx, 134, "INITIALIZING AIRSPACE SCAN", fontS(), kTextMut, kCenter);
+
+  int16_t barX = 244;
+  int16_t barY = 536;
+  int16_t barW = 536;
+  g->drawRoundRect(barX, barY, barW, 18, 7, dimCyan);
+  text(g, cx, 566, "LOCKING RANGE RINGS  |  SYNCING AIRCRAFT FEED", fontS(), kTextMut, kCenter);
+}
+
+void RadarDashboard::drawIntroFrame_(uint32_t elapsedMs) {
+  Arduino_GFX *g = CrowDisplay::canvas();
+  Arduino_GFX *sg = scope_.canvas();
+  uint16_t *fb = scope_.framebuffer();
+  if (!g || !sg || !fb) return;
+
+  float progress = (float)elapsedMs / (float)kIntroSplashMs;
+  if (progress > 1.0f) progress = 1.0f;
+
+  const int16_t screenCx = kScreenW / 2;
+  int16_t cw = scope_.width();
+  int16_t ch = scope_.height();
+  int16_t cx = cw / 2;
+  int16_t cy = ch / 2;
+  int16_t rMax = (cx < cy ? cx : cy) - 18;
+  int16_t scopeX = (kScreenW - cw) / 2;
+  int16_t scopeY = 150;
+  float sweep = progress * 1080.0f;
+  float sweepRad = (sweep - 90.0f) * (float)M_PI / 180.0f;
+  uint16_t glow = rgb(0, 235, 255);
+  uint16_t green = rgb(96, 255, 70);
+  uint16_t dimCyan = rgb(0, 68, 82);
+  uint16_t darkGreen = rgb(18, 74, 20);
+
+  sg->fillScreen(rgb(5, 12, 18));
+  for (uint8_t i = 1; i <= 4; i++) {
+    uint16_t col = i == 4 ? dimCyan : darkGreen;
+    sg->drawCircle(cx, cy, rMax * i / 4, col);
+  }
+  sg->drawFastHLine(cx - rMax - 22, cy, rMax * 2 + 44, darkGreen);
+  sg->drawFastVLine(cx, cy - rMax - 22, rMax * 2 + 44, darkGreen);
+  for (int16_t deg = 30; deg < 360; deg += 30) {
+    float rad = (deg - 90.0f) * (float)M_PI / 180.0f;
+    sg->drawLine(cx, cy, cx + (int16_t)(cosf(rad) * rMax), cy + (int16_t)(sinf(rad) * rMax),
+                 rgb(0, 44, 36));
+  }
+
+  for (int8_t tail = 12; tail >= 0; tail--) {
+    float rad = (sweep - 90.0f - tail * 4.0f) * (float)M_PI / 180.0f;
+    uint16_t col = tail == 0 ? glow : rgb(0, 126 - tail * 8, 102 - tail * 6);
+    sg->drawLine(cx, cy, cx + (int16_t)(cosf(rad) * rMax), cy + (int16_t)(sinf(rad) * rMax), col);
+  }
+  sg->fillCircle(cx, cy, 6, green);
+  sg->drawCircle(cx, cy, 13, dimCyan);
+
+  const int16_t blipR[] = {52, 102, 134, 154, 84};
+  const int16_t blipA[] = {34, 138, 224, 304, 276};
+  for (uint8_t i = 0; i < 5; i++) {
+    float a = (float)(blipA[i] + (elapsedMs / (38 + i * 7))) * (float)M_PI / 180.0f;
+    int16_t x = cx + (int16_t)(cosf(a) * blipR[i]);
+    int16_t y = cy + (int16_t)(sinf(a) * blipR[i]);
+    uint16_t col = (i % 2 == 0) ? green : kAmber;
+    sg->fillTriangle(x, y - 9, x - 8, y + 8, x + 8, y + 8, col);
+    sg->drawCircle(x, y, 14, rgb(0, 92, 60));
+  }
+
+  int16_t sx = cx + (int16_t)(cosf(sweepRad) * (rMax + 10));
+  int16_t sy = cy + (int16_t)(sinf(sweepRad) * (rMax + 10));
+  sg->fillCircle(sx, sy, 5, glow);
+  text(sg, cx, 10, "N", fontS(), green, kCenter);
+  text(sg, cx, ch - 24, "S", fontS(), dimCyan, kCenter);
+  text(sg, cx + rMax + 10, cy - 7, "E", fontS(), dimCyan, kLeft);
+  text(sg, cx - rMax - 10, cy - 7, "W", fontS(), dimCyan, kRight);
+  g->draw16bitRGBBitmap(scopeX, scopeY, fb, cw, ch);
+
+  char pct[24];
+  snprintf(pct, sizeof(pct), "SCAN %u%%", (unsigned)(progress * 100.0f));
+  g->fillRect(390, 508, 244, 24, kBg);
+  text(g, screenCx, 506, pct, fontL(), green, kCenter);
+
+  int16_t barX = 244;
+  int16_t barY = 536;
+  int16_t barW = 536;
+  int16_t fillW = (int16_t)((barW - 4) * progress);
+  g->fillRect(barX + 2, barY + 2, barW - 4, 14, kBg);
+  g->fillRoundRect(barX + 2, barY + 2, fillW, 14, 5, glow);
 }
 
 void RadarDashboard::drawList_() {
@@ -630,7 +747,9 @@ void RadarDashboard::drawFooter_() {
   snprintf(src, sizeof(src), "src: %s", snap_.source ? snap_.source : "-");
   text(g, 38, kFooterY + 18, src, fontS(), kTextHi, kLeft);
 
-  text(g, kScreenW / 2, kFooterY + 18, "north-up", fontS(), kTextMut, kCenter);
+  char contacts[24];
+  snprintf(contacts, sizeof(contacts), "%u contacts", (unsigned)snap_.count);
+  text(g, kScreenW / 2, kFooterY + 18, contacts, fontS(), kTextMut, kCenter);
 
   char sweep[16];
   snprintf(sweep, sizeof(sweep), "SWEEP %03d", ((int)sweepDeg_) % 360);

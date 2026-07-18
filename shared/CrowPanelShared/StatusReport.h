@@ -36,6 +36,8 @@ inline void printSystemStatus(Stream &out, const char *appName, uint32_t eventCo
   out.println(USE_AUDIO);
   out.print(F("[status] flags USE_WIFI_SCAN="));
   out.print(USE_WIFI_SCAN);
+  out.print(F(" USE_FLOCK_C6_WITNESS="));
+  out.print(USE_FLOCK_C6_WITNESS);
   out.print(F(" USE_BLE_UART_BRIDGE="));
   out.print(USE_BLE_UART_BRIDGE);
   out.print(F(" USE_QR_PERSISTENCE="));

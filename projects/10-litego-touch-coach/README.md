@@ -6,9 +6,13 @@ project-local `src/` code so the sketch stays a small Serial and touch harness.
 ## Controls
 
 - Serial is the smoke-test path in every build.
-- `USE_DISPLAY=1` adds a 9x9 touch board on the CrowPanel detail surface.
-- Touch input maps GT911 coordinates to the nearest board point and then uses
-  the same legal-move path as `play <x> <y>`.
+- `USE_DISPLAY=1` adds a full-screen 9x9 touch coach surface inspired by the
+  ADS-B radar dashboard style: dense header/footer, status cards, command pills,
+  last-move highlighting, wrapped coach text, and explicit proof-state footer.
+- Touch input tries raw, swapped, and flipped GT911 coordinate mappings before
+  resolving a tap. Every touch action routes through the same game path as the
+  matching Serial command.
+- Touch command pills: `PASS`, `CPU`, `HINT`, `SCORE`, and `RESET`.
 
 ## Serial Commands
 
@@ -20,6 +24,7 @@ project-local `src/` code so the sketch stays a small Serial and touch harness.
 - `pass`
 - `reset`
 - `score`
+- `selftest`
 
 Coordinates are zero-based: `play 0 0` is the upper-left point and `play 8 8`
 is the lower-right point.
@@ -35,6 +40,8 @@ is the lower-right point.
 - Simple CPU move selection that prefers captures, atari pressure, liberties,
   and central points.
 - Liberty and atari coaching after each move.
+- Built-in `selftest` smoke runner for capture, suicide rejection, CPU move,
+  pass/end, reset, score, and a simple ko fixture.
 - Rough area scoring: stones plus enclosed empty regions, with neutral regions
   split out. No komi or seki adjudication is applied.
 
@@ -75,6 +82,12 @@ pass
 reset
 ```
 
+Rules self-test:
+
+```text
+selftest
+```
+
 Display compile row:
 
 ```sh
@@ -88,6 +101,13 @@ arduino-cli compile \
   projects/10-litego-touch-coach
 ```
 
+Upload when a CrowPanel serial port is present:
+
+```sh
+CTAGS_WORKAROUND=1 EXTRA_FLAGS="-DUSE_DISPLAY=1" \
+  ./scripts/upload-project.sh projects/10-litego-touch-coach /dev/cu.usbmodemXXXX
+```
+
 ## Proof State
 
 - `compile-ready`: Arduino CLI build succeeds for baseline and/or display flags.
@@ -95,6 +115,8 @@ arduino-cli compile \
 - `field-proven`: the physical board has shown the UI, accepted touch moves,
   and produced matching Serial proof.
 
-Current implementation is designed for compile verification first. Do not claim
-touch behavior is field-proven until `USE_DISPLAY=1` is uploaded and the real
-CrowPanel accepts taps on the 9x9 grid.
+Current proof state: compile-ready for baseline and `USE_DISPLAY=1` builds on
+the ESP32-P4 FQBN. Do not claim uploaded or field-proven until a detected
+CrowPanel port accepts the `USE_DISPLAY=1` upload, the screen is observed, the
+board intersections and command pills respond to touch, and Serial `selftest`
+passes on the running device.

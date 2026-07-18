@@ -7,10 +7,91 @@ const int8_t kDirs[4][2] = {
     {0, -1},
     {0, 1},
 };
+
+bool selftestCheck(Print &out, const char *name, bool ok) {
+  out.print(F("[selftest] "));
+  out.print(name);
+  out.println(ok ? F(" PASS") : F(" FAIL"));
+  return ok;
+}
 }
 
 LiteGoGame::LiteGoGame() {
   reset();
+}
+
+bool LiteGoGame::runSelfTest(Print &out) {
+  bool allOk = true;
+  LiteGoGame g;
+
+  g.reset();
+  allOk &= selftestCheck(out, "capture setup B 1,0", g.play(1, 0).status == kMoveOk);
+  allOk &= selftestCheck(out, "capture setup W 0,0", g.play(0, 0).status == kMoveOk);
+  LiteGoGame::MoveResult capture = g.play(0, 1);
+  allOk &= selftestCheck(out, "capture move legal", capture.status == kMoveOk);
+  allOk &= selftestCheck(out, "capture removes stone",
+                         capture.captures == 1 && g.blackCaptures() == 1 && g.at(0, 0) == '.');
+
+  g.reset();
+  allOk &= selftestCheck(out, "suicide setup B 0,1", g.play(0, 1).status == kMoveOk);
+  allOk &= selftestCheck(out, "suicide setup W 4,4", g.play(4, 4).status == kMoveOk);
+  allOk &= selftestCheck(out, "suicide setup B 1,0", g.play(1, 0).status == kMoveOk);
+  allOk &= selftestCheck(out, "suicide setup W 5,5", g.play(5, 5).status == kMoveOk);
+  allOk &= selftestCheck(out, "suicide setup B 1,1", g.play(1, 1).status == kMoveOk);
+  LiteGoGame::MoveResult suicide = g.play(0, 0);
+  allOk &= selftestCheck(out, "suicide rejected",
+                         suicide.status == kMoveSuicide && g.currentPlayer() == 'W' &&
+                             g.moveCount() == 5);
+
+  g.reset();
+  allOk &= selftestCheck(out, "cpu move legal", g.cpuMove().status == kMoveOk && g.moveCount() == 1);
+  LiteGoGame::ScoreEstimate cpuScore = g.estimateScore();
+  allOk &= selftestCheck(out, "score has stones",
+                         cpuScore.blackStones + cpuScore.whiteStones > 0 &&
+                             cpuScore.neutralPoints < kPointCount);
+
+  LiteGoGame::MoveResult passOne = g.pass();
+  LiteGoGame::MoveResult passTwo = g.pass();
+  allOk &= selftestCheck(out, "two passes end review",
+                         passOne.status == kMovePass && passTwo.status == kMovePass &&
+                             g.gameEndedByPasses());
+  g.reset();
+  allOk &= selftestCheck(out, "reset clears board",
+                         g.moveCount() == 0 && g.currentPlayer() == 'B' && g.at(4, 4) == '.');
+
+  const char *koRows[kSize] = {
+      ".BW......",
+      "BW.W.....",
+      ".BW......",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+      ".........",
+  };
+  for (uint8_t y = 0; y < kSize; y++) {
+    for (uint8_t x = 0; x < kSize; x++) {
+      g.board_[y][x] = koRows[y][x];
+      g.previousBoard_[y][x] = '.';
+    }
+  }
+  g.toMove_ = 'B';
+  g.moveCount_ = 8;
+  g.consecutivePasses_ = 0;
+  g.blackCaptures_ = 0;
+  g.whiteCaptures_ = 0;
+  g.hasPreviousBoard_ = false;
+  g.lastCoach_ = "Ko fixture ready.";
+  LiteGoGame::MoveResult koCapture = g.play(2, 1);
+  LiteGoGame::MoveResult koRecapture = g.play(1, 1);
+  allOk &= selftestCheck(out, "ko capture legal",
+                         koCapture.status == kMoveOk && koCapture.captures == 1 &&
+                             g.blackCaptures() == 1);
+  allOk &= selftestCheck(out, "immediate ko recapture rejected", koRecapture.status == kMoveKo);
+
+  out.println(allOk ? F("[selftest] overall PASS") : F("[selftest] overall FAIL"));
+  return allOk;
 }
 
 void LiteGoGame::reset() {
