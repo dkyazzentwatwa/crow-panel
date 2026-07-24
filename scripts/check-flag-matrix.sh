@@ -31,7 +31,7 @@ have_lib() {
 }
 
 P1="projects/01-fieldops-control-center"
-P2="projects/02-vision-guard-inspection-kiosk"
+P2="projects/02-cypher-vision-cam"
 P3="projects/03-badgeops-nfc-rfid-system"
 P4="projects/04-relayops-wifi-control-hub"
 P5="projects/05-cypherdrive-wireless-ops"
@@ -105,6 +105,9 @@ ROWS=(
   "$P1|espnow-display|-DUSE_ESPNOW=1 -DUSE_DISPLAY=1|GFX Library for Arduino,SensorLib"
   "$P1|kitchen-sink|-DUSE_LORA_DRIVER=1 -DUSE_DISPLAY=1 -DUSE_WIFI=1|RadioLib,GFX Library for Arduino,SensorLib"
   "$P2|camera|-DUSE_CAMERA_DRIVER=1|"
+  "$P2|camera-display|-DUSE_CAMERA_DRIVER=1 -DUSE_DISPLAY=1|GFX Library for Arduino,SensorLib"
+  "$P2|sd|-DUSE_CAM_SD=1|"
+  "$P2|kitchen-sink|-DUSE_CAMERA_DRIVER=1 -DUSE_DISPLAY=1 -DUSE_WIFI=1 -DUSE_CAM_SD=1|GFX Library for Arduino,SensorLib"
   "$P3|pn532|-DUSE_PN532_DRIVER=1|Adafruit PN532"
   "$P3|mfrc522|-DUSE_MFRC522_DRIVER=1|MFRC522"
   "$P3|both-readers|-DUSE_PN532_DRIVER=1 -DUSE_MFRC522_DRIVER=1|Adafruit PN532,MFRC522"
@@ -167,6 +170,8 @@ ROWS=(
   # the library linked. See src/gnuboy/VENDORED.md.
   "$P22|gb-sd|-DUSE_GB_SD=1|"
   "$P22|display-gb-sd|-DUSE_DISPLAY=1 -DUSE_GB_SD=1|GFX Library for Arduino,SensorLib"
+  "$P22|gb-audio|-DUSE_GB_AUDIO=1|"
+  "$P22|full|-DUSE_DISPLAY=1 -DUSE_GB_SD=1 -DUSE_GB_AUDIO=1|GFX Library for Arduino,SensorLib"
 )
 
 echo "Flag matrix: ${#ROWS[@]} rows on $FQBN"

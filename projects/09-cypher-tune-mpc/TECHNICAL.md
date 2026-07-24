@@ -33,6 +33,8 @@ hardware or sample files.
 | `src/TuneUi` | Full-screen MPC UI: dirty-region rendering with `CrowDisplay` manual flush, state-diff mirrors so serial edits appear on screen |
 | `src/TouchTracker` | 5-contact GT911 tracking (id + proximity matching, press/release edges, release debounce) over the shared `CrowDisplay::touchPoints()` |
 | `src/UiLayout.h` | Every pixel coordinate + hit-test in one header so drawing and touch cannot disagree |
+| `src/TuneSplash` | Boot animation: wordmark fade-up, damped-sine waveform sweep with a hot leading edge, staggered pad-grid wipe-in. Draws into the cached FB with per-frame region flushes (boot is the one moment nothing competes for the panel), ~2.3 s, theme-aware, no-op without a display |
+| `src/TuneThemes` | 6 groovebox palettes (`TuneTheme`: chrome + pad + step + playhead roles). Same idea as project 21's `DeckTheme`, kept project-local and tuned punchier for pads. Selection persists in NVS (`CYPHER_TUNE_NVS_NAMESPACE`); available headless so `theme` works without a display |
 
 ### Audio path and latency
 
@@ -79,9 +81,13 @@ hardware or sample files.
   row-band `esp_cache_msync` calls. No offscreen canvas — every animated
   element draws once in final state, keeping internal SRAM free for audio.
 - Layout: transport bar (y0-64: PLAY/STOP/REC, BPM, SWING, MET, patterns
-  A-D), 4x4 pad grid left (126 px cells, pad 1 bottom-left), right column:
+  A-D), 4x4 pad grid left (126x114 px cells, pad 1 bottom-left), right column:
   step grid 2x8, always-visible pad-edit panel (VOL/PITCH sliders, choke
-  chips, kit selector), voice meters, status strip.
+  chips, kit selector), voice meters + THEME button, status strip.
+  Pad cells are wider than tall on purpose: the 4 rows have to fit between the
+  transport bar and the full-width status strip (72..560), so `kPadCellH` is
+  derived from that budget. Forcing them square overruns the status strip and
+  clips the bottom row (regression fixed 2026-07-23).
 - Pads fire on press-down; velocity maps from vertical hit position
   (top soft 40 → bottom hard 127). Pressing a pad also selects it for the
   step lane + edit panel (TR workflow, no modes).
@@ -92,6 +98,20 @@ hardware or sample files.
 - The UI polls sequencer/bank state each tick and diffs against mirrors, so
   serial commands move the screen with zero extra plumbing; engine events
   (drained once per loop) drive pad flashes and record feedback.
+- **Live scope/VU is real audio, not a simulation.** The render task decimates
+  the post-clip mix (every 8th frame) into a 256-entry ring and publishes each
+  block's peak; `TuneUi` reads both through `PeakFn`/`ScopeFn` callbacks, so
+  the UI still includes no audio header. Reads are unlocked — the render task
+  can lap a copy mid-draw, which costs at most one visually-odd frame and never
+  a crash. The trace redraws on a 40 ms clock (a live waveform can't be
+  change-driven); silent builds get 0 samples back and fall back to the
+  simulated `VisualVoices` meters rather than drawing a flat line that would
+  imply real, dead audio.
+- Pad flash is velocity-scaled: the fill blends toward the theme's flash color
+  by `velocity x remaining-envelope`, repainted every frame of the 140 ms tail,
+  so a ghost note glows and an accent slams. The playhead drags a 3-cell fading
+  trail; both the new and previous head's tails are marked dirty on each step so
+  the tail clears cleanly.
 
 ## Serial Commands
 
@@ -106,6 +126,7 @@ hardware or sample files.
 - `kit` / `kit load <name>` / `kit builtin`
 - `samples`, `voices`, `engine` (`audio` is an alias)
 - `select <pad>` (drive the step lane headless), `touch`, `perf`
+- `theme` (report + list) / `theme next` / `theme <name>` (prefix match)
 
 ## Build Flags
 

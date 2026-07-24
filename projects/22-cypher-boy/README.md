@@ -12,12 +12,14 @@ play something long.
 
 ## Status
 
-**Compile-ready, not yet played on hardware.** All four build combinations
-compile green for the real ESP32-P4 target, and the headless `selftest` passes.
-Nothing here has been observed running on a physical CrowPanel: a ROM actually
-booting, touch driving gameplay, a battery save surviving a reboot, and GBC
-colour output are all still open. See the
-[technical reference](TECHNICAL.md) for the exact acceptance steps.
+**Field-proven (2026-07-24).** Pokemon Blue loads from SD and plays on the panel
+with the touch gamepad and sound. The boot splash, themes, save-state
+thumbnails, idle dimming, play-time library sort and the centred gamepad have
+all been confirmed on hardware.
+
+Still unexercised: GBC colour on a real `.gbc` title, the cartridge RTC
+(Pokemon Gold/Silver/Crystal day-night), and a battery save surviving a full
+power cycle. See the [technical reference](TECHNICAL.md).
 
 ## You supply the ROM
 
@@ -32,8 +34,12 @@ project folder is GPLv2 too.
 ## What you get
 
 - A ROM picker that lists everything in `/roms` on the card
-- An on-screen gamepad: D-pad, A, B, Start, Select, and a MENU key
+- A proper on-screen gamepad: cross D-pad, round A/B, Start/Select, MENU
 - Multi-touch friendly — hold a direction while pressing A, as you'd expect
+- **Sound** through the panel speaker (`USE_GB_AUDIO=1`), with volume and mute
+- **Pause menu** on MENU — resume, save/load state, fast-forward, sound, quit
+- **Save states**, 3 slots per game, written to `/states/<rom>.st<n>`
+- **Fast-forward** (3x) for grinding through dialogue
 - Battery saves written to `/saves/<rom>.sav`, autosaved a couple of seconds
   after the game writes, and flushed whenever you back out to the menu
 - Full serial parity: every touch action has a command equivalent, so you can
@@ -44,6 +50,7 @@ project folder is GPLv2 too.
 ```
 /roms/     your .gb and .gbc files
 /saves/    battery saves, created automatically
+/states/   save-state slots, created automatically
 ```
 
 Both folders are created on first boot if missing.
@@ -57,10 +64,10 @@ placeholder ROM list, so it boots on a bare board:
 CTAGS_WORKAROUND=1 ./scripts/compile-all.sh
 ```
 
-The real thing needs the display and the card:
+The real thing needs the display, the card, and sound:
 
 ```bash
-CTAGS_WORKAROUND=1 EXTRA_FLAGS="-DUSE_DISPLAY=1 -DUSE_GB_SD=1" ./scripts/compile-all.sh
+CTAGS_WORKAROUND=1 EXTRA_FLAGS="-DUSE_DISPLAY=1 -DUSE_GB_SD=1 -DUSE_GB_AUDIO=1" ./scripts/compile-all.sh
 ```
 
 ## Serial commands
@@ -72,12 +79,24 @@ CTAGS_WORKAROUND=1 EXTRA_FLAGS="-DUSE_DISPLAY=1 -DUSE_GB_SD=1" ./scripts/compile
 | `screen picker` / `screen play [n]` | Switch screens (same paths the touch UI uses) |
 | `button up+a` / `button none` | Inject a gamepad press |
 | `save` | Force-write battery SRAM now |
+| `state save\|load [slot]` | Save-state slots |
+| `ff` | Toggle fast-forward |
+| `pause` | Toggle the in-game pause overlay |
+| `audio vol <0-255>\|mute\|unmute` | Sound control |
 | `touch` | Raw + mapped touch point, tap count, held buttons, current screen |
 | `selftest` | Drive the flow headlessly with PASS/FAIL/SKIP |
 | `status`, `history` | Uptime/heap/flags, recent events |
 
 ## Audio
 
-v1 is **silent** by design. The emulator's mixer runs but is given no audio
-callback, so nothing is emitted. Sound through the NS4168 I2S amp is the first
-planned follow-up once the video, touch, and save chain is proven on glass.
+Build with `-DUSE_GB_AUDIO=1` for sound out of the panel speaker. It fails soft:
+if I2S will not start, the game keeps running silently rather than crashing.
+`audio` over serial reports status, volume, mute, and the underrun count.
+
+With `USE_GB_AUDIO=0` the emulator's mixer still runs but is handed no audio
+callback, so nothing is emitted.
+
+## Game Boy Color
+
+GBC works with no extra flags: gnuboy reads the cartridge header and switches
+itself into CGB mode. Just drop a `.gbc` file in `/roms`.

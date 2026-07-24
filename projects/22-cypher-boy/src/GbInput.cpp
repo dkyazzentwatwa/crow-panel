@@ -9,38 +9,71 @@ inline bool inBox(int16_t px, int16_t py, int16_t x, int16_t y, int16_t w, int16
   return px >= x && px < (int16_t)(x + w) && py >= y && py < (int16_t)(y + h);
 }
 
-// On-screen gamepad, laid out to the right of the x3 viewport.
-// The viewport occupies x = 40..520, so every control starts past x = 540 and
-// nothing overlaps the game picture. Targets are >= 80px so they are usable
-// with a thumb. These are first-pass values - expect to tune them once it is
-// on glass (the `touch` command prints the mapped point to help).
-const GbHitbox kLayout[] = {
-    // D-pad cluster (left of the button cluster), classic cross arrangement.
-    {620, 330,  90,  90, GB_BTN_UP,     "UP"},
-    {620, 510,  90,  90, GB_BTN_DOWN,   "DOWN"},
-    {530, 420,  90,  90, GB_BTN_LEFT,   "LEFT"},
-    {710, 420,  90,  90, GB_BTN_RIGHT,  "RIGHT"},
-
-    // A / B, offset diagonally the way a real Game Boy has them.
-    // A sits at x=920 (not 930) so its right edge lands on 1020, inside the
-    // 1024px panel - the selftest asserts every control fits on screen.
-    {920, 380, 100, 100, GB_BTN_A,      "A"},
-    {820, 450, 100, 100, GB_BTN_B,      "B"},
-
-    // START / SELECT, centred under the pad.
-    {620, 250, 130,  56, GB_BTN_SELECT, "SELECT"},
-    {780, 250, 130,  56, GB_BTN_START,  "START"},
-
-    // MENU: edge-triggered, returns to the ROM picker.
-    {900,  86, 110,  56, 0,             "MENU"},
-};
-const uint8_t kLayoutCount = sizeof(kLayout) / sizeof(kLayout[0]);
+// The gamepad is built at boot by GbInput::buildLayout() rather than hardcoded,
+// so the whole pad follows wherever the screen sits. Order matters only for
+// drawing; hit-testing scans the whole table.
+GbHitbox kLayout[9];
+uint8_t kLayoutCount = 0;
+int16_t kDpadX = 0, kDpadY = 0, kDpadW = 0, kDpadH = 0;
 
 }  // namespace
 
 const GbHitbox *GbInput::layout(uint8_t &count) {
   count = kLayoutCount;
   return kLayout;
+}
+
+void GbInput::dpadBounds(int16_t &x, int16_t &y, int16_t &w, int16_t &h) {
+  x = kDpadX; y = kDpadY; w = kDpadW; h = kDpadH;
+}
+
+void GbInput::buildLayout(int16_t vx, int16_t vy, int16_t vw, int16_t vh) {
+  const int16_t W = 1024, H = 600;
+  const int16_t leftZone = vx;             // margin left of the screen
+  const int16_t rightZone = W - (vx + vw);  // margin right of it
+
+  // D-pad: a cross of four square arms, centred in the left margin and set a
+  // little below the screen's midline so it falls under the thumb.
+  const int16_t arm = min<int16_t>(80, leftZone / 3);
+  const int16_t cx = leftZone / 2;
+  const int16_t cy = vy + (int16_t)(vh * 0.52f);
+  const int16_t half = arm / 2;
+
+  uint8_t n = 0;
+  kLayout[n++] = {(int16_t)(cx - half), (int16_t)(cy - arm - half), arm, arm, GB_BTN_UP, "UP", kCtlArm};
+  kLayout[n++] = {(int16_t)(cx - half), (int16_t)(cy + half), arm, arm, GB_BTN_DOWN, "DOWN", kCtlArm};
+  kLayout[n++] = {(int16_t)(cx - arm - half), (int16_t)(cy - half), arm, arm, GB_BTN_LEFT, "LEFT", kCtlArm};
+  kLayout[n++] = {(int16_t)(cx + half), (int16_t)(cy - half), arm, arm, GB_BTN_RIGHT, "RIGHT", kCtlArm};
+
+  kDpadX = cx - arm - half;
+  kDpadY = cy - arm - half;
+  kDpadW = arm * 3;
+  kDpadH = arm * 3;
+
+  // A / B: round, offset diagonally the way a real handheld has them.
+  const int16_t r = min<int16_t>(55, rightZone / 4);
+  const int16_t ax = W - r - 24, ay = cy - 40;
+  const int16_t bx = vx + vw + r + 18, by = cy + 45;
+  kLayout[n++] = {(int16_t)(ax - r), (int16_t)(ay - r), (int16_t)(r * 2), (int16_t)(r * 2), GB_BTN_A, "A", kCtlRound};
+  kLayout[n++] = {(int16_t)(bx - r), (int16_t)(by - r), (int16_t)(r * 2), (int16_t)(r * 2), GB_BTN_B, "B", kCtlRound};
+
+  // START / SELECT: under the screen when the bottom strip is deep enough,
+  // otherwise tucked beneath each side cluster (which is what a taller console
+  // like the NES needs).
+  const int16_t pw = 150, ph = 46;
+  const int16_t bottom = H - (vy + vh);
+  if (bottom >= 62) {
+    const int16_t sy = vy + vh + 10;
+    kLayout[n++] = {(int16_t)(vx + 40), sy, pw, ph, GB_BTN_SELECT, "SELECT", kCtlPill};
+    kLayout[n++] = {(int16_t)(vx + vw - 40 - pw), sy, pw, ph, GB_BTN_START, "START", kCtlPill};
+  } else {
+    kLayout[n++] = {(int16_t)(cx - pw / 2), (int16_t)(kDpadY + kDpadH + 14), pw, ph, GB_BTN_SELECT, "SELECT", kCtlPill};
+    kLayout[n++] = {(int16_t)(vx + vw + (rightZone - pw) / 2), (int16_t)(by + r + 14), pw, ph, GB_BTN_START, "START", kCtlPill};
+  }
+
+  // MENU stays out of the way, top-left under the header.
+  kLayout[n++] = {20, 90, 110, 46, 0, "MENU", kCtlPill};
+  kLayoutCount = n;
 }
 
 uint32_t GbInput::mapPoint(int16_t px, int16_t py) const {

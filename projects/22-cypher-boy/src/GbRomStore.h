@@ -26,6 +26,8 @@ class GbRomStore {
   String romPath(uint8_t index) const;
   // GB_SAVE_DIR "/" basename ".sav" - handed to gnuboy_load_sram/save_sram().
   String savePath(uint8_t index) const;
+  // GB_STATE_DIR "/" basename ".st<slot>" - gnuboy_save_state/load_state.
+  String statePath(uint8_t index, uint8_t slot) const;
 
   // True when a real SD card is mounted; false when serving the placeholder
   // list. Callers must not treat a placeholder path as loadable.

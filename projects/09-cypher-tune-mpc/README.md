@@ -44,6 +44,13 @@ checked on hardware instead of trusted.
 - **Kits** — a built-in 16-sound synthesized kit rendered at boot, plus SD
   card WAV kits (`/mpc/kits/<name>/pad01.wav … pad16.wav`) hot-swappable
   while the transport runs
+- **Themes** — 6 palettes (Ops Teal, MPC Classic, TR-808, Synthwave, Matrix,
+  Cotton Candy). Tap the THEME button by the scope, or `theme next` /
+  `theme 808` over serial; the choice is saved and survives a reboot
+- **Animated boot splash** — the wordmark fades up, a drum-shaped waveform
+  sweeps across with a glowing leading edge, and the pad grid wipes in
+- **Live output scope + VU** — a real oscilloscope of the mix (not a
+  simulation) with a peak-hold meter, so you can see the sound you're making
 - **Serial parity** — every control also works headless over serial, so the
   whole instrument can be proven without touching the panel
 

@@ -53,6 +53,12 @@ bool begin(const HardwareProfile &profile, const char *title,
 void flush();
 void flush(int16_t x, int16_t y, int16_t w, int16_t h);
 
+// Panel backlight, 0-255, over the LEDC PWM channel begin() attaches. 0 is
+// fully dark - the panel is still rendering, you just cannot see it, so callers
+// that expose this to a user should keep a usable floor. No-op before begin().
+void setBacklight(uint8_t level);
+uint8_t backlight();
+
 // Updates one of the 6 status rows (index 0-5).
 void setLine(uint8_t index, const String &text);
 
@@ -80,6 +86,8 @@ namespace CrowDisplay {
 inline bool begin(const HardwareProfile &, const char *, bool = false) { return false; }
 inline void flush() {}
 inline void flush(int16_t, int16_t, int16_t, int16_t) {}
+inline void setBacklight(uint8_t) {}
+inline uint8_t backlight() { return 0; }
 inline void setLine(uint8_t, const String &) {}
 inline void tick() {}
 inline Arduino_GFX *canvas() { return nullptr; }

@@ -9,6 +9,11 @@
 #define CYPHER_TUNE_ENGINE_RATE 22050
 #endif
 // Back-compat alias (older docs/scripts referenced the original name).
+// NVS namespace for persisted UI state (theme selection).
+#ifndef CYPHER_TUNE_NVS_NAMESPACE
+#define CYPHER_TUNE_NVS_NAMESPACE "cyphertune"
+#endif
+
 #ifndef CYPHER_TUNE_AUDIO_SAMPLE_RATE
 #define CYPHER_TUNE_AUDIO_SAMPLE_RATE CYPHER_TUNE_ENGINE_RATE
 #endif

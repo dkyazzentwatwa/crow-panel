@@ -57,6 +57,35 @@ struct HostedSdioPins {
   int8_t reset;  // C6 enable/reset GPIO
 };
 
+// MIPI-CSI camera header (SC2336 sensor on the CrowPanel Advanced 7").
+//
+// Values come from Elecrow's own IDF example, example/V1.2/idf-code/
+// Lesson13-Camera_Real-Time (peripheral/bsp_camera/include/bsp_camera.h for the
+// SCCB pins, sdkconfig for the CSI format), cross-checked against Espressif's
+// esp-video-components SC2336 driver.
+//
+// Two things that look like omissions but are not:
+//   - reset and power-down are both -1: this module exposes neither.
+//   - there is no XCLK pin, because the host does not generate one. Espressif's
+//     SC2336 driver defines SC2336_ENABLE_OUT_XCLK as an EMPTY macro and
+//     esp_video's CSI config struct has no xclk field - the module self-clocks
+//     at 24 MHz. Do not go looking for a clock GPIO to wire up.
+//
+// The sensor's native 1024x600 is pixel-identical to the panel, so a fullscreen
+// viewfinder is a 1:1 blit.
+struct CameraPins {
+  int8_t sccbPort;           // I2C peripheral index (1 = Wire1)
+  int8_t sccbScl;
+  int8_t sccbSda;
+  int8_t resetPin;           // -1 when the module has none
+  int8_t pwdnPin;            // -1 when the module has none
+  uint8_t sccbAddr;          // 7-bit SCCB address (SC2336: 0x30)
+  uint8_t csiLanes;
+  uint16_t laneBitRateMbps;  // per-lane MIPI-CSI bit rate
+  uint16_t width;
+  uint16_t height;
+};
+
 // MIPI-DSI panel timings (EK79007 controller, 1024x600 RGB565).
 struct DisplayTiming {
   uint16_t hsyncPulse;
@@ -78,6 +107,7 @@ struct HardwareProfile {
   DisplayPins display;
   DisplayTiming displayTiming;
   HostedSdioPins hostedSdio;
+  CameraPins camera;
   const char *revisionNote;
 };
 

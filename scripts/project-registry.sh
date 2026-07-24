@@ -5,7 +5,7 @@
 crowpanel_projects() {
   cat <<'PROJECTS'
 projects/01-fieldops-control-center
-projects/02-vision-guard-inspection-kiosk
+projects/02-cypher-vision-cam
 projects/03-badgeops-nfc-rfid-system
 projects/04-relayops-wifi-control-hub
 projects/05-cypherdrive-wireless-ops

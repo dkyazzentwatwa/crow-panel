@@ -80,6 +80,19 @@ constexpr int16_t kKitNextX = 944;
 
 constexpr int16_t kVoicesY = 452;
 constexpr int16_t kVoicesH = 108;  // ..560
+// THEME button lives in the voices panel's free right edge (the 4 meters end
+// at x=944), so it costs no other control any room.
+constexpr int16_t kThemeX = 948, kThemeW = 64;
+constexpr int16_t kThemeY = 462, kThemeH = 44;
+
+// Live output scope + VU, sharing the panel with the THEME button: the trace
+// stops at x=940 so it never runs under the button.
+constexpr int16_t kScopeX = 560;
+constexpr int16_t kScopeW = 380;  // 560..940
+constexpr int16_t kScopeTraceY = 474;
+constexpr int16_t kScopeTraceH = 56;
+constexpr int16_t kVuY = 536;
+constexpr int16_t kVuH = 14;
 
 constexpr int16_t kStatusY = 560;
 constexpr int16_t kStatusH = 40;
@@ -108,6 +121,7 @@ enum Control : int16_t {
   kControlChoke4,
   kControlKitPrev,
   kControlKitNext,
+  kControlTheme,
   kControlPadBase = 100,   // +0..15
   kControlStepBase = 200,  // +0..15
 };
@@ -203,6 +217,9 @@ inline int16_t hitTest(int16_t x, int16_t y) {
   if (y >= kKitY && y < kKitY + kKitH) {
     if (inRect(x, y, kKitPrevX, kKitY, kKitArrowW, kKitH)) return kControlKitPrev;
     if (inRect(x, y, kKitNextX, kKitY, kKitArrowW, kKitH)) return kControlKitNext;
+  }
+  if (inRect(x, y, kThemeX, kThemeY, kThemeW, kThemeH)) {
+    return kControlTheme;
   }
   return kControlNone;
 }

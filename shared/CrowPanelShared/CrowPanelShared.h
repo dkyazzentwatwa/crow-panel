@@ -17,6 +17,8 @@
 #include "WorldFeed.h"
 #include "WorldFeedClient.h"
 #include "DisplayBringup.h"
+#include "Sc2336Sensor.h"
+#include "CameraBringup.h"
 #include "DashboardWidgets.h"
 #include "TouchInput.h"
 #include "OpsDashboard.h"

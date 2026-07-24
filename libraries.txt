@@ -26,6 +26,11 @@
 # Most mock sketches need only the bundled core. Project 16 also uses
 # ArduinoJson in mock mode so injected and UART events share one parser.
 #
-# Camera note: there is intentionally no camera library. esp32-camera does
-# not ship for the ESP32-P4 in core 3.3.8; the P4 camera path is MIPI-CSI
-# via ESP-IDF only. See projects/02-vision-guard-inspection-kiosk/README.md.
+# Camera note: there is intentionally no camera library, and none is needed.
+# esp32-camera does not ship for the ESP32-P4 - but the P4 does not use it.
+# Core 3.3.8 already bundles and links the ESP-IDF camera stack for this target
+# (esp_driver_cam / esp_driver_isp / esp_driver_jpeg / esp_driver_ppa), so the
+# MIPI-CSI path is reachable from Arduino with no third-party dependency. Only
+# the SC2336 sensor register table is hand-written, and it lives in
+# shared/CrowPanelShared/Sc2336Sensor.cpp.
+# See projects/02-cypher-vision-cam/TECHNICAL.md.

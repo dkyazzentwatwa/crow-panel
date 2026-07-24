@@ -50,6 +50,29 @@ static const DisplayTiming DISPLAY_TIMING = {
 static const HostedSdioPins HOSTED_SDIO_V1_0 = { 18, 19, 14, 15, 16, 17, 32 };
 static const HostedSdioPins HOSTED_SDIO_V1_1 = { 18, 19, 17, 16, 15, 14, 32 };
 
+// MIPI-CSI camera header (see CameraPins in the header). Identical across V1.0
+// through V1.2: Elecrow ships the same Lesson13-Camera_Real-Time sources under
+// every revision folder, all with SCCB on port 1 / SCL 13 / SDA 12 and the
+// RAW8 1024x600@30 two-lane format. The 288 Mbps lane rate and the 0x30 SCCB
+// address come from Espressif's esp-video-components SC2336 driver
+// (sc2336.c format table, sc2336.h SC2336_SCCB_ADDR).
+//
+// NOT HARDWARE-VERIFIED: no camera module has been probed on a physical panel
+// from this workspace. The Stage 0 probe sketch confirms the address before the
+// driver trusts it.
+static const CameraPins CAMERA_SC2336 = {
+  1,       // sccbPort  -> Wire1
+  13,      // sccbScl
+  12,      // sccbSda
+  -1,      // resetPin  (module has none)
+  -1,      // pwdnPin   (module has none)
+  0x30,    // sccbAddr  (SC2336_SCCB_ADDR)
+  2,       // csiLanes
+  288,     // laneBitRateMbps
+  1024,    // width
+  600      // height
+};
+
 static const HardwareProfile PROFILE_V1_0 = {
   CROWPANEL_P4_7IN_V1_0,
   "CROWPANEL_P4_7IN_V1_0",
@@ -70,6 +93,7 @@ static const HardwareProfile PROFILE_V1_0 = {
   DISPLAY_PINS,
   DISPLAY_TIMING,
   HOSTED_SDIO_V1_0,
+  CAMERA_SC2336,
   "V1.0 wireless mapping confirmed against Elecrow's official V1.0 Arduino examples (board_config.h). Verify your board revision before driver work."
 };
 
@@ -93,6 +117,7 @@ static const HardwareProfile PROFILE_V1_1 = {
   DISPLAY_PINS,
   DISPLAY_TIMING,
   HOSTED_SDIO_V1_1,
+  CAMERA_SC2336,
   "V1.1 keeps the V1.0-style wireless pins (matches Elecrow's V1.1 example tree). Verify against board markings."
 };
 
@@ -116,6 +141,7 @@ static const HardwareProfile PROFILE_V1_2 = {
   DISPLAY_PINS,
   DISPLAY_TIMING,
   HOSTED_SDIO_V1_1,  // C6 SDIO wiring is V1.1-identical per the V1.2 schematic
+  CAMERA_SC2336,
   "UNVERIFIED: Official README says V1.2 reallocates wireless socket IO53/IO54 to IO27/IO28 (no V1.2 examples exist upstream yet). If a V1.2 radio fails, try the V1_1 profile before debugging anything else."
 };
 
@@ -160,6 +186,20 @@ void printHardwareProfile(Stream &out, const HardwareProfile &profile) {
   out.print(profile.display.backlight);
   out.print(F(" lcd_reset="));
   out.println(profile.display.lcdReset);
+  out.print(F("[hardware] camera sccb scl="));
+  out.print(profile.camera.sccbScl);
+  out.print(F(" sda="));
+  out.print(profile.camera.sccbSda);
+  out.print(F(" addr=0x"));
+  out.print(profile.camera.sccbAddr, HEX);
+  out.print(F(" csi="));
+  out.print(profile.camera.csiLanes);
+  out.print(F("lane@"));
+  out.print(profile.camera.laneBitRateMbps);
+  out.print(F("Mbps "));
+  out.print(profile.camera.width);
+  out.print('x');
+  out.println(profile.camera.height);
   out.print(F("[hardware] note="));
   out.println(profile.revisionNote);
 }

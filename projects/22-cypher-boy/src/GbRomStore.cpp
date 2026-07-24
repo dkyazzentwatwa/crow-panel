@@ -75,6 +75,9 @@ bool GbRomStore::begin() {
   if (!SD_MMC.exists(GB_SAVE_DIR_FS)) {
     SD_MMC.mkdir(GB_SAVE_DIR_FS);
   }
+  if (!SD_MMC.exists(GB_STATE_DIR_FS)) {
+    SD_MMC.mkdir(GB_STATE_DIR_FS);
+  }
 
   File dir = SD_MMC.open(GB_ROM_DIR_FS);
   if (!dir || !dir.isDirectory()) {
@@ -139,4 +142,11 @@ String GbRomStore::savePath(uint8_t index) const {
     return String();
   }
   return String(GB_SAVE_DIR) + "/" + baseName(names_[index]) + ".sav";
+}
+
+String GbRomStore::statePath(uint8_t index, uint8_t slot) const {
+  if (index >= count_) {
+    return String();
+  }
+  return String(GB_STATE_DIR) + "/" + baseName(names_[index]) + ".st" + String(slot);
 }

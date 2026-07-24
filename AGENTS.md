@@ -5,7 +5,7 @@
 This is an Arduino CLI-only monorepo for CrowPanel tutorial projects.
 
 - `projects/01-fieldops-control-center/`: mock LoRa field sensor dashboard.
-- `projects/02-vision-guard-inspection-kiosk/`: mock camera, QR, and inspection kiosk.
+- `projects/02-cypher-vision-cam/`: portable touch camera — live MIPI-CSI viewfinder, SD capture, Wi-Fi live feed.
 - `projects/03-badgeops-nfc-rfid-system/`: mock NFC/RFID badge terminal.
 - `shared/CrowPanelShared/`: Arduino library shared by all sketches.
 - `scripts/`: Arduino CLI install, compile, and upload helpers.

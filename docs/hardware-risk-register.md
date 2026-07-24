@@ -29,5 +29,22 @@ isolates them.
 
 | 19 | Project 21 Bluetooth-LE HID via the C6 (`USE_BLE_HID`) | The P4 has no BT radio; BLE HID runs as NimBLE-on-P4 with the C6 as controller over esp_hosted VHCI. Compile-support depends on the C6 slave firmware including BT, and the `WiFi.setPins()` ordering | RESOLVED on the tested panel: core 3.3.8 enables it (`CONFIG_BT_NIMBLE_ENABLED` + `CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE` + `CONFIG_ESP_HOSTED_NIMBLE_HCI_VHCI`); a standalone spike paired `CypherKeys BLE` with macOS (no passkey) and delivered keystrokes, so the C6 2.12.3 slave has BT. `BleTransport::begin()` calls `WiFi.setPins(hosted SDIO)` before `BLEDevice::init` (mandatory). Note: this core is NimBLE, not Bluedroid — bond-clear uses NimBLE `ble_store_clear()`, not `esp_ble_*`. Remaining: the *integrated* dual-mode build's on-device acceptance (toggle + type over BLE) |
 
-Unlisted by design: camera on P4 under Arduino — not a risk but a verified
-impossibility in core 3.3.8 (see checklist Stage 7).
+**Correction (2026-07-24):** this register previously closed with "camera on P4
+under Arduino — not a risk but a verified impossibility in core 3.3.8." That was
+wrong, and the error is instructive: it generalised from `esp32-camera` having no
+P4 port to the P4 having no Arduino camera path at all. The P4 does not use
+`esp32-camera`. Core 3.3.8's own `esp32p4-libs` already ship and link
+`libesp_driver_cam.a` (MIPI-CSI), `libesp_driver_isp.a`, `libesp_driver_jpeg.a`
+and `libesp_driver_ppa.a`, with headers present — the camera is reachable from an
+Arduino sketch with no third-party library. Only the SC2336 sensor register table
+had to be written by hand. Project 02 is the rebuild that exercises this path.
+
+The genuine open risks that replace it, all owned by `projects/02-cypher-vision-cam`:
+
+| # | Risk | Why it is real | Status |
+|---|---|---|---|
+| 20 | AE/AWB must be hand-written | Core ships the ISP *statistics* engines (`isp_ae.h`, `isp_awb.h`) but not `esp_video`'s software pipeline controller that normally drives them. Fixed exposure on RAW8 means blown-out or black frames as light changes | OPEN — mitigated by manual exposure/gain as the committed fallback |
+| 21 | RGB565 byte order into the DSI framebuffer | The CSI controller's `byte_swap_en` may not match what the DSI panel expects; Arduino_GFX carrying both `draw16bitRGBBitmap` and `draw16bitBeRGBBitmap` is the tell. One-line fix, but colour is garbled until it is right | OPEN — bring-up knob, resolve on first frame |
+| 22 | MJPEG throughput over the hosted-C6 SDIO link | Streaming video is a far heavier load than any prior project put on esp_hosted. No measurement exists | OPEN — treat any fps figure as unproven until measured |
+| 23 | Single DSI framebuffer vs. per-frame video | The panel has one framebuffer and no page flip, so a full-screen blit plus chrome redraw tears | MITIGATED by design — dirty-rect renderer flushes only the viewfinder region per frame |
+| 24 | No documented battery ADC | The board has a PH2.0 battery connector and charger but no documented voltage-sense path, and "portable" is this project's whole point | OPEN — UI must report battery as *unmonitored* rather than estimate it |

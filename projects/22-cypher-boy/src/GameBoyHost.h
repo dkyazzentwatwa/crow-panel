@@ -2,7 +2,10 @@
 #define CYPHER_BOY_HOST_H
 
 #include "../config/ProjectConfig.h"
+#include "EmuCore.h"
 #include <Arduino.h>
+
+class GbAudio;
 
 // Game Boy button bits. These intentionally mirror gnuboy's gb_padbtn_t
 // values one-for-one; GameBoyHost.cpp static_asserts that they still match the
@@ -30,27 +33,56 @@ enum GbButton : uint32_t {
 // Audio: v1 is silent. gnuboy gets a valid samplerate and a small throwaway
 // sound buffer but a NULL audio callback, so the mixer runs and emits nothing.
 // Passing samplerate 0 would be undefined behaviour - see src/gnuboy/VENDORED.md.
-class GameBoyHost {
+class GameBoyHost : public EmuCore {
  public:
-  bool begin();
-  bool loadRom(const String &romPath, const String &savePath);
-  void runFrame(bool draw);
-  void setPad(uint32_t buttons);
+  EmuSystem system() const override { return kSysGameBoy; }
+  const char *name() const override { return "Game Boy"; }
+  int16_t frameW() const override { return GB_W; }
+  int16_t frameH() const override { return GB_H; }
+  uint8_t scale() const override { return GB_SCALE; }
+
+  // Pass an audio sink to get sound; nullptr runs silent, which is exactly what
+  // USE_GB_AUDIO=0 builds do.
+  bool begin(GbAudio *audio) override;
+  bool start(const String &romPath, const String &savePath) override;
+  void stop() override;
+  void runFrame(bool draw) override;
+  void setPad(uint32_t buttons) override;
+
+  // Kept so existing call sites and the selftest read naturally; start() is the
+  // interface spelling of the same thing.
+  bool loadRom(const String &romPath, const String &savePath) { return start(romPath, savePath); }
 
   // Battery save (cartridge SRAM) handling.
-  bool sramDirty() const;
-  bool save();                       // force a write now
-  void tickSave(uint32_t nowMs);     // debounced autosave; call each frame
+  bool sramDirty() const override;
+  bool save() override;                       // force a write now
+  void tickSave(uint32_t nowMs) override;     // debounced autosave; call each frame
 
-  const uint16_t *framebuffer() const { return fb_; }
-  bool ready() const { return ready_; }
-  bool romLoaded() const { return romLoaded_; }
-  uint32_t frameCount() const { return frames_; }
-  const String &status() const { return status_; }
+  // Save states (Delta-style slots). Separate from the battery save: a state
+  // is a full machine snapshot, the battery save is just cartridge SRAM.
+  bool saveState(const String &path) override;
+  bool loadState(const String &path) override;
+
+  // Thumbnails: the live 160x144 frame downscaled by kThumbScale and written
+  // beside the state file, so the pause overlay can show what each slot holds.
+  static const uint8_t kThumbScale = 4;
+  static const int16_t kThumbW = GB_W / kThumbScale;   // 40
+  static const int16_t kThumbH = GB_H / kThumbScale;   // 36
+  bool saveThumb(const String &statePath) override;
+  // Reads into `out` (kThumbW*kThumbH uint16). False if there is no thumbnail.
+  static bool loadThumb(const String &statePath, uint16_t *out);
+  static String thumbPath(const String &statePath) { return statePath + ".thm"; }
+
+  const uint16_t *framebuffer() const override { return fb_; }
+  bool ready() const override { return ready_; }
+  bool romLoaded() const override { return romLoaded_; }
+  uint32_t frameCount() const override { return frames_; }
+  const String &status() const override { return status_; }
 
  private:
   uint16_t *fb_ = nullptr;      // GB_W*GB_H RGB565, internal SRAM
-  int16_t *soundScratch_ = nullptr;  // throwaway; keeps the mixer off NULL
+  int16_t *soundScratch_ = nullptr;  // gnuboy's mixer target
+  GbAudio *audio_ = nullptr;         // null => silent
   String savePath_;
   String status_;
   bool ready_ = false;

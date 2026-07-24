@@ -17,17 +17,18 @@ Keep README.md user-facing and put implementation detail here.
 
 ## Architecture
 
-A thin `.ino` (screen state + serial commands) over five units, each with one
+A thin `.ino` (screen state + serial commands) over six units, each with one
 job:
 
 | Unit | Responsibility |
 |---|---|
+| `GbAudio` | GB APU -> NS4168 I2S amp (IDF `i2s_std`), volume/mute, fail-soft |
 | `src/gnuboy/` | Vendored GPLv2 emulation core (cpu, hw, lcd, sound, tables) |
 | `GameBoyHost` | The only TU that includes `gnuboy.h`. ROM load, frame run, pad, saves |
 | `GbVideo` | 160x144 RGB565 -> x3 nearest-neighbour blit into the panel viewport |
 | `GbInput` | Touch -> Game Boy pad bitfield; MENU edge; serial injection |
-| `GbUi` | ROM picker screen + in-game gamepad chrome (`Widgets::`) |
-| `GbRomStore` | SD mount, `/roms` listing, `/saves` path derivation |
+| `GbUi` | Picker, gamepad chrome, pause overlay (`Widgets::`) |
+| `GbRomStore` | SD mount, `/roms` listing, `/saves` + `/states` path derivation |
 
 `GameBoyHost` never draws and `GbUi` never mutates app state; the `.ino` owns
 the `Screen` enum and the transitions, so touch and serial drive identical code.
@@ -36,8 +37,10 @@ the `Screen` enum and the transitions, so touch and serial drive identical code.
 
 - **Picker** — lists `.gb`/`.gbc` from `/roms` as tappable rows, plus a
   "how to play" card and the SD status. Tapping a row launches it.
-- **Play** — the live game viewport with the gamepad overlay drawn around it.
-  MENU returns to the picker (flushing the battery save on the way out).
+- **Play** — the live game viewport with the gamepad drawn around it.
+- **Pause overlay** — modal over Play, opened by MENU. Resume, save/load state
+  (3 slots), fast-forward, sound, quit to list. Gameplay is frozen while it is
+  open and only overlay taps are read.
 
 ## Touch controls
 
@@ -55,7 +58,7 @@ MENU is the exception: it fires on **release**, so dragging off it cancels.
 | B | 820, 450, 100, 100 | `button b` |
 | SELECT | 620, 250, 130, 56 | `button select` |
 | START | 780, 250, 130, 56 | `button start` |
-| MENU | 900, 86, 110, 56 | `screen picker` |
+| MENU | 900, 86, 110, 56 | `pause` (opens the overlay; `screen picker` quits) |
 
 These are first-pass values, expected to be tuned on glass. The `touch` command
 prints the mapped point to help. `selftest` asserts that every control maps to
@@ -65,8 +68,10 @@ and untappable, so that check is not optional.
 
 ## Display path
 
-The GB frame is 160x144; the viewport is integer **x3** = 480x432 at (40, 60),
-leaving the right side and bottom for the gamepad.
+The GB frame is 160x144; the viewport is integer **x3** = 480x432 at (40, 84),
+leaving the right side for the gamepad. `GB_VIEW_Y` must clear
+`Widgets::kChromeHeaderH` (72) plus the 6px viewport frame, or the game picture
+covers the header subtitle.
 
 The DSI panel is single-framebuffer, so the frame is composed off-panel then
 blitted. It deliberately does **not** use a full-size offscreen canvas: 480x432
@@ -128,12 +133,47 @@ fine — a new game simply has no save yet).
 > out even with the flag set. Verify linkage by checking that `SD_MMC` appears
 > under `<build-path>/libraries/` — a green build alone proves nothing.
 
+## Audio
+
+Enabled with `USE_GB_AUDIO=1`. Follows the path proven by project 09:
+
+- IDF `driver/i2s_std.h` directly, **not** the Arduino `ESP_I2S` wrapper, which
+  hardcodes a ~65 ms DMA ring - far too much latency for something you press
+  buttons at. Here it is 4 x 256 frames (~32 ms at 32 kHz).
+- **Stream silence before raising the amp enable**, so the amp wakes onto a
+  clean bus instead of popping.
+- Amp enable is IO30 and **ACTIVE-LOW** on this panel; the polarity comes from
+  `HardwareProfile.audio.controlActiveHigh`, never hardcoded.
+- gnuboy is initialised `GB_AUDIO_STEREO_S16` so its mixer emits interleaved
+  stereo that feeds I2S with no conversion.
+- The write from gnuboy's audio callback uses a **bounded 50 ms timeout**: that
+  paces the emulator to real time when audio is the bottleneck, but can never
+  hang the app if I2S stalls - the block is dropped and counted as an underrun
+  (`audio` prints the count).
+
+Fail-soft throughout: any failure leaves `ready()` false, nothing is written,
+and the game keeps running silently.
+
+## Save states and fast-forward
+
+`gnuboy_save_state()` / `gnuboy_load_state()` were already in the vendored core,
+so slots are UI work only. Three slots per game at `/states/<rom>.st<n>`.
+
+A save state is a **full machine snapshot**; the battery save (`.sav`) is only
+cartridge SRAM. They are independent - a save state does not write the `.sav`.
+
+MENU opens a **pause overlay** rather than quitting outright, so a stray tap can
+never dump you out of a game: resume / save state / load state / fast-forward /
+sound / quit, plus slot pills. Fast-forward runs `kFastForwardFrames` (3)
+emulated frames per drawn frame - emulation is cheap, the blit is what costs.
+
 ## Feature flags
 
 | Flag | Default | Effect |
 |---|---|---|
 | `USE_DISPLAY` | 0 | Panel bring-up, viewport blit, touch gamepad, picker UI |
-| `USE_GB_SD` | 0 | SD_MMC mount, `/roms` listing, `/saves` battery saves |
+| `USE_GB_SD` | 0 | SD_MMC mount, `/roms` listing, `/saves` + `/states` |
+| `USE_GB_AUDIO` | 0 | Sound out of the NS4168 I2S amp |
 | `GB_SAMPLERATE` | 32000 | gnuboy mixer rate. Must be non-zero (see above) |
 | `GB_SCALE` / `GB_VIEW_X` / `GB_VIEW_Y` | 3 / 40 / 60 | Viewport scale and origin |
 
@@ -176,17 +216,30 @@ advance.
 
 ## Proof state
 
-**compile-ready.** All four combos build green for the ESP32-P4 and `SD_MMC`
-was confirmed present under `<build-path>/libraries/` for the SD rows.
+**field-proven, 2026-07-24.** Pokemon Blue loads from SD and plays on the panel
+with the touch gamepad and audible sound. Confirmed on hardware in the same
+session: the animated boot splash and chime, all five themes, the centred
+gamepad layout, save-state slots with screenshot thumbnails, fast-forward, the
+volume/brightness steppers, idle backlight dimming, and the play-time library
+sort.
 
-Not proven, and needing a panel + a legally-obtained ROM:
+The 2026-07-23 bring-up is what surfaced the SD path-namespace bug (see the
+library-linkage warning above) — the card mounted fine and every FS call was
+silently looking at `/sdcard/sdcard/...`.
 
-- a ROM actually booting and rendering
-- touch driving gameplay, and the control rects being comfortable in the hand
-- frame pacing / perceived speed at x3 scale
-- a battery save surviving a power cycle
-- GBC colour output on a `.gbc` title
-- cartridge RTC behaviour (Pokémon Gold/Silver/Crystal day-night)
+All six flag combos compile-ready, with library linkage verified under
+`<build-path>/libraries/` rather than inferred from a green build.
+
+Still unexercised, and honestly so:
+
+- **GBC colour** on a real `.gbc` title (auto-detected from the cart header, no
+  flag needed — simply untested)
+- **cartridge RTC** behaviour (Pokemon Gold/Silver/Crystal day-night). gnuboy
+  maps cart type 16 to MBC3 with 64 KB RAM and sets `has_rtc`, i.e. MBC30, so
+  Crystal is expected to work — but expectation is not evidence
+- **a battery save surviving a full power cycle** (saves are written and
+  reloaded within a session; the cold-boot path has not been watched)
+- frame-rate headroom with audio enabled under a demanding title
 
 ## Safety boundary
 

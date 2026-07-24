@@ -13,6 +13,11 @@ constexpr uint32_t kBlockFrames = CYPHER_TUNE_BLOCK_FRAMES;
 constexpr uint32_t kRingFrames = (uint32_t)CYPHER_TUNE_BLOCK_FRAMES * CYPHER_TUNE_DMA_DESC;
 constexpr uint8_t kAttackFrames = 16;  // declick ramp-in
 constexpr uint8_t kFadeFrames = 64;    // choke/steal/stop ramp-out
+// Scope decimation: 128-frame blocks / 8 = 16 samples per block, so the
+// 256-entry ring holds ~90 ms of output - enough to see a drum transient.
+constexpr uint32_t kScopeDecim = CYPHER_TUNE_BLOCK_FRAMES / 16 > 0
+                                     ? CYPHER_TUNE_BLOCK_FRAMES / 16
+                                     : 1;
 
 }  // namespace
 
@@ -124,13 +129,27 @@ void AudioEngine::renderTask_() {
       remaining -= chunk;
     }
 
+    // Clip to stereo, and on the same pass publish the UI's scope/VU data:
+    // block peak plus every kScopeDecim'th sample into the ring.
+    int32_t peak = 0;
+    uint16_t scopeW = scopeWrite_;
     for (uint32_t n = 0; n < kBlockFrames; n++) {
       int32_t v = acc_[n];
       if (v > 32767) v = 32767;
       if (v < -32768) v = -32768;
       out_[2 * n] = (int16_t)v;
       out_[2 * n + 1] = (int16_t)v;
+      int32_t mag = v < 0 ? -v : v;
+      if (mag > peak) {
+        peak = mag;
+      }
+      if ((n % kScopeDecim) == 0) {
+        scope_[scopeW & (kScopeSize - 1)] = (int16_t)v;
+        scopeW++;
+      }
     }
+    scopeWrite_ = scopeW;
+    outPeak_ = (uint8_t)((peak * 255) / 32767);
 
     size_t written = 0;
     i2s_channel_write(tx, out_, sizeof(out_), &written, portMAX_DELAY);
@@ -387,6 +406,22 @@ uint8_t AudioEngine::activeVoices() const {
   return activeVoiceCount_;
 }
 
+uint16_t AudioEngine::copyScope(int16_t *out, uint16_t max) const {
+  if (out == nullptr || max == 0) {
+    return 0;
+  }
+  if (max > kScopeSize) {
+    max = kScopeSize;
+  }
+  // Snapshot the write cursor once, then walk back `max` entries. The render
+  // task may lap us mid-copy; that only re-colors part of one drawn frame.
+  uint16_t w = scopeWrite_;
+  for (uint16_t i = 0; i < max; i++) {
+    out[i] = scope_[(uint16_t)(w - max + i) & (kScopeSize - 1)];
+  }
+  return max;
+}
+
 const char *AudioEngine::modeName() const {
   return "i2s-engine";
 }
@@ -420,6 +455,9 @@ SampleBank *AudioEngine::activeBank() {
 }
 
 uint8_t AudioEngine::activeVoices() const { return 0; }
+
+// No mix to scope: returning 0 is the UI's cue to draw the simulated meters.
+uint16_t AudioEngine::copyScope(int16_t *, uint16_t) const { return 0; }
 
 const char *AudioEngine::modeName() const {
   return "stub";

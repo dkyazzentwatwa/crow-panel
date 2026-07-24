@@ -4,6 +4,7 @@
 #include "src/SampleBank.h"
 #include "src/Sequencer.h"
 #include "src/SynthKit.h"
+#include "src/TuneSplash.h"
 #include "src/TuneUi.h"
 #include "src/VisualVoices.h"
 #include "src/WavLoader.h"
@@ -64,7 +65,7 @@ String firePad(uint8_t padIdx, uint8_t velocity) {
   } else {
     lastPadIdx = padIdx;
     voices.trigger(padIdx + 1, sound.label, vel);
-    ui.notePadFlash(padIdx);
+    ui.notePadFlash(padIdx, vel);
     message += " audio=mock";
     if (seq.recording()) {
       uint8_t step = seq.recordPadMillis(padIdx, vel, millis());
@@ -207,7 +208,7 @@ void drainEngineEvents() {
         const PadSound &sound = activeBank().pad(evt.pad);
         lastPadIdx = evt.pad;
         voices.trigger(evt.pad + 1, sound.label, evt.vel);
-        ui.notePadFlash(evt.pad);
+        ui.notePadFlash(evt.pad, evt.vel);
         if (seq.playing() && pendingStep != 0xFF) {
           if (pendingPads.length()) {
             pendingPads += " ";
@@ -262,6 +263,14 @@ String uiAudioStatus(void *) {
            String(audioEngine().underruns());
   }
   return String("silent (mock)");
+}
+
+// Live output taps for the on-screen scope/VU. Returning 0 samples (silent
+// build) is what tells the UI to draw the simulated voice meters instead.
+uint8_t uiPeak(void *) { return audioEngine().outputPeak(); }
+
+uint16_t uiScope(void *, int16_t *out, uint16_t max) {
+  return audioEngine().copyScope(out, max);
 }
 
 // --- Serial commands ---
@@ -435,11 +444,28 @@ void cmdPerf(const String &) {
   Serial.println(String("[perf] ") + ui.perfLine());
 }
 
+void cmdTheme(const String &args) {
+  String arg = args;
+  arg.trim();
+  if (arg.length() == 0) {
+    Serial.println(String("[theme] ") + ui.themeLine());
+    return;
+  }
+  if (arg.equalsIgnoreCase("next")) {
+    ui.cycleTheme();
+  } else if (!ui.setThemeByName(arg)) {
+    Serial.println(String("[theme] no theme matching \"") + arg + "\"");
+    Serial.println(String("[theme] ") + ui.themeLine());
+    return;
+  }
+  Serial.println(String("[theme] ") + ui.themeLine());
+}
+
 void onStepFire(void *, uint8_t, uint8_t pad, uint8_t velocity) {
   const PadSound &sound = activeBank().pad(pad);
   lastPadIdx = pad;
   voices.trigger(pad + 1, sound.label, velocity);
-  ui.notePadFlash(pad);
+  ui.notePadFlash(pad, velocity);
   if (stepFireSummary.length()) {
     stepFireSummary += " ";
   }
@@ -463,7 +489,10 @@ void setup() {
                    String(bank.totalBytes() / 1024) + "KB PSRAM");
   }
   ui.begin(&bank, &seq, &voices, uiTrigger, uiTransport, uiAudioStatus,
-           uiKitStep, nullptr);
+           uiKitStep, uiPeak, uiScope, nullptr);
+  // Splash runs after the engine so its subtitle reports the real audio state
+  // (and after ui.begin(), which owns display bring-up and the saved theme).
+  TuneSplash::run(ui.theme(), uiAudioStatus(nullptr).c_str());
   eventLog.add("Cypher Tune MPC booted");
   router.begin(Serial, "mpc");
   router.on("status", "uptime, heap, profile, flags", cmdStatus);
@@ -490,6 +519,7 @@ void setup() {
   router.on("select", "select <pad> for the step lane", cmdSelect);
   router.on("touch", "touch tracker diagnostics", cmdTouch);
   router.on("perf", "UI render timing", cmdPerf);
+  router.on("theme", "switch UI theme: theme | next | <name>", cmdTheme);
 }
 
 void loop() {

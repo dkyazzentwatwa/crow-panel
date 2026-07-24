@@ -17,6 +17,7 @@ arduino-cli.yaml
 secrets.h
 Secrets.h
 **/config/WiFiSecrets.h
+**/config/CamSecrets.h
 **/config/Pins.h
 **/config/LabProfile.h
 **/config/Devices.h

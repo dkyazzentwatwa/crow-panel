@@ -6,7 +6,12 @@
 #include "SampleBank.h"
 #include "Sequencer.h"
 #include "TouchTracker.h"
+#include "TuneThemes.h"
 #include "VisualVoices.h"
+
+// The raw Arduino_GFX draw device handed out by CrowDisplay::canvas(), so this
+// header can name it without pulling in the whole Arduino_GFX include.
+class Arduino_GFX;
 
 // The MPC performance screen: 4x4 pad grid, TR-style step lane for the
 // selected pad, transport bar, and an always-visible pad-edit panel.
@@ -32,20 +37,37 @@ class TuneUi {
   typedef String (*AudioStatusFn)(void *ctx);
   // Kit prev/next arrows (dir -1/+1); null until SD kits are wired.
   typedef void (*KitStepFn)(void *ctx, int8_t dir);
+  // Live output level (0-255) and a decimated sample window for the scope.
+  // Keeping these as callbacks is what lets the UI show real audio without
+  // including any audio header. A scope that returns 0 samples (silent build)
+  // makes the panel fall back to the simulated voice meters.
+  typedef uint8_t (*PeakFn)(void *ctx);
+  typedef uint16_t (*ScopeFn)(void *ctx, int16_t *out, uint16_t max);
 
   void begin(SampleBank *bank, Sequencer *seq, VisualVoices *voices,
              TriggerFn trigger, TransportFn transport, AudioStatusFn audioStatus,
-             KitStepFn kitStep, void *ctx);
+             KitStepFn kitStep, PeakFn peak, ScopeFn scope, void *ctx);
   void tick();  // touch -> actions -> state diff -> dirty-region render
 
   // Light a pad from the sequencer/audio side (step fires, serial pads).
-  void notePadFlash(uint8_t padIdx);
+  // Velocity drives how hard the pad flashes, so a ghost note reads
+  // differently from an accent.
+  void notePadFlash(uint8_t padIdx, uint8_t velocity = 127);
   void selectPad(uint8_t padIdx);
   uint8_t selectedPad() const { return selectedPad_; }
   bool displayReady() const { return displayReady_; }
 
   String perfLine() const;   // serial `perf`
   String touchLine() const;  // serial `touch`
+
+  // Theming. The palette lives in TuneThemes and is persisted in NVS, so the
+  // choice survives a reboot. Available headless too (serial `theme`), which is
+  // why the state and these accessors sit outside the display guard.
+  const TuneTheme &theme() const { return tuneTheme(themeIndex_); }
+  uint8_t themeIndex() const { return themeIndex_; }
+  void cycleTheme();
+  bool setThemeByName(const String &name);  // prefix match; false if no match
+  String themeLine() const;                 // serial `theme` report
 
  private:
   SampleBank *bank_ = nullptr;
@@ -55,11 +77,18 @@ class TuneUi {
   TransportFn transport_ = nullptr;
   AudioStatusFn audioStatus_ = nullptr;
   KitStepFn kitStep_ = nullptr;
+  PeakFn peak_ = nullptr;
+  ScopeFn scope_ = nullptr;
   void *ctx_ = nullptr;
 
   bool displayReady_ = false;
   uint8_t selectedPad_ = 0;
+  uint8_t themeIndex_ = 0;
   uint32_t padFlashUntil_[SampleBank::kPadCount] = {0};
+  uint8_t padFlashVel_[SampleBank::kPadCount] = {0};
+
+  void loadTheme_();
+  void persistTheme_() const;
 
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
   void handleTouch_(uint32_t now);
@@ -76,7 +105,8 @@ class TuneUi {
   void drawPad_(uint8_t padIdx, uint32_t now);
   void drawStepCell_(uint8_t step);
   void drawEditPanel_();
-  void drawVoices_();
+  void drawScope_();
+  void drawThemeButton_(Arduino_GFX *g, const TuneTheme &t);
   void drawStatus_();
 
   TouchTracker touch_;
@@ -86,7 +116,7 @@ class TuneUi {
   bool dirtyTransport_ = false;
   bool dirtyHeader_ = false;
   bool dirtyEdit_ = false;
-  bool dirtyVoices_ = false;
+  bool dirtyScope_ = false;
   bool dirtyStatus_ = false;
   uint16_t dirtyPads_ = 0;
   uint16_t dirtySteps_ = 0;
@@ -107,7 +137,9 @@ class TuneUi {
   String mirrorKit_;
   uint8_t mirrorVoiceLevels_[4] = {0};
 
-  uint32_t lastVoiceDrawMs_ = 0;
+  uint8_t vuHold_ = 0;  // slow-falling VU peak-hold marker
+
+  uint32_t lastScopeDrawMs_ = 0;
   uint32_t lastStatusDrawMs_ = 0;
   uint32_t lastSliderDrawMs_ = 0;
 

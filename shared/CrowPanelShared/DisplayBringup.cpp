@@ -24,6 +24,13 @@
 
 namespace {
 
+// Backlight PWM state. The pin and LEDC channel are owned here because
+// beginPanel() is what attaches them; exposing raw ledcWrite() to callers would
+// duplicate that knowledge in every project that wants to dim the panel.
+uint8_t backlightPin = 0;
+uint8_t backlightLevel = 255;
+bool backlightReady = false;
+
 // EK79007 vendor init, ported 1:1 from Espressif's esp_lcd_ek79007 driver
 // (vendor_specific_init_default), which is the controller used on both the
 // ESP32-P4-Function-EV-Board and the CrowPanel. Format is Arduino_GFX's
@@ -130,8 +137,17 @@ bool beginPanel(const HardwareProfile &profile) {
 
   // Backlight: LEDC PWM, 30 kHz, active high (Elecrow board_config.h).
   ledcAttach(profile.display.backlight, 30000, 8);
-  ledcWrite(profile.display.backlight, 255);
+  backlightPin = profile.display.backlight;
+  backlightLevel = 255;
+  ledcWrite(backlightPin, backlightLevel);
+  backlightReady = true;
   return true;
+}
+
+void setBacklightLevel(uint8_t level) {
+  if (!backlightReady) return;
+  backlightLevel = level;
+  ledcWrite(backlightPin, level);
 }
 
 void beginTouch(const HardwareProfile &profile) {
@@ -159,6 +175,9 @@ void buildStatusScreen(const char *title) {
 }  // namespace
 
 namespace CrowDisplay {
+
+void setBacklight(uint8_t level) { setBacklightLevel(level); }
+uint8_t backlight() { return backlightLevel; }
 
 bool begin(const HardwareProfile &profile, const char *title, bool manual) {
   manualFlush = manual;

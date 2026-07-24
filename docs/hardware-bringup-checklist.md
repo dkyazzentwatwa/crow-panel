@@ -157,12 +157,53 @@ the readers share buses (SPI: SCK=8, MOSI=6, MISO=7; I2C: SDA=45, SCL=46).
 
 ## Stage 7 — Camera (project 02)
 
-Not available in Arduino. `esp32-camera` does not ship for the P4 in core
-3.3.8; the P4 camera path is MIPI-CSI via ESP-IDF (`esp_video`). The only
-official example is `example/V1.0/idf-code/Lesson13-Camera_Real-Time`.
-`-DUSE_CAMERA_DRIVER=1` compiles (the stub reports
-`p4-csi-unavailable-in-arduino`) so the flag matrix stays green, but real
-camera work means either waiting for core support or porting the IDF lesson.
+**This stage previously read "Not available in Arduino." That was wrong.** The
+reasoning was: `esp32-camera` has no ESP32-P4 port, therefore the P4 has no
+Arduino camera path. The premise holds; the conclusion does not, because the P4
+never uses `esp32-camera`. Core 3.3.8 already ships and links the ESP-IDF camera
+stack for this target — `libesp_driver_cam.a` (MIPI-CSI), `libesp_driver_isp.a`,
+`libesp_driver_jpeg.a` and `libesp_driver_ppa.a`, headers included. Only the
+SC2336 register table had to be written by hand, and it now lives in
+`shared/CrowPanelShared/Sc2336Sensor.cpp`.
+
+Sensor facts (Elecrow `Lesson13-Camera_Real-Time` + Espressif
+`esp-video-components`): SC2336 at SCCB address **0x30** on **SCL IO13 / SDA
+IO12**, MIPI-CSI **2 lanes @ 288 Mbps**, **RAW8 1024x600 @ 30 fps**, no reset
+pin, no power-down pin, and **no host XCLK** — the module self-clocks.
+
+Bring-up order is load-bearing: **SD_MMC → DSI display → CSI camera.** The
+camera shares the D-PHY rail (LDO channel 3, 2500 mV) that the display already
+powers, and the renderer blits into the framebuffer the display owns.
+
+Work through it in this order, and do not skip step 1:
+
+1. **Identify the sensor before trusting any driver.** Flash the SCCB probe
+   (scans `Wire1` on IO12/IO13, reads ID registers `0x3107`/`0x3108`, expects
+   `0xCB3A`). Results render on the panel, because `USBMode=hwcdc` drops the
+   serial port once an app runs. If the address differs from 0x30, update
+   `CameraPins` in `HardwareProfile.cpp` — the driver also self-corrects and
+   logs a warning, so a mismatch is visible rather than fatal.
+2. **First frame.** `cam begin` then `cam grab`. This prints dimensions, corner
+   pixels and a sampled mean luma, which is what distinguishes a real image from
+   a buffer of zeros without a screen. Expect wrong colour and wrong brightness
+   at this point — exposure is fixed and the ISP is untuned. That is correct for
+   this step.
+3. **Viewfinder.** `screen live`. If the image is garbled with transposed
+   channels, flip `byte_swap_en` in `CameraBringup.cpp` — that is the known
+   RGB565 byte-order knob (risk register #21). Read the on-screen HUD: it says
+   `PPA` or `CPU`, and a `CPU` reading means the hardware blitter failed to
+   register and the frame rate will be poor for that reason and no other.
+4. **Exposure.** Bright room and dim room. Manual `cam exp <n>` must produce a
+   usable image in both before the automatic loop is worth trusting.
+
+`-DUSE_CAMERA_DRIVER=1` now compiles real hardware code, not a stub. Verify it
+**linked**, not merely that the build was green:
+
+```sh
+grep -c "esp_cam_new_csi_ctlr" <build-path>/02-cypher-vision-cam.ino.map
+```
+
+See `projects/02-cypher-vision-cam/TECHNICAL.md` for the full pipeline.
 
 ## After every green stage
 
