@@ -3,24 +3,25 @@
 
 void FieldOpsUi::begin() {
   const UiTheme &theme = defaultUiTheme();
-  Logger::info("ui", String("theme=") + theme.name + " screens=Dashboard,Node Detail,Alerts,AI Summary,Settings");
-  // Brings up the panel + touch and paints the dashboard chrome. No-op when
+  Logger::info("ui", String("theme=") + theme.name +
+                         " screens=Roster,Detail,Alerts,Log");
+  // Brings up the panel + touch and paints the first screen. No-op when
   // USE_DISPLAY=0 (the sketch keeps running Serial-only).
   dashboard_.begin();
 }
 
-void FieldOpsUi::tick() {
-  dashboard_.tick();
+bool FieldOpsUi::tick(FieldOpsUiEvent &event) {
+  return dashboard_.tick(event);
 }
 
 void FieldOpsUi::renderDashboard(const SensorPacket &packet) {
   if (packet.presenceOnly) {
-    Serial.print(F("[screen:dashboard] presence node="));
+    Serial.print(F("[screen:roster] presence node="));
     Serial.print(packet.nodeId);
     Serial.print(F(" rssi="));
     Serial.println(packet.rssi);
   } else {
-    Serial.print(F("[screen:dashboard] node="));
+    Serial.print(F("[screen:roster] node="));
     Serial.print(packet.nodeId);
     Serial.print(F(" tempC="));
     Serial.print(packet.temperatureC, 1);
@@ -41,7 +42,7 @@ void FieldOpsUi::renderAlert(const String &alert) {
 }
 
 void FieldOpsUi::renderSummary(const String &summary) {
-  Serial.print(F("[screen:ai-summary] "));
+  Serial.print(F("[screen:summary] "));
   Serial.println(summary);
   dashboard_.onSummary(summary);
 }

@@ -17,6 +17,11 @@ class BadgeReader {
   virtual void begin(const HardwareProfile &profile) = 0;
   virtual bool poll(BadgeRead &read) = 0;
   virtual const char *driverName() const = 0;
+
+  // True once the reader has a working transport. The mock reader is always
+  // "ready"; the hardware drivers only return true after their chip answered.
+  // Lets the Readers settings screen show an honest per-reader state.
+  virtual bool ready() const { return true; }
 };
 
 #endif

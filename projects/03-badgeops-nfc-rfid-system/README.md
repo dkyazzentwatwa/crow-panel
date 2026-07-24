@@ -1,68 +1,56 @@
-# CrowPanel BadgeOps NFC/RFID System
+# BadgeOps NFC/RFID System
 
-DIY badge enrollment, check-in, attendance, and lightweight access-control kiosk concept for the CrowPanel Advanced 7-inch ESP32-P4 display.
+A badge enrollment, check-in, and attendance kiosk for the Elecrow CrowPanel
+Advanced 7-inch display.
 
-Default mode is a Serial-only mock demo:
+Tap a badge, get a clear granted or denied screen, and keep an audit trail of
+every decision. It runs as a complete offline demo with a registry of fictional
+badges — active, suspended, and expired — so you can exercise every outcome
+without a reader attached, from the touch screen or over Serial.
 
-- Simulates badge taps
-- Looks up fake badge IDs
-- Grants or denies access
-- Logs events
-- Prints badge terminal state
+> This is Project 3 in the [CrowPanel Arduino suite](../../README.md).
 
-## Core Screens
+## Status
 
-- Tap Badge
-- Access Granted
-- Access Denied
-- Enroll Badge
-- Badge List
-- Event History
-- Settings
+Compile-verified only: the headless and touch-display builds compile green for
+the real ESP32-P4 target, but nothing has been observed running on a physical
+CrowPanel. The five screens have not been seen on glass, touch has not been
+checked, and both reader scaffolds — written and building — have not been proven
+against a real tag. See the [technical reference](TECHNICAL.md) for the screen
+list, touch controls, serial commands, wiring, and the staged bring-up order.
 
-## Security Warning
+## What you get
 
-"UID-only RFID/NFC access is suitable for demos, attendance tracking, event check-in, prototypes, and low-risk internal tools. It should not be treated as secure access control. Many low-cost RFID/NFC cards and tags can be cloned. For serious access control, use stronger credential design, signed tokens, backend validation, secure elements, audit logging, and proper threat modeling."
+- A touch kiosk with five screens — Tap, Result, Registry, Attendance, Readers —
+  plus a bottom tab bar to move between them
+- A tap screen with an animated waiting state and distinct granted/denied results
+- A scrollable badge registry you can inspect badge by badge
+- A decision log that doubles as an attendance and audit trail
+- A Readers screen that shows the mock / PN532 / MFRC522 wiring and which reader
+  is compiled in
+- Two reader options behind flags: PN532 over I2C, or MFRC522 over SPI
+- A full offline demo covering active, suspended, and unknown-badge paths — no
+  reader hardware required, drivable by touch or over Serial
 
-## Serial Commands
+## Security warning
 
-115200 baud, line ending **Newline**:
+**UID-only RFID/NFC is not secure access control.** It is fine for demos,
+attendance tracking, event check-in, prototypes, and low-risk internal tools.
+Many low-cost cards and tags can be cloned in seconds. Anything that actually
+protects something needs stronger credential design, signed tokens, backend
+validation, a secure element, audit logging, and real threat modeling.
 
-- `help` / `status` / `history` — shared commands
-- `badges` — print the demo badge registry
-- `tap [uid]` — simulate a badge tap through the same pipeline the mock and real readers use:
-  - `tap 04:A1:22:9C` — active technician, access granted
-  - `tap C2:44:10:AA` — suspended contractor, denied
-  - `tap 11:22:33:44` — unknown badge, denied
+Read [`docs/security-notes.md`](../../docs/security-notes.md) before using
+RFID/NFC language in public material about this project.
 
-## Compile
+## Responsible use
 
-```sh
-../../scripts/compile-all.sh
-```
+This project reads badge identifiers you present to it. It does not clone cards,
+emulate credentials, or attack readers. The badge registry and event log stay on
+the panel unless you deliberately wire them to a backend.
 
-The default FQBN targets the real ESP32-P4 (see the root README).
+## Technical reference
 
-## Upload
-
-```sh
-arduino-cli board list
-../../scripts/upload-project.sh projects/03-badgeops-nfc-rfid-system /dev/cu.usbmodem101
-```
-
-## PN532 / MFRC522
-
-Both readers have real, compile-verified (not hardware-verified) scaffolds:
-
-- `src/Pn532Reader.cpp` — PN532 in I2C mode on the touch bus (SDA=45/SCL=46; GT911 at 0x5D/0x14, PN532 at 0x24 — no conflict). It refuses to start until you set `BADGEOPS_PN532_IRQ`/`RESET` in `config/Pins.h` (copy from `Pins.example.h`), so nothing drives a guessed pin.
-- `src/Mfrc522Reader.cpp` — MFRC522 over SPI, default SS=10/RST=9 (the wireless-socket pins — physically remove any socket module first).
-
-Enable ONE at a time per `docs/hardware-bringup-checklist.md` Stage 6, e.g. `EXTRA_FLAGS="-DUSE_PN532_DRIVER=1"`. Confirm the PN532 module's mode switches (I2C/SPI/UART) before wiring.
-
-## What To Film
-
-- Serial boot showing hardware profile.
-- `badges`, then `tap` beats: granted, suspended-denied, unknown-denied.
-- `history` replaying the audit trail.
-- The security warning.
-- The PN532 vs MFRC522 comparison doc.
+For installation, build flags, configuration, upload commands, device details,
+file layout, troubleshooting, safety boundaries, and proof terminology, see
+[TECHNICAL.md](TECHNICAL.md).

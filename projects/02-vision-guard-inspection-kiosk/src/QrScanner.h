@@ -10,7 +10,7 @@ class QrScanner {
   bool poll(String &qr);
 
  private:
-  Throttle cadence_{5000};
+  Throttle cadence_{9000};
   uint8_t index_ = 0;
 };
 

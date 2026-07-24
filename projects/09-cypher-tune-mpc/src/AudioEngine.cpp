@@ -1,0 +1,437 @@
+#include "AudioEngine.h"
+
+#if USE_AUDIO && __has_include(<driver/i2s_std.h>)
+
+#include <driver/i2s_std.h>
+#include <math.h>
+#include "SynthKit.h"
+
+namespace {
+
+constexpr uint32_t kRate = CYPHER_TUNE_ENGINE_RATE;
+constexpr uint32_t kBlockFrames = CYPHER_TUNE_BLOCK_FRAMES;
+constexpr uint32_t kRingFrames = (uint32_t)CYPHER_TUNE_BLOCK_FRAMES * CYPHER_TUNE_DMA_DESC;
+constexpr uint8_t kAttackFrames = 16;  // declick ramp-in
+constexpr uint8_t kFadeFrames = 64;    // choke/steal/stop ramp-out
+
+}  // namespace
+
+bool AudioEngine::begin(const HardwareProfile &profile, SampleBank *bankA,
+                        SampleBank *bankB, Sequencer *seq, Stream &log) {
+  banks_[0] = bankA;
+  banks_[1] = bankB;
+  seq_ = seq;
+
+  // IDF i2s_std channel with a small DMA ring. The Arduino ESP_I2S wrapper
+  // hardcodes dma_desc_num=6/dma_frame_num=240 (~65 ms of queued audio at
+  // 22.05 kHz) which is unplayable for finger drumming; sizing the ring here
+  // gets pad-to-speaker under ~30 ms.
+  i2s_chan_config_t chanCfg = {};
+  chanCfg.id = I2S_NUM_AUTO;
+  chanCfg.role = I2S_ROLE_MASTER;
+  chanCfg.dma_desc_num = CYPHER_TUNE_DMA_DESC;
+  chanCfg.dma_frame_num = kBlockFrames;
+  chanCfg.auto_clear = true;
+  i2s_chan_handle_t tx = nullptr;
+  if (i2s_new_channel(&chanCfg, &tx, nullptr) != ESP_OK) {
+    log.println(F("[engine] i2s_new_channel failed"));
+    return false;
+  }
+
+  // Clock/slot/pin config transcribed from ESP_I2S's initSTD (Philips slot,
+  // 16-bit stereo, no MCLK - the NS4168 derives everything from BCLK/LRCLK).
+  i2s_std_config_t stdCfg = {
+      .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(kRate),
+      .slot_cfg = I2S_STD_PHILIP_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT,
+                                                     I2S_SLOT_MODE_STEREO),
+      .gpio_cfg =
+          {
+              .mclk = (gpio_num_t)I2S_GPIO_UNUSED,
+              .bclk = (gpio_num_t)profile.audio.bclk,
+              .ws = (gpio_num_t)profile.audio.lrclk,
+              .dout = (gpio_num_t)profile.audio.sdata,
+              .din = (gpio_num_t)I2S_GPIO_UNUSED,
+              .invert_flags = {.mclk_inv = false, .bclk_inv = false, .ws_inv = false},
+          },
+  };
+  if (i2s_channel_init_std_mode(tx, &stdCfg) != ESP_OK ||
+      i2s_channel_enable(tx) != ESP_OK) {
+    log.println(F("[engine] i2s std init/enable failed"));
+    i2s_del_channel(tx);
+    return false;
+  }
+  txChan_ = tx;
+
+  metroAccent_ = SynthKit::synthesizeMetronome(true, kRate, &metroAccentFrames_);
+  metroTick_ = SynthKit::synthesizeMetronome(false, kRate, &metroTickFrames_);
+
+  // Stream silence before raising the amp enable so it wakes to a clean bus.
+  memset(out_, 0, sizeof(out_));
+  size_t written = 0;
+  for (uint8_t i = 0; i < 2; i++) {
+    i2s_channel_write(tx, out_, sizeof(out_), &written, portMAX_DELAY);
+  }
+  pinMode(profile.audio.control, OUTPUT);
+  digitalWrite(profile.audio.control, profile.audio.controlActiveHigh ? HIGH : LOW);
+
+  running_ = true;
+  TaskHandle_t task = nullptr;
+  if (xTaskCreatePinnedToCore(renderTaskTrampoline_, "mpc-audio", 8192, this,
+                              CYPHER_TUNE_AUDIO_TASK_PRIO, &task,
+                              CYPHER_TUNE_AUDIO_TASK_CORE) != pdPASS) {
+    running_ = false;
+    log.println(F("[engine] render task create failed"));
+    return false;
+  }
+  task_ = task;
+  log.println(String("[engine] i2s up: ") + String(kRate) + "Hz block=" +
+              String(kBlockFrames) + "x" + String(CYPHER_TUNE_DMA_DESC) +
+              " ring=" + String(kRingFrames * 1000 / kRate) + "ms voices=" +
+              String(kVoices));
+  return true;
+}
+
+void AudioEngine::renderTaskTrampoline_(void *self) {
+  static_cast<AudioEngine *>(self)->renderTask_();
+}
+
+void AudioEngine::renderTask_() {
+  i2s_chan_handle_t tx = (i2s_chan_handle_t)txChan_;
+  uint32_t lastWriteDoneUs = micros();
+  const uint32_t ringUs = kRingFrames * 1000000ULL / kRate;
+
+  for (;;) {
+    drainCommands_();
+
+    memset(acc_, 0, sizeof(acc_));
+    uint32_t offset = 0;
+    uint32_t remaining = kBlockFrames;
+    while (remaining > 0) {
+      uint32_t chunk = remaining;
+      if (seq_->playing()) {
+        if (framesToNextStep_ == 0) {
+          fireStep_();
+        }
+        if (framesToNextStep_ < chunk) {
+          chunk = framesToNextStep_;
+        }
+      }
+      mixChunk_(acc_ + offset, chunk);
+      if (seq_->playing()) {
+        framesToNextStep_ -= chunk;
+      }
+      offset += chunk;
+      remaining -= chunk;
+    }
+
+    for (uint32_t n = 0; n < kBlockFrames; n++) {
+      int32_t v = acc_[n];
+      if (v > 32767) v = 32767;
+      if (v < -32768) v = -32768;
+      out_[2 * n] = (int16_t)v;
+      out_[2 * n + 1] = (int16_t)v;
+    }
+
+    size_t written = 0;
+    i2s_channel_write(tx, out_, sizeof(out_), &written, portMAX_DELAY);
+    // If more than a full DMA ring of wall time passed between write
+    // completions, the DMA ran dry and the output glitched.
+    uint32_t now = micros();
+    if ((uint32_t)(now - lastWriteDoneUs) > ringUs + ringUs / 2) {
+      underruns_ = underruns_ + 1;
+    }
+    lastWriteDoneUs = now;
+    framesRendered_ = framesRendered_ + kBlockFrames;
+
+    uint8_t activeNow = 0;
+    for (uint8_t i = 0; i < kVoices; i++) {
+      if (voices_[i].active) {
+        activeNow++;
+      }
+    }
+    activeVoiceCount_ = activeNow;
+  }
+}
+
+void AudioEngine::drainCommands_() {
+  while (cmdTail_ != cmdHead_) {
+    __atomic_thread_fence(__ATOMIC_ACQUIRE);
+    EngineCommand cmd = cmdRing_[cmdTail_];
+    cmdTail_ = (uint16_t)((cmdTail_ + 1) & (kCmdRingSize - 1));
+    switch (cmd.type) {
+      case kCmdTrigger: {
+        uint8_t vel = cmd.b;
+        if (vel == 0) {
+          vel = banks_[activeBankIdx_]->pad(cmd.a).defaultVelocity;
+        }
+        if (seq_->recording()) {
+          uint8_t target = 0;
+          if (seq_->playing() && curStepFrames_ != 0) {
+            target = seq_->quantizedStep(curStepFrames_ - framesToNextStep_,
+                                         curStepFrames_);
+          }
+          seq_->setVel(seq_->pattern(), target, cmd.a, vel);
+          pushEvent_({kEvtRecorded, target, cmd.a, vel});
+        }
+        startVoice_(cmd.a, vel, false);
+        break;
+      }
+      case kCmdPlay:
+        seq_->play();
+        framesToNextStep_ = 0;
+        curStepFrames_ = 0;
+        break;
+      case kCmdStop:
+        seq_->stop();
+        fadeAll_();
+        break;
+      case kCmdKitSwap: {
+        // Kill every voice before the flip so nothing can read buffers the
+        // loop is about to free; the swap event tells it the retired index.
+        for (uint8_t i = 0; i <= kVoices; i++) {
+          voices_[i].active = false;
+        }
+        uint8_t retired = activeBankIdx_;
+        activeBankIdx_ = cmd.a & 1;
+        pushEvent_({kEvtKitSwapped, 0, retired, 0});
+        break;
+      }
+      case kCmdChokeAll:
+        fadeAll_();
+        break;
+      default:
+        break;
+    }
+  }
+}
+
+void AudioEngine::fireStep_() {
+  uint8_t step = seq_->advancePlayStep();
+  pushEvent_({kEvtStep, step, 0, 0});
+  uint8_t pattern = seq_->pattern();
+  for (uint8_t pad = 0; pad < Sequencer::kPads; pad++) {
+    uint8_t vel = seq_->vel(pattern, step, pad);
+    if (vel != 0) {
+      startVoice_(pad, vel, true);
+    }
+  }
+  if (seq_->metronome() && step % 4 == 0) {
+    startMetro_(step == 0);
+  }
+  curStepFrames_ = seq_->stepDurationFrames(step, kRate);
+  framesToNextStep_ = curStepFrames_;
+}
+
+void AudioEngine::startVoice_(uint8_t pad, uint8_t velocity, bool fromSequencer) {
+  (void)fromSequencer;
+  const PadSound &sound = banks_[activeBankIdx_]->pad(pad);
+  pushEvent_({kEvtTrigger, seq_->playStep(), pad, velocity});
+
+  if (sound.chokeGroup != 0) {
+    chokeGroup_(sound.chokeGroup);
+  }
+  if (sound.pcm == nullptr || sound.frames < 2) {
+    return;  // nothing loaded on this pad (visual feedback still happened)
+  }
+
+  // Free slot, else steal the oldest (ramp-in masks the cut).
+  Voice *voice = nullptr;
+  for (uint8_t i = 0; i < kVoices; i++) {
+    if (!voices_[i].active) {
+      voice = &voices_[i];
+      break;
+    }
+  }
+  if (voice == nullptr) {
+    uint32_t oldest = 0xFFFFFFFF;
+    for (uint8_t i = 0; i < kVoices; i++) {
+      if (voices_[i].startedAt < oldest) {
+        oldest = voices_[i].startedAt;
+        voice = &voices_[i];
+      }
+    }
+  }
+
+  float pitchMul = powf(2.0f, sound.pitchSemis / 12.0f);
+  uint64_t gain = (uint64_t)velocity * sound.gain * CYPHER_TUNE_MASTER_VOLUME;
+  voice->pcm = sound.pcm;
+  voice->frames = sound.frames;
+  voice->posFP = 0;
+  voice->incFP = (uint32_t)(sound.baseIncFP * pitchMul);
+  voice->gainQ12 = (int32_t)((gain << 12) / (127ULL * 255 * 255));
+  voice->fadeDecQ12 = 0;
+  voice->attack = kAttackFrames;
+  voice->pad = pad;
+  voice->chokeGroup = sound.chokeGroup;
+  voice->startedAt = framesRendered_;
+  voice->active = true;
+}
+
+void AudioEngine::startMetro_(bool accent) {
+  Voice &voice = voices_[kVoices];
+  voice.pcm = accent ? metroAccent_ : metroTick_;
+  voice.frames = accent ? metroAccentFrames_ : metroTickFrames_;
+  if (voice.pcm == nullptr) {
+    return;
+  }
+  voice.posFP = 0;
+  voice.incFP = 1 << 16;
+  voice.gainQ12 = (int32_t)((uint32_t)CYPHER_TUNE_MASTER_VOLUME << 12) / 255;
+  voice.fadeDecQ12 = 0;
+  voice.attack = 4;
+  voice.pad = 0xFF;
+  voice.chokeGroup = 0;
+  voice.startedAt = framesRendered_;
+  voice.active = true;
+}
+
+void AudioEngine::chokeGroup_(uint8_t group) {
+  for (uint8_t i = 0; i < kVoices; i++) {
+    Voice &voice = voices_[i];
+    if (voice.active && voice.chokeGroup == group && voice.fadeDecQ12 == 0) {
+      voice.fadeDecQ12 = voice.gainQ12 / kFadeFrames;
+      if (voice.fadeDecQ12 == 0) {
+        voice.fadeDecQ12 = 1;
+      }
+    }
+  }
+}
+
+void AudioEngine::fadeAll_() {
+  for (uint8_t i = 0; i <= kVoices; i++) {
+    Voice &voice = voices_[i];
+    if (voice.active && voice.fadeDecQ12 == 0) {
+      voice.fadeDecQ12 = voice.gainQ12 / kFadeFrames;
+      if (voice.fadeDecQ12 == 0) {
+        voice.fadeDecQ12 = 1;
+      }
+    }
+  }
+}
+
+void AudioEngine::mixChunk_(int32_t *acc, uint32_t frames) {
+  for (uint8_t i = 0; i <= kVoices; i++) {
+    Voice &voice = voices_[i];
+    if (!voice.active) {
+      continue;
+    }
+    const int16_t *pcm = voice.pcm;
+    for (uint32_t n = 0; n < frames; n++) {
+      uint32_t idx = voice.posFP >> 16;
+      if (idx + 1 >= voice.frames) {
+        voice.active = false;
+        break;
+      }
+      int32_t s0 = pcm[idx];
+      int32_t s1 = pcm[idx + 1];
+      int32_t frac = (int32_t)(voice.posFP & 0xFFFF);
+      int32_t sample = s0 + (((s1 - s0) * frac) >> 16);
+      int32_t gain = voice.gainQ12;
+      if (voice.attack != 0) {
+        gain = gain * (kAttackFrames - voice.attack) / kAttackFrames;
+        voice.attack--;
+      }
+      acc[n] += (sample * gain) >> 12;
+      voice.posFP += voice.incFP;
+      if (voice.fadeDecQ12 != 0) {
+        voice.gainQ12 -= voice.fadeDecQ12;
+        if (voice.gainQ12 <= 0) {
+          voice.active = false;
+          break;
+        }
+      }
+    }
+  }
+}
+
+bool AudioEngine::post(const EngineCommand &cmd) {
+  if (!running_) {
+    return false;
+  }
+  uint16_t next = (uint16_t)((cmdHead_ + 1) & (kCmdRingSize - 1));
+  if (next == cmdTail_) {
+    return false;  // ring full; drop rather than block the UI
+  }
+  cmdRing_[cmdHead_] = cmd;
+  __atomic_thread_fence(__ATOMIC_RELEASE);
+  cmdHead_ = next;
+  return true;
+}
+
+bool AudioEngine::pushEvent_(const EngineEvent &evt) {
+  uint16_t next = (uint16_t)((evtHead_ + 1) & (kEvtRingSize - 1));
+  if (next == evtTail_) {
+    return false;
+  }
+  evtRing_[evtHead_] = evt;
+  __atomic_thread_fence(__ATOMIC_RELEASE);
+  evtHead_ = next;
+  return true;
+}
+
+bool AudioEngine::nextEvent(EngineEvent &out) {
+  if (evtTail_ == evtHead_) {
+    return false;
+  }
+  __atomic_thread_fence(__ATOMIC_ACQUIRE);
+  out = evtRing_[evtTail_];
+  evtTail_ = (uint16_t)((evtTail_ + 1) & (kEvtRingSize - 1));
+  return true;
+}
+
+SampleBank *AudioEngine::activeBank() {
+  return banks_[activeBankIdx_] != nullptr ? banks_[activeBankIdx_] : banks_[0];
+}
+
+uint8_t AudioEngine::activeVoices() const {
+  return activeVoiceCount_;
+}
+
+const char *AudioEngine::modeName() const {
+  return "i2s-engine";
+}
+
+String AudioEngine::statusLine() const {
+  return String("i2s ") + String(kRate) + "Hz block " + String(kBlockFrames) +
+         "x" + String(CYPHER_TUNE_DMA_DESC) + " (" +
+         String(kRingFrames * 1000 / kRate) + "ms ring) voices " +
+         String(activeVoiceCount_) + "/" + String(kVoices) + " underruns " +
+         String(underruns_) + " frames " + String(framesRendered_);
+}
+
+#else  // stub: no USE_AUDIO or no IDF i2s_std header
+
+bool AudioEngine::begin(const HardwareProfile &profile, SampleBank *bankA,
+                        SampleBank *bankB, Sequencer *seq, Stream &log) {
+  (void)profile;
+  banks_[0] = bankA;
+  banks_[1] = bankB;
+  seq_ = seq;
+  log.println(F("[engine] stub: silent build (USE_AUDIO=0 or no i2s_std); "
+                "sequencer runs on the millis clock"));
+  return false;
+}
+
+bool AudioEngine::post(const EngineCommand &) { return false; }
+bool AudioEngine::nextEvent(EngineEvent &) { return false; }
+
+SampleBank *AudioEngine::activeBank() {
+  return banks_[0];
+}
+
+uint8_t AudioEngine::activeVoices() const { return 0; }
+
+const char *AudioEngine::modeName() const {
+  return "stub";
+}
+
+String AudioEngine::statusLine() const {
+  return String("stub; no I2S output, millis clock drives the transport");
+}
+
+#endif
+
+AudioEngine &audioEngine() {
+  static AudioEngine engine;
+  return engine;
+}

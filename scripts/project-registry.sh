@@ -9,19 +9,20 @@ projects/02-vision-guard-inspection-kiosk
 projects/03-badgeops-nfc-rfid-system
 projects/04-relayops-wifi-control-hub
 projects/05-cypherdrive-wireless-ops
-projects/06-wiretap-benchops-console
 projects/07-nfc-field-lab-badgeops-pro
 projects/08-cypher-gamer-arcade
 projects/09-cypher-tune-mpc
 projects/10-litego-touch-coach
 projects/11-cardrf-spectrum-console
-projects/12-creatorops-board
 projects/13-surveyops-wardriver-panel
 projects/14-adsb-flight-tracker-radar
 projects/15-pokedex-panel
 projects/16-cypher-flock-panel
 projects/17-littlehakr-rf-lab
 projects/18-cypher-desk-panel
+projects/19-starbeam-console
+projects/20-pipboy-terminal
+projects/21-cypher-keys-hid-deck
 PROJECTS
 }
 

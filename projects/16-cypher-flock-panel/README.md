@@ -1,106 +1,72 @@
-# 16 - Cypher Flock Panel
+# Cypher Flock Panel
 
-A standalone three-board port of Cypher Flock for the CrowPanel Advanced 7-inch
-ESP32-P4. A BW16 owns passive dual-band Wi-Fi, a generic ESP32 owns passive BLE
-and protocol aggregation, the onboard C6 acts only as a passive 2.4 GHz witness,
-and the P4 owns the touch UI, history, and persistence.
+A passive dual-band detector console for the Elecrow CrowPanel Advanced 7-inch
+display.
 
-The detector logic is derived from `/Users/cypher/Documents/GitHub/flock-you`
-at clean source commit `9da9ea6`. The Flask dashboard, GPS, audio, and AP/web UI
-remain excluded. C6 witness rows are observation-only and are never detections.
+It watches for documented device signatures across 2.4 and 5 GHz Wi-Fi and BLE,
+shows them on a proximity scope and an evidence feed, tracks per-band health, and
+saves sessions so a reboot does not lose your work. The default build runs
+entirely on simulated contacts, so the whole five-screen interface works with no
+companion boards attached.
 
-## Safety boundary
+> This is Project 16 in the [CrowPanel Arduino suite](../../README.md).
 
-This is a passive field-visibility tool. It inspects management/data frame
+## Status
+
+Compile-ready only. Getting further is staged deliberately: all three boards must
+upload and exchange UART hello streams before this counts as *uploaded*, real 2.4
+and 5 GHz frames are needed for *dual-band-proven*, and a documented recall and
+false-positive threshold is needed for *field-proven*. The C6 witness path is
+separately gated — a green compile does not prove the panel returns hosted scan
+records. See the [technical reference](TECHNICAL.md).
+
+## How the three boards split the work
+
+- **BW16** — passive dual-band Wi-Fi scanning, 2.4 and 5 GHz
+- **A generic ESP32** — passive BLE scanning, plus aggregating both streams
+- **The panel's onboard C6** — a passive 2.4 GHz witness, observation only
+- **The P4 panel itself** — the touch UI, history, and persistence
+
+Witness rows are never detections. They are shown on their own screen, kept in
+RAM, and never counted toward detection confidence.
+
+## What you get
+
+- **Scope** — RSSI mapped to proximity rings, with a stable MAC hash setting the
+  angle
+- **Feed** — current and previous contacts with their supporting evidence
+- **C6 Wi-Fi** — up to 64 nearby access points with SSID, BSSID, RSSI, channel,
+  security, PHY, bandwidth, country, and more when the scan reports them
+- **Stats** — separate aggregator, BLE, and BW16 health plus per-band counters
+- **Control** — scan, hopping, band, channel, profile, diagnostics, calibration,
+  stealth, save, and a two-tap reset
+- Session persistence with CRC validation before a save is promoted, no
+  auto-formatting, and a visible warning if it falls back to RAM
+- A stealth mode that blacks out the display while scanning continues
+- An offline demo that injects deterministic Wi-Fi, BLE, and Raven contacts
+  through the exact same parser real events use
+
+## The scope is not a map
+
+It maps signal strength to a ring and a hash to an angle so contacts sit
+somewhere stable and readable. It is explicitly not a location or direction
+display, and RSSI does not indicate where anything is.
+
+## Privacy and responsible use
+
+This is a passive field-visibility tool. It inspects management and data frame
 headers and BLE advertisements for documented signatures. It does not join
 networks, deauthenticate clients, capture credentials, or store packet payloads.
-MAC/SSID observations can still be sensitive; use it only where monitoring is
-lawful and authorized.
 
-## Build modes
+MAC addresses and SSIDs are still sensitive: they describe other people's
+devices and, over time, their movements. Use this only where monitoring is lawful
+and you are authorized, and keep session files local.
 
-```sh
-# Mock/Serial build
-CTAGS_WORKAROUND=1 ./scripts/compile-all.sh
+## Technical reference
 
-# Full panel build
-CTAGS_WORKAROUND=1 \
-EXTRA_FLAGS="-DUSE_DISPLAY=1 -DUSE_FLOCK_UART_BRIDGE=1 -DUSE_FLOCK_PERSISTENCE=1 -DUSE_FLOCK_C6_WITNESS=1" \
-./scripts/compile-all.sh
-
-# ESP32 BLE aggregator and BW16 Wi-Fi scanner
-CTAGS_WORKAROUND=1 ./scripts/build-flock-bridge.sh
-./scripts/build-flock-bw16.sh
-```
-
-Mock mode requires no companion board. Run `demo` to inject deterministic Wi-Fi,
-BLE, and Raven contacts through the same parser and store as real UART events.
-
-## Wiring
-
-Initial V1.2 candidates, not yet hardware-verified:
-
-```text
-ESP32 TX GPIO17  -> CrowPanel RX GPIO48
-ESP32 RX GPIO16  <- CrowPanel TX GPIO47
-ESP32 GND        <-> CrowPanel GND
-BW16 TX PB1/pin4 -> ESP32 RX GPIO32
-BW16 RX PB2/pin5 <- ESP32 TX GPIO33
-BW16 GND         <-> shared GND
-```
-
-Power all three boards separately from USB during first bring-up. Do not connect
-the 5V rails. Copy `config/Pins.example.h` to the gitignored `config/Pins.h` to
-override the panel pins after checking the silkscreen and matching Elecrow UART
-example.
-
-## UI
-
-- **Scope** maps RSSI to proximity rings and a stable MAC hash to angle. It is
-  explicitly not a location or direction display.
-- **Feed** lists current/previous contacts with Wi-Fi/BLE/Raven/candidate evidence.
-- **C6 WiFi** pages through up to 64 nearby 2.4 GHz APs with SSID/hidden state,
-  BSSID, RSSI, channel, security/ciphers, PHY, bandwidth, country, WPS/FTM,
-  and BSS color when the hosted scan reports them.
-- **Stats** shows separate aggregator, BLE, and BW16 health plus per-band counters.
-- **Control** changes scan, hopping, band, channel, profile, diagnostics,
-  calibration, stealth, save, and two-tap reset state.
-
-FFat persistence is opt-in. It uses `/cypher-flock/`, validates CRC before
-promoting a temporary save, never auto-formats the partition, and falls back to
-RAM with a visible warning.
-
-## Serial commands
-
-| Command | Purpose |
-|---|---|
-| `status` | Print panel, bridge, parser, and storage state |
-| `screen scope|feed|witness|stats|control|next` | Change screen |
-| `witness status|scan|list|screen` | Inspect or refresh the C6 witness snapshot |
-| `filter all|wifi|ble|raven|candidate|bw16|esp32` | Filter by protocol, evidence, or source |
-| `source current|previous` | Select current or previous session |
-| `demo` | Inject deterministic Wi-Fi, BLE, and Raven hits |
-| `inject <json>` | Inject a compact v1 detection object (95-character Serial-router limit) |
-| `bridge <command>` | Send a scanner command over UART |
-| `calibration on|off|export|clear` | Manage sanitized calibration observations |
-| `save` | Save current session to FFat |
-| `session reset|current|previous` | Manage session view/state |
-| `stealth on|off` | Black out or wake the display while scanning continues |
-| `selftest` | Exercise Wi-Fi/BLE/Raven events plus malformed/version/oversize rejection |
-
-Bridge commands add `band 2.4|5|dual`, `profile precision|balanced|recall`,
-`calibration on|off|export|clear`, `catalog`, and supported dual-band channels.
-See [three-board architecture](../../docs/cypher-flock-three-board.md).
-For a staged physical setup, upload, and evidence checklist, see the
-[Cypher Flock setup and test guide](../../docs/cypher-flock-test-setup-guide.md).
-
-## Proof state
-
-The source is **compile-ready** only. All three boards must upload and exchange
-both UART hello streams before `uploaded`; real 2.4 and 5 GHz raw frames are
-required for `dual-band-proven`; the documented recall/false-positive threshold
-is required for `field-proven`.
-
-The C6 path is separately hardware-gated: a successful compile does not prove
-that the exact panel returns asynchronous hosted scan records. Witness snapshots
-are ephemeral and are not written to FFat or counted as detected devices.
+For installation, build flags, configuration, upload commands, device details,
+file layout, troubleshooting, safety boundaries, and proof terminology, see
+[TECHNICAL.md](TECHNICAL.md). The three-board architecture and the staged setup
+and evidence checklist have their own guides:
+[architecture](../../docs/cypher-flock-three-board.md),
+[setup and test guide](../../docs/cypher-flock-test-setup-guide.md).

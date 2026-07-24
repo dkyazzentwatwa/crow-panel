@@ -41,27 +41,29 @@ uint8_t BleUartBridge::scan(BleAdvertisementRecord records[], uint8_t maxRecords
   }
   return count;
 #else
-  uint8_t count = boundedCount(maxRecords, 3);
-  if (count > 0) {
-    records[0].label = "AirPods-Pro";
-    records[0].address = "AA:BB:CC:00:00:01";
-    records[0].rssi = -58;
-    records[0].vendor = "Apple";
-    records[0].detail = "mock advertisement";
-  }
-  if (count > 1) {
-    records[1].label = "SensorTag";
-    records[1].address = "CC:DD:EE:00:00:02";
-    records[1].rssi = -71;
-    records[1].vendor = "TI";
-    records[1].detail = "mock advertisement";
-  }
-  if (count > 2) {
-    records[2].label = "Beacon";
-    records[2].address = "11:22:33:44:55:66";
-    records[2].rssi = -82;
-    records[2].vendor = "generic";
-    records[2].detail = "mock advertisement";
+  struct MockAdv {
+    const char *label;
+    const char *address;
+    int32_t rssi;
+    const char *vendor;
+    const char *detail;
+  };
+  static const MockAdv kMock[] = {
+      {"AirPods-Pro", "AA:BB:CC:00:00:01", -58, "Apple", "mock advertisement"},
+      {"SensorTag", "CC:DD:EE:00:00:02", -71, "TI", "mock advertisement"},
+      {"Fitness-Band", "12:34:56:78:9A:BC", -66, "Xiaomi", "mock advertisement"},
+      {"Tile-Tracker", "DE:AD:BE:EF:00:07", -79, "Tile", "mock advertisement"},
+      {"Beacon", "11:22:33:44:55:66", -83, "generic", "mock advertisement"},
+      {"(unnamed)", "77:88:99:AA:BB:CC", -90, "unknown", "mock advertisement"},
+  };
+  const uint8_t available = sizeof(kMock) / sizeof(kMock[0]);
+  uint8_t count = boundedCount(maxRecords, available);
+  for (uint8_t i = 0; i < count; ++i) {
+    records[i].label = kMock[i].label;
+    records[i].address = kMock[i].address;
+    records[i].rssi = kMock[i].rssi;
+    records[i].vendor = kMock[i].vendor;
+    records[i].detail = kMock[i].detail;
   }
 
   for (uint8_t i = 0; i < count; ++i) {

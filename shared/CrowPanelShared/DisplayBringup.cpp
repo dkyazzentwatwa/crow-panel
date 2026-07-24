@@ -17,6 +17,7 @@
 #include <Wire.h>
 #include <Arduino_GFX_Library.h>
 #include <TouchDrvGT911.hpp>
+#include "esp_cache.h"
 #include "Logger.h"
 #include "Throttle.h"
 #include "UiTheme.h"
@@ -62,10 +63,12 @@ Arduino_DSI_Display *gfx = nullptr;
 TouchDrvGT911 touch;
 bool touchReady = false;
 bool displayReady = false;
+// When true, the panel was built with auto_flush=false and the app owns flushing
+// via CrowDisplay::flush(). Default false preserves every existing project.
+bool manualFlush = false;
 bool touchSampled = false;
-bool touchPressed = false;
-int16_t touchX = 0;
-int16_t touchY = 0;
+CrowDisplay::TouchPointData cachedPoints[TouchPoints::MAX_POINTS];
+uint8_t cachedPointCount = 0;
 uint32_t lastTouchSampleMs = 0;
 uint16_t bgColor = 0;
 uint16_t fgColor = 0;
@@ -74,30 +77,35 @@ Throttle touchLogThrottle(250);
 
 void sampleTouch() {
   if (!displayReady || !touchReady) {
-    touchPressed = false;
+    cachedPointCount = 0;
     return;
   }
 
   // The GT911 point-info register is cleared by getTouchPoints(). Cache one
   // sample so CrowDisplay::tick() cannot consume the event before the app's
-  // touchPoint() call in the same loop. Polling also matches Elecrow's
-  // official touch example and avoids depending on the IRQ trigger polarity.
+  // touchPoint()/touchPoints() call in the same loop. Polling also matches
+  // Elecrow's official touch example and avoids depending on the IRQ trigger
+  // polarity.
   uint32_t now = millis();
   if (touchSampled && now - lastTouchSampleMs < 8) {
     return;
   }
   touchSampled = true;
   lastTouchSampleMs = now;
-  touchPressed = false;
+  cachedPointCount = 0;
 
   const TouchPoints &points = touch.getTouchPoints();
-  if (points.getPointCount() == 0) {
-    return;
+  uint8_t count = points.getPointCount();
+  if (count > TouchPoints::MAX_POINTS) {
+    count = TouchPoints::MAX_POINTS;
   }
-  const TouchPoint &point = points.getPoint(0);
-  touchX = point.x;
-  touchY = point.y;
-  touchPressed = true;
+  for (uint8_t i = 0; i < count; ++i) {
+    const TouchPoint &point = points.getPoint(i);
+    cachedPoints[i].x = point.x;
+    cachedPoints[i].y = point.y;
+    cachedPoints[i].id = point.id;
+  }
+  cachedPointCount = count;
 }
 
 // UiTheme colors are 24-bit 0xRRGGBB; the panel wants RGB565.
@@ -112,7 +120,7 @@ bool beginPanel(const HardwareProfile &profile) {
       t.vsyncPulse, t.vsyncBackPorch, t.vsyncFrontPorch,
       t.preferSpeedHz, t.laneBitRateMbps);
   gfx = new Arduino_DSI_Display(kWidth, kHeight, dsiPanel, 0 /*rotation*/,
-                                true /*auto_flush*/, profile.display.lcdReset,
+                                !manualFlush /*auto_flush*/, profile.display.lcdReset,
                                 kEk79007InitOperations,
                                 sizeof(kEk79007InitOperations) / sizeof(kEk79007InitOperations[0]));
   if (!gfx->begin()) {
@@ -152,7 +160,8 @@ void buildStatusScreen(const char *title) {
 
 namespace CrowDisplay {
 
-bool begin(const HardwareProfile &profile, const char *title) {
+bool begin(const HardwareProfile &profile, const char *title, bool manual) {
+  manualFlush = manual;
   const UiTheme &theme = defaultUiTheme();
   bgColor = toColor565(theme.background);
   fgColor = toColor565(theme.foreground);
@@ -164,8 +173,39 @@ bool begin(const HardwareProfile &profile, const char *title) {
   beginTouch(profile);
   buildStatusScreen(title);
   displayReady = true;
+  flush();  // no-op unless manualFlush; makes the status screen appear
   Logger::info("display", "DSI status screen up (Adafruit-GFX-style API)");
   return true;
+}
+
+void flush() {
+  if (gfx && manualFlush) {
+    gfx->flush(true);
+  }
+}
+
+void flush(int16_t x, int16_t y, int16_t w, int16_t h) {
+  if (!gfx || !manualFlush) {
+    return;
+  }
+  // Clamp to the panel, then sync the full rows spanning [y, y+h). Whole rows
+  // are contiguous in the framebuffer, so this is one cache_msync of h rows -
+  // still a fraction of the screen for a key/band, far cheaper than the full FB.
+  if (y < 0) { h += y; y = 0; }
+  if (h <= 0 || y >= kHeight) {
+    return;
+  }
+  if (y + h > kHeight) { h = kHeight - y; }
+  (void)x;
+  (void)w;
+  uint16_t *fb = gfx->getFramebuffer();
+  if (!fb) {
+    return;
+  }
+  uint16_t *start = fb + (size_t)y * kWidth;
+  size_t bytes = (size_t)h * kWidth * sizeof(uint16_t);
+  esp_cache_msync(start, bytes,
+                  ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
 }
 
 void setLine(uint8_t index, const String &text) {
@@ -178,12 +218,15 @@ void setLine(uint8_t index, const String &text) {
   gfx->setTextSize(kLineSize);
   gfx->setCursor(kMarginX, y);
   gfx->print(text);
+  flush(0, y, kWidth, kLinePitch - 8);  // no-op unless manualFlush
 }
 
 void tick() {
   sampleTouch();
-  if (touchPressed && touchLogThrottle.ready()) {
-    Logger::info("touch", "x=" + String(touchX) + " y=" + String(touchY));
+  if (cachedPointCount > 0 && touchLogThrottle.ready()) {
+    Logger::info("touch", "x=" + String(cachedPoints[0].x) +
+                              " y=" + String(cachedPoints[0].y) +
+                              " n=" + String(cachedPointCount));
   }
 }
 
@@ -193,12 +236,21 @@ Arduino_GFX *canvas() {
 
 bool touchPoint(int16_t &x, int16_t &y) {
   sampleTouch();
-  if (!touchPressed) {
+  if (cachedPointCount == 0) {
     return false;
   }
-  x = touchX;
-  y = touchY;
+  x = cachedPoints[0].x;
+  y = cachedPoints[0].y;
   return true;
+}
+
+uint8_t touchPoints(TouchPointData *out, uint8_t maxPoints) {
+  sampleTouch();
+  uint8_t count = cachedPointCount < maxPoints ? cachedPointCount : maxPoints;
+  for (uint8_t i = 0; i < count; ++i) {
+    out[i] = cachedPoints[i];
+  }
+  return count;
 }
 
 }  // namespace CrowDisplay

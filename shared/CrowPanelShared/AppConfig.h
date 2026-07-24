@@ -65,20 +65,12 @@
 #define USE_QR_PERSISTENCE 0
 #endif
 
-#ifndef USE_BENCH_PROBES
-#define USE_BENCH_PROBES 0
-#endif
-
 #ifndef USE_SD_HIGHSCORES
 #define USE_SD_HIGHSCORES 0
 #endif
 
 #ifndef USE_RF_UART_BRIDGE
 #define USE_RF_UART_BRIDGE 0
-#endif
-
-#ifndef USE_CREATOROPS_API
-#define USE_CREATOROPS_API 0
 #endif
 
 #ifndef USE_GPS_DRIVER
@@ -91,6 +83,53 @@
 
 #ifndef USE_SD_POKEDEX
 #define USE_SD_POKEDEX 0
+#endif
+
+// Project 19 (Starbeam Console): native nRF24/CC1101 stack + UART co-processor
+// link + transmit-arming gate. Off by default so shared TUs and the flag matrix
+// build without the RF24 / SmartRC-CC1101 libraries or a live co-processor.
+#ifndef USE_STARBEAM_RADIOS
+#define USE_STARBEAM_RADIOS 0
+#endif
+
+#ifndef USE_STARBEAM_COPROC
+#define USE_STARBEAM_COPROC 0
+#endif
+
+#ifndef STARBEAM_TX_CONFIRMED
+#define STARBEAM_TX_CONFIRMED 0
+#endif
+
+// GT911 touch mapping for the shared CrowTouch helper. Defaults assume the
+// panel reports 1024x600-aligned coordinates already; override per project
+// (or per board revision) after a `touch` diagnostic run.
+#ifndef CROW_TOUCH_MIN_X
+#define CROW_TOUCH_MIN_X 0
+#endif
+#ifndef CROW_TOUCH_MAX_X
+#define CROW_TOUCH_MAX_X 1023
+#endif
+#ifndef CROW_TOUCH_MIN_Y
+#define CROW_TOUCH_MIN_Y 0
+#endif
+#ifndef CROW_TOUCH_MAX_Y
+#define CROW_TOUCH_MAX_Y 599
+#endif
+#ifndef CROW_TOUCH_SWAP_XY
+#define CROW_TOUCH_SWAP_XY 0
+#endif
+#ifndef CROW_TOUCH_INVERT_X
+#define CROW_TOUCH_INVERT_X 0
+#endif
+#ifndef CROW_TOUCH_INVERT_Y
+#define CROW_TOUCH_INVERT_Y 0
+#endif
+
+// A release is only accepted after the panel reads no contact for this long,
+// which collapses GT911 flicker into one clean press/release pair. Without it
+// a single tap can fire several times and a drag jumps around.
+#ifndef CROW_TOUCH_RELEASE_DEBOUNCE_MS
+#define CROW_TOUCH_RELEASE_DEBOUNCE_MS 30
 #endif
 
 #ifndef CROWPANEL_HARDWARE_PROFILE

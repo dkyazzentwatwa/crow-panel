@@ -174,6 +174,64 @@ void towerIcon(Arduino_GFX *g, int16_t x, int16_t y, uint16_t color) {
   g->drawLine(cx - 6, y + 6, cx - 11, y + 4, color);
 }
 
+void touchButton(Arduino_GFX *g, int16_t x, int16_t y, int16_t w, int16_t h,
+                 const char *label, bool active, uint16_t accent) {
+  const uint16_t fill = active ? accent : kSurfaceHi;
+  const uint16_t ink = active ? kBg : kTextHi;
+  panel(g, x, y, w, h, 10, fill, 1, active ? accent : kLine);
+  const GFXfont *font = fontS();
+  int16_t bx, by;
+  uint16_t bw, bh;
+  g->setFont(font);
+  g->setTextSize(1);
+  g->getTextBounds(label, 0, 0, &bx, &by, &bw, &bh);
+  text(g, x + w / 2, y + (h - (int16_t)bh) / 2, label, font, ink, kCenter);
+}
+
+void headerBar(Arduino_GFX *g, const char *title, const char *subtitle,
+               const char *rightPill, uint16_t pillColor) {
+  g->fillRect(0, 0, kChromeW, kChromeHeaderH, kSurface);
+  g->drawFastHLine(0, kChromeHeaderH - 1, kChromeW, kLine);
+
+  if (subtitle != nullptr) {
+    text(g, 24, 12, title, fontL(), kTextHi, kLeft);
+    text(g, 24, 42, subtitle, fontS(), kTextMut, kLeft);
+  } else {
+    text(g, 24, 24, title, fontL(), kTextHi, kLeft);
+  }
+
+  if (rightPill != nullptr) {
+    const int16_t pw = textWidth(g, rightPill, fontS()) + 24;
+    pill(g, kChromeW - 24 - pw, (kChromeHeaderH - 28) / 2, rightPill, fontS(), kBg, pillColor);
+  }
+}
+
+void tabBar(Arduino_GFX *g, const char *const *labels, uint8_t count, uint8_t selected,
+            uint16_t accent) {
+  if (count == 0) return;
+  g->fillRect(0, kChromeTabY, kChromeW, kChromeTabH, kSurface);
+  g->drawFastHLine(0, kChromeTabY, kChromeW, kLine);
+
+  const int16_t slot = kChromeW / count;
+  for (uint8_t i = 0; i < count; i++) {
+    const bool on = (i == selected);
+    const int16_t cx = slot * i + slot / 2;
+    text(g, cx, kChromeTabY + 20, labels[i], fontS(), on ? accent : kTextMut, kCenter);
+    if (on) {
+      const int16_t uw = textWidth(g, labels[i], fontS());
+      g->fillRect(cx - uw / 2, kChromeTabY + 44, uw, 3, accent);
+    }
+  }
+}
+
+int8_t tabHit(int16_t px, int16_t py, uint8_t count) {
+  if (count == 0) return -1;
+  if (py < kChromeTabY || py >= kChromeH || px < 0 || px >= kChromeW) return -1;
+  const int16_t slot = kChromeW / count;
+  const int16_t idx = px / slot;
+  return (int8_t)(idx >= count ? count - 1 : idx);
+}
+
 }  // namespace Widgets
 
 #endif  // USE_DISPLAY && CONFIG_IDF_TARGET_ESP32P4

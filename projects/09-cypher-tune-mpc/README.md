@@ -1,68 +1,54 @@
-# CrowPanel Cypher Tune MPC
+# Cypher Tune MPC
 
-Touch groovebox inspired by `cardputer-mpc`.
+A real touch groovebox for the Elecrow CrowPanel Advanced 7-inch display.
 
-V1 includes a 4x4 pad/sample engine, 16-step transport, BPM, play/stop, record,
-visual voices, and an opt-in generated-click I2S path behind `USE_AUDIO`.
-Default builds stay silent/mock so the project is safe to compile without audio
-hardware or sample files.
+A 4x4 velocity-sensitive pad grid you play with your fingers, a 16-step /
+16-pad / 4-pattern sequencer with swing and a metronome, per-pad volume,
+pitch, and choke groups, and a polyphonic sample engine that mixes eight
+voices out the board's NS4168 I2S speaker amp. Sounds come from a built-in
+synthesized drum kit (no files needed) or from 16-bit WAV kits on the SD
+card, switchable live from the touch screen.
 
-## Serial Commands
+Default builds are still silent by design: the whole transport, pattern
+engine, and serial control surface work with no audio hardware and no sample
+files present.
 
-- `help` / `status` / `history`
-- `pad <1-16>`
-- `step <1-16> [pad]`
-- `bpm <value>`
-- `play`
-- `stop`
-- `record`
-- `pattern`
-- `samples`
-- `voices`
-- `audio`
+> This is Project 9 in the [CrowPanel Arduino suite](../../README.md).
 
-## Build Flags
+## Status
 
-Compile the mock Serial path:
+Compile-ready: baseline, `USE_DISPLAY=1`, `USE_AUDIO=1`,
+`USE_AUDIO=1 USE_MPC_SD=1`, and the combined display+audio builds all compile
+for the real ESP32-P4 target. Nothing has been heard on a speaker yet —
+pad-to-sound latency, amplifier enable, and speaker output still need to be
+verified on the exact board revision. The audio design targets ~26-29 ms
+worst-case pad-to-speaker (see [TECHNICAL.md](TECHNICAL.md) for the math);
+the render task reports an underrun counter so the timing claims can be
+checked on hardware instead of trusted.
 
-```sh
-CTAGS_WORKAROUND=1 ./scripts/compile-all.sh
-```
+## What you get
 
-Compile with the shared dashboard/display path enabled:
+- **Touch pad grid** — 4x4, MPC layout (pad 1 bottom-left), fires on
+  press-down with velocity from where you hit the pad; two-finger drumming
+  works (5-contact multi-touch tracking)
+- **Step lane** — TR-style: pressing a pad selects it, its 16 steps show on
+  the right; tap a step to cycle off → on → accent
+- **4 patterns (A-D)** with per-step-per-pad velocity, switchable from the
+  transport bar
+- **Swing** (50-75%, MPC convention) and a **metronome** with a downbeat
+  accent
+- **Pad edit panel** — per-pad volume and pitch sliders (±12 semitones) and
+  choke groups (closed hat chokes open hat out of the box)
+- **Sound engine** — 8-voice PCM mixer over I2S, sample-accurate sequencing
+  driven by the audio clock itself, record mode that quantizes live hits
+- **Kits** — a built-in 16-sound synthesized kit rendered at boot, plus SD
+  card WAV kits (`/mpc/kits/<name>/pad01.wav … pad16.wav`) hot-swappable
+  while the transport runs
+- **Serial parity** — every control also works headless over serial, so the
+  whole instrument can be proven without touching the panel
 
-```sh
-CTAGS_WORKAROUND=1 EXTRA_FLAGS="-DUSE_DISPLAY=1" ./scripts/compile-all.sh
-```
+## Technical reference
 
-Compile the project with the experimental audio path enabled:
-
-```sh
-CTAGS_WORKAROUND=1 EXTRA_FLAGS="-DUSE_AUDIO=1" ./scripts/compile-all.sh
-```
-
-`USE_AUDIO=1` uses the ESP32 Arduino `ESP_I2S` wrapper when available and emits a
-short generated click on pad/step triggers. It does not decode WAV/MP3 samples
-yet and is not speaker-verified.
-
-Project-local tuning flags:
-
-- `CYPHER_TUNE_AUDIO_SAMPLE_RATE` defaults to `22050`.
-- `CYPHER_TUNE_AUDIO_CLICK_FRAMES` defaults to `96`.
-- `CYPHER_TUNE_AUDIO_VOLUME` defaults to `96`.
-
-## Samples, Latency, And Proof
-
-No actual samples are required in this repo. The current pad map uses
-`factory:*` placeholder refs so Serial and display smoke tests work cleanly.
-When real samples land, prefer SD or external flash storage with short 16-bit
-PCM/WAV files first; keep large compressed formats out of the critical live-pad
-path until decode latency is measured on the CrowPanel.
-
-Current proof language:
-
-- `compile-ready`: baseline, `USE_DISPLAY=1`, and `USE_AUDIO=1` builds compile.
-- `uploaded`: sketch was flashed to a real CrowPanel.
-- `field-proven`: pad-to-sound latency, amplifier enable, and speaker output
-  were verified on the exact board revision and documented with Serial logs or
-  video.
+For installation, build flags, configuration, upload commands, the audio
+engine design, kit folder layout, troubleshooting, and proof terminology, see
+[TECHNICAL.md](TECHNICAL.md).

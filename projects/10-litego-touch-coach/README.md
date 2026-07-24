@@ -1,122 +1,60 @@
-# CrowPanel LiteGo Touch Coach
+# LiteGo Touch Coach
 
-Arduino C++ 9x9 Go coach inspired by the `ai-go` PWA. The rules engine lives in
-project-local `src/` code so the sketch stays a small Serial and touch harness.
+A playable 9x9 Go game for the Elecrow CrowPanel Advanced 7-inch touchscreen.
 
-## Controls
+Sit down with the panel and play a real game against a Monte-Carlo opponent —
+tap an intersection to line up your stone, tap it again to place it, and the
+opponent thinks out loud on a progress bar while it searches. Games end with a
+declared winner and margin, komi included. It runs entirely offline: no server,
+no PWA, no network.
 
-- Serial is the smoke-test path in every build.
-- `USE_DISPLAY=1` adds a full-screen 9x9 touch coach surface inspired by the
-  ADS-B radar dashboard style: dense header/footer, status cards, command pills,
-  last-move highlighting, wrapped coach text, and explicit proof-state footer.
-- Touch input tries raw, swapped, and flipped GT911 coordinate mappings before
-  resolving a tap. Every touch action routes through the same game path as the
-  matching Serial command.
-- Touch command pills: `PASS`, `CPU`, `HINT`, `SCORE`, and `RESET`.
+> This is Project 10 in the [CrowPanel Arduino suite](../../README.md).
 
-## Serial Commands
+## Status
 
-- `help` / `status` / `history`
-- `board`
-- `hint`
-- `play <x> <y>`
-- `cpu`
-- `pass`
-- `reset`
-- `score`
-- `selftest`
+Compile-ready for the baseline and `USE_DISPLAY=1` builds on the ESP32-P4
+target, and the rules engine and AI pass their full test suite on the host. The
+board has not been played on a physical CrowPanel yet — the screen, the taps,
+the opponent's on-device speed, and the `selftest` all still need to be observed
+there. See the [technical reference](TECHNICAL.md).
 
-Coordinates are zero-based: `play 0 0` is the upper-left point and `play 8 8`
-is the lower-right point.
+## Playing
 
-## Rule Coverage
+- **Place a stone** — tap an intersection to preview a ghost stone, then tap the
+  same point to commit. A fingertip is wider than a grid cell, so the second tap
+  is what makes placement accurate.
+- **Buttons** — `PASS`, `UNDO`, `HINT`, `SCORE`, `RESIGN` on the top row;
+  `NEW GAME`, `LEVEL`, and `SWAP SIDES` on the bottom.
+- **Difficulty** — `LEVEL` cycles easy → normal → hard. Easy answers instantly
+  from a one-ply heuristic; normal and hard run Monte-Carlo playouts within a
+  time budget.
+- **Everything also works over Serial**, and every touch action goes through the
+  same code path as its command.
 
-- Empty-point legal move checks.
-- Group liberty tracking across connected stones.
-- Captures when neighboring opponent groups reach zero liberties.
-- Suicide prevention unless the move captures and creates liberties.
-- Simple ko prevention against immediate board-position recapture.
-- Pass and reset.
-- Simple CPU move selection that prefers captures, atari pressure, liberties,
-  and central points.
-- Liberty and atari coaching after each move.
-- Built-in `selftest` smoke runner for capture, suicide rejection, CPU move,
-  pass/end, reset, score, and a simple ko fixture.
-- Rough area scoring: stones plus enclosed empty regions, with neutral regions
-  split out. No komi or seki adjudication is applied.
+## What you get
 
-## Smoke Scenarios
+- A full 9x9 board with last-move marker, capture animation-free instant redraw,
+  and a game-over overlay showing the result
+- A Monte-Carlo opponent that plays a different game every time, never fills its
+  own eyes, and passes when passing is right
+- Real scoring: Tromp–Taylor area scoring with komi (6.5 by default), so games
+  have a winner and a margin, never a tie
+- Full rules: captures, suicide prevention, the capturing-suicide exception, and
+  **positional superko** — triple kos cannot loop
+- Undo that takes back your move and the opponent's reply together
+- Liberty and atari coaching after every move
+- A `selftest` that runs 28 rules fixtures plus AI hygiene checks on the device,
+  and a `bench` that reports the opponent's real playout rate
 
-Capture one white stone:
+## A note on scoring
 
-```text
-reset
-play 1 0
-play 0 0
-play 0 1
-play 2 2
-play 1 1
-```
+Scoring is Tromp–Taylor area scoring with no dead-stone marking, which is why
+the opponent plays every neutral point out instead of passing early. Filling
+dame costs nothing under area scoring, and playing to the end is what keeps the
+final number honest — there are no dead stones left on the board to mis-count.
+There is no seki adjudication.
 
-Suicide rejection:
+## Technical reference
 
-```text
-reset
-play 0 1
-play 4 4
-play 1 0
-play 5 5
-play 1 1
-play 0 0
-```
-
-Pass/reset/scoring:
-
-```text
-reset
-play 4 4
-cpu
-score
-pass
-pass
-reset
-```
-
-Rules self-test:
-
-```text
-selftest
-```
-
-Display compile row:
-
-```sh
-FQBN="${FQBN:-esp32:esp32:esp32p4:USBMode=hwcdc,PSRAM=enabled,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,UploadSpeed=921600}"
-arduino-cli compile \
-  --fqbn "$FQBN" \
-  --libraries ./shared \
-  --build-path ./_arduino-build/10-litego-touch-coach-display \
-  --build-property "compiler.cpp.extra_flags=-DUSE_DISPLAY=1" \
-  --build-property "tools.ctags.cmd.path=/usr/bin/true" \
-  projects/10-litego-touch-coach
-```
-
-Upload when a CrowPanel serial port is present:
-
-```sh
-CTAGS_WORKAROUND=1 EXTRA_FLAGS="-DUSE_DISPLAY=1" \
-  ./scripts/upload-project.sh projects/10-litego-touch-coach /dev/cu.usbmodemXXXX
-```
-
-## Proof State
-
-- `compile-ready`: Arduino CLI build succeeds for baseline and/or display flags.
-- `uploaded`: the sketch has been flashed to a detected CrowPanel serial port.
-- `field-proven`: the physical board has shown the UI, accepted touch moves,
-  and produced matching Serial proof.
-
-Current proof state: compile-ready for baseline and `USE_DISPLAY=1` builds on
-the ESP32-P4 FQBN. Do not claim uploaded or field-proven until a detected
-CrowPanel port accepts the `USE_DISPLAY=1` upload, the screen is observed, the
-board intersections and command pills respond to touch, and Serial `selftest`
-passes on the running device.
+For build flags, touch calibration, difficulty tuning, upload commands, the host
+test harness, file layout, and proof terminology, see [TECHNICAL.md](TECHNICAL.md).

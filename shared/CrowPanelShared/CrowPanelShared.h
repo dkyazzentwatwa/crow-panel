@@ -18,6 +18,7 @@
 #include "WorldFeedClient.h"
 #include "DisplayBringup.h"
 #include "DashboardWidgets.h"
+#include "TouchInput.h"
 #include "OpsDashboard.h"
 
 #endif

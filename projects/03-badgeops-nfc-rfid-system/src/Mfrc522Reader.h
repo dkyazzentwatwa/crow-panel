@@ -8,6 +8,7 @@ class Mfrc522Reader : public BadgeReader {
   void begin(const HardwareProfile &profile) override;
   bool poll(BadgeRead &read) override;
   const char *driverName() const override;
+  bool ready() const override { return ready_; }
 
  private:
   const HardwareProfile *profile_ = nullptr;

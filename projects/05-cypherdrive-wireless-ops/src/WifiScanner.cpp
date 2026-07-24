@@ -88,24 +88,33 @@ uint8_t WifiScanner::scan(WifiNetworkRecord records[], uint8_t maxRecords, Strea
   WiFi.scanDelete();
   return count;
 #else
-  uint8_t count = boundedCount(maxRecords, 3);
-  if (count > 0) {
-    records[0].ssid = "StudioNet";
-    records[0].channel = 6;
-    records[0].rssi = -42;
-    records[0].auth = "wpa2";
-  }
-  if (count > 1) {
-    records[1].ssid = "GuestLab";
-    records[1].channel = 11;
-    records[1].rssi = -67;
-    records[1].auth = "open";
-  }
-  if (count > 2) {
-    records[2].ssid = "PanelBench";
-    records[2].channel = 1;
-    records[2].rssi = -74;
-    records[2].auth = "wpa2";
+  // Believable mock spread: 2.4 GHz + 5 GHz, mixed security, one hidden SSID,
+  // so every panel screen fills with no radio activity at all.
+  struct MockNet {
+    const char *ssid;
+    uint8_t channel;
+    int32_t rssi;
+    const char *auth;
+    bool hidden;
+  };
+  static const MockNet kMock[] = {
+      {"StudioNet", 6, -41, "wpa2", false},
+      {"StudioNet-5G", 44, -55, "wpa3", false},
+      {"GuestLab", 11, -63, "open", false},
+      {"PanelBench", 1, -72, "wpa2", false},
+      {"CafeMesh", 36, -68, "wpa2/wpa3", false},
+      {"(hidden)", 149, -77, "wpa2", true},
+      {"IoT-Legacy", 3, -81, "wep", false},
+      {"NeighborNet", 9, -88, "wpa", false},
+  };
+  const uint8_t available = sizeof(kMock) / sizeof(kMock[0]);
+  uint8_t count = boundedCount(maxRecords, available);
+  for (uint8_t i = 0; i < count; ++i) {
+    records[i].ssid = kMock[i].ssid;
+    records[i].channel = kMock[i].channel;
+    records[i].rssi = kMock[i].rssi;
+    records[i].auth = kMock[i].auth;
+    records[i].hidden = kMock[i].hidden;
   }
 
   for (uint8_t i = 0; i < count; ++i) {

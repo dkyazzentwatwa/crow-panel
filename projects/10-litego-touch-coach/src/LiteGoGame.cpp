@@ -1,230 +1,227 @@
 #include "LiteGoGame.h"
 
+#include "GoFixtures.h"
+
+using litego::kBlack;
+using litego::kEmpty;
+using litego::kPass;
+using litego::kWhite;
+using litego::MoveInfo;
+using litego::ScoreEstimate;
+
 namespace {
-const int8_t kDirs[4][2] = {
-    {-1, 0},
-    {1, 0},
-    {0, -1},
-    {0, 1},
-};
 
-bool selftestCheck(Print &out, const char *name, bool ok) {
-  out.print(F("[selftest] "));
-  out.print(name);
-  out.println(ok ? F(" PASS") : F(" FAIL"));
-  return ok;
-}
+uint32_t arduinoMillis() { return (uint32_t)millis(); }
+
+char colorChar(litego::Color c) { return c == kBlack ? 'B' : (c == kWhite ? 'W' : '.'); }
+
+// Renders a doubled half-point value ("13" -> "6.5") without floating point.
+String halfPoints(int16_t valueX2) {
+  int16_t whole = valueX2 / 2;
+  bool half = (valueX2 % 2) != 0;
+  String text = String(whole);
+  text += half ? ".5" : ".0";
+  return text;
 }
 
-LiteGoGame::LiteGoGame() {
+void emitToPrint(void *context, const char *line) {
+  Print *out = (Print *)context;
+  if (out != nullptr) {
+    out->println(line);
+  }
+}
+
+}  // namespace
+
+LiteGoGame::LiteGoGame()
+    : level_(litego::kLevelNormal),
+      humanColor_('B'),
+      aiThinking_(false),
+      lastMoveX_(-1),
+      lastMoveY_(-1),
+      undoDepth_(0) {}
+
+void LiteGoGame::begin() {
+  // Give the engine the Arduino clock so the level time budgets apply. Without
+  // this the search would run to maxPlayouts and block the UI for seconds.
+  litego::setAiClock(arduinoMillis);
+  ai_.begin(litego::aiConfigForLevel(level_), (uint32_t)micros() ^ 0xA5A5F00Du);
   reset();
 }
 
-bool LiteGoGame::runSelfTest(Print &out) {
-  bool allOk = true;
-  LiteGoGame g;
-
-  g.reset();
-  allOk &= selftestCheck(out, "capture setup B 1,0", g.play(1, 0).status == kMoveOk);
-  allOk &= selftestCheck(out, "capture setup W 0,0", g.play(0, 0).status == kMoveOk);
-  LiteGoGame::MoveResult capture = g.play(0, 1);
-  allOk &= selftestCheck(out, "capture move legal", capture.status == kMoveOk);
-  allOk &= selftestCheck(out, "capture removes stone",
-                         capture.captures == 1 && g.blackCaptures() == 1 && g.at(0, 0) == '.');
-
-  g.reset();
-  allOk &= selftestCheck(out, "suicide setup B 0,1", g.play(0, 1).status == kMoveOk);
-  allOk &= selftestCheck(out, "suicide setup W 4,4", g.play(4, 4).status == kMoveOk);
-  allOk &= selftestCheck(out, "suicide setup B 1,0", g.play(1, 0).status == kMoveOk);
-  allOk &= selftestCheck(out, "suicide setup W 5,5", g.play(5, 5).status == kMoveOk);
-  allOk &= selftestCheck(out, "suicide setup B 1,1", g.play(1, 1).status == kMoveOk);
-  LiteGoGame::MoveResult suicide = g.play(0, 0);
-  allOk &= selftestCheck(out, "suicide rejected",
-                         suicide.status == kMoveSuicide && g.currentPlayer() == 'W' &&
-                             g.moveCount() == 5);
-
-  g.reset();
-  allOk &= selftestCheck(out, "cpu move legal", g.cpuMove().status == kMoveOk && g.moveCount() == 1);
-  LiteGoGame::ScoreEstimate cpuScore = g.estimateScore();
-  allOk &= selftestCheck(out, "score has stones",
-                         cpuScore.blackStones + cpuScore.whiteStones > 0 &&
-                             cpuScore.neutralPoints < kPointCount);
-
-  LiteGoGame::MoveResult passOne = g.pass();
-  LiteGoGame::MoveResult passTwo = g.pass();
-  allOk &= selftestCheck(out, "two passes end review",
-                         passOne.status == kMovePass && passTwo.status == kMovePass &&
-                             g.gameEndedByPasses());
-  g.reset();
-  allOk &= selftestCheck(out, "reset clears board",
-                         g.moveCount() == 0 && g.currentPlayer() == 'B' && g.at(4, 4) == '.');
-
-  const char *koRows[kSize] = {
-      ".BW......",
-      "BW.W.....",
-      ".BW......",
-      ".........",
-      ".........",
-      ".........",
-      ".........",
-      ".........",
-      ".........",
-  };
-  for (uint8_t y = 0; y < kSize; y++) {
-    for (uint8_t x = 0; x < kSize; x++) {
-      g.board_[y][x] = koRows[y][x];
-      g.previousBoard_[y][x] = '.';
-    }
-  }
-  g.toMove_ = 'B';
-  g.moveCount_ = 8;
-  g.consecutivePasses_ = 0;
-  g.blackCaptures_ = 0;
-  g.whiteCaptures_ = 0;
-  g.hasPreviousBoard_ = false;
-  g.lastCoach_ = "Ko fixture ready.";
-  LiteGoGame::MoveResult koCapture = g.play(2, 1);
-  LiteGoGame::MoveResult koRecapture = g.play(1, 1);
-  allOk &= selftestCheck(out, "ko capture legal",
-                         koCapture.status == kMoveOk && koCapture.captures == 1 &&
-                             g.blackCaptures() == 1);
-  allOk &= selftestCheck(out, "immediate ko recapture rejected", koRecapture.status == kMoveKo);
-
-  out.println(allOk ? F("[selftest] overall PASS") : F("[selftest] overall FAIL"));
-  return allOk;
+void LiteGoGame::reset() {
+  int16_t komi = board_.komiX2();
+  board_.reset();
+  board_.setKomiX2(komi);
+  undoDepth_ = 0;
+  aiThinking_ = false;
+  lastMoveX_ = -1;
+  lastMoveY_ = -1;
+  lastCoach_ = "Black moves first. Corners and sides are efficient on 9x9.";
 }
 
-void LiteGoGame::reset() {
-  for (uint8_t y = 0; y < kSize; y++) {
-    for (uint8_t x = 0; x < kSize; x++) {
-      board_[y][x] = '.';
-      previousBoard_[y][x] = '.';
+void LiteGoGame::setKomiX2(int16_t komiX2) { board_.setKomiX2(komiX2); }
+
+void LiteGoGame::setLevel(litego::Level level) {
+  level_ = level;
+  ai_.setConfig(litego::aiConfigForLevel(level));
+}
+
+void LiteGoGame::setHumanColor(char color) {
+  humanColor_ = (color == 'W' || color == 'w') ? 'W' : 'B';
+}
+
+void LiteGoGame::pushUndo(const litego::Snapshot &snapshot) {
+  if (undoDepth_ >= kMaxUndo) {
+    // Past the cap the oldest snapshot is dropped rather than refusing the
+    // move; a 9x9 game never gets here in practice.
+    for (uint16_t i = 1; i < kMaxUndo; i++) {
+      undoStack_[i - 1] = undoStack_[i];
     }
+    undoDepth_ = kMaxUndo - 1;
   }
-  toMove_ = 'B';
-  moveCount_ = 0;
-  consecutivePasses_ = 0;
-  blackCaptures_ = 0;
-  whiteCaptures_ = 0;
-  hasPreviousBoard_ = false;
-  lastCoach_ = "Black to move. Corners and sides are efficient on 9x9.";
+  undoStack_[undoDepth_++] = snapshot;
+}
+
+LiteGoGame::MoveResult LiteGoGame::toResult(const MoveInfo &info) const {
+  MoveResult r;
+  r.status = (MoveStatus)info.status;
+  r.player = colorChar(info.player);
+  r.x = info.point == kPass ? -1 : (int8_t)litego::pointX(info.point);
+  r.y = info.point == kPass ? -1 : (int8_t)litego::pointY(info.point);
+  r.captures = info.captures;
+  r.liberties = info.liberties;
+  r.ownAtariGroups = info.ownAtariGroups;
+  r.opponentAtariGroups = info.opponentAtariGroups;
+  for (uint8_t i = 0; i < info.captures && i < kPointCount; i++) {
+    r.capturedPoints[i] = info.capturedPoints[i];
+  }
+  return r;
+}
+
+void LiteGoGame::noteMove(const MoveResult &result) {
+  if (result.status == kMoveOk) {
+    lastMoveX_ = result.x;
+    lastMoveY_ = result.y;
+  } else if (result.status == kMovePass) {
+    lastMoveX_ = -1;
+    lastMoveY_ = -1;
+  }
+  lastCoach_ = buildCoach(result);
 }
 
 LiteGoGame::MoveResult LiteGoGame::play(int8_t x, int8_t y) {
-  char nextBoard[kSize][kSize];
-  MoveResult result = evaluateMove(toMove_, x, y, nextBoard);
-  if (result.status != kMoveOk) {
-    lastCoach_ = buildCoach(result);
-    return result;
+  MoveInfo info;
+  int16_t point = (x < 0 || y < 0 || x >= (int8_t)kSize || y >= (int8_t)kSize)
+                      ? (int16_t)kPointCount
+                      : litego::pointAt((uint8_t)x, (uint8_t)y);
+
+  litego::Snapshot before;
+  board_.save(before);
+  if (board_.play(point, info) == litego::kMoveOk) {
+    pushUndo(before);
   }
 
-  copyBoard(board_, previousBoard_);
-  hasPreviousBoard_ = true;
-  copyBoard(nextBoard, board_);
-
-  if (result.player == 'B') {
-    blackCaptures_ += result.captures;
-  } else {
-    whiteCaptures_ += result.captures;
+  MoveResult result = toResult(info);
+  // The engine reports out-of-range points as occupied-or-out-of-bounds off a
+  // clamped index; restore the caller's coordinates so the message reads right.
+  if (result.status == kMoveOutOfBounds) {
+    result.x = x;
+    result.y = y;
   }
-
-  moveCount_++;
-  consecutivePasses_ = 0;
-  toMove_ = opponent(toMove_);
-  lastCoach_ = buildCoach(result);
+  noteMove(result);
   return result;
-}
-
-LiteGoGame::MoveResult LiteGoGame::cpuMove() {
-  int8_t bestX = -1;
-  int8_t bestY = -1;
-  int16_t bestScore = -32768;
-
-  for (int8_t y = 0; y < (int8_t)kSize; y++) {
-    for (int8_t x = 0; x < (int8_t)kSize; x++) {
-      char nextBoard[kSize][kSize];
-      MoveResult candidate = evaluateMove(toMove_, x, y, nextBoard);
-      if (candidate.status != kMoveOk) {
-        continue;
-      }
-
-      int16_t centerBias = 8 - (abs(x - 4) + abs(y - 4));
-      int16_t score = centerBias;
-      score += (int16_t)candidate.captures * 60;
-      score += (int16_t)candidate.opponentAtariGroups * 18;
-      score += (int16_t)candidate.liberties * 5;
-      score -= (int16_t)candidate.ownAtariGroups * 12;
-      if (candidate.liberties <= 1) {
-        score -= 25;
-      }
-
-      if (score > bestScore) {
-        bestScore = score;
-        bestX = x;
-        bestY = y;
-      }
-    }
-  }
-
-  if (bestX < 0 || bestY < 0) {
-    MoveResult result = pass();
-    result.status = kMoveNoLegalMove;
-    lastCoach_ = "CPU found no legal board point and passed.";
-    return result;
-  }
-
-  return play(bestX, bestY);
 }
 
 LiteGoGame::MoveResult LiteGoGame::pass() {
-  MoveResult result;
-  result.status = kMovePass;
-  result.player = toMove_;
-  result.x = -1;
-  result.y = -1;
-  result.captures = 0;
-  result.liberties = 0;
-  result.ownAtariGroups = countAtariGroups(board_, toMove_);
-  result.opponentAtariGroups = countAtariGroups(board_, opponent(toMove_));
-
-  copyBoard(board_, previousBoard_);
-  hasPreviousBoard_ = true;
-  moveCount_++;
-  consecutivePasses_++;
-  toMove_ = opponent(toMove_);
-  lastCoach_ = buildCoach(result);
+  litego::Snapshot before;
+  board_.save(before);
+  MoveInfo info;
+  if (board_.pass(info) == litego::kMovePass) {
+    pushUndo(before);
+  }
+  MoveResult result = toResult(info);
+  noteMove(result);
   return result;
 }
 
-char LiteGoGame::currentPlayer() const {
-  return toMove_;
+void LiteGoGame::resign() {
+  // Always the human's colour, never "whoever is to move": RESIGN is pressed by
+  // the person holding the panel, and during the opponent's turn the side to
+  // move is the opponent - resigning them would hand the human a win.
+  litego::Color who = humanColor_ == 'W' ? kWhite : kBlack;
+  litego::Snapshot before;
+  board_.save(before);
+  board_.resign(who);
+  if (board_.finished()) {
+    pushUndo(before);  // so undo can take back a mis-tap on RESIGN
+  }
+  lastCoach_ = String(colorChar(who)) + " resigned. " + resultText() + ".";
 }
+
+bool LiteGoGame::undo() {
+  if (undoDepth_ == 0) {
+    return false;
+  }
+  aiThinking_ = false;
+  board_.restore(undoStack_[--undoDepth_]);
+
+  // If that landed on the AI's turn, roll back one more so the human gets
+  // their own move back rather than handing the AI a free replay.
+  if (undoDepth_ > 0 && currentPlayer() != humanColor_) {
+    board_.restore(undoStack_[--undoDepth_]);
+  }
+
+  int16_t last = board_.lastMovePoint();
+  lastMoveX_ = last == kPass ? -1 : (int8_t)litego::pointX(last);
+  lastMoveY_ = last == kPass ? -1 : (int8_t)litego::pointY(last);
+  lastCoach_ = String("Took back to move ") + String(board_.moveCount()) + ". " +
+               String(currentPlayer()) + " to play.";
+  return true;
+}
+
+void LiteGoGame::startAiTurn() {
+  if (board_.finished()) {
+    aiThinking_ = false;
+    return;
+  }
+  ai_.start(board_);
+  aiThinking_ = true;
+}
+
+bool LiteGoGame::tickAi(uint32_t sliceMs) {
+  if (!aiThinking_) {
+    return true;
+  }
+  if (!ai_.step(sliceMs)) {
+    return false;
+  }
+  aiThinking_ = false;
+  return true;
+}
+
+LiteGoGame::MoveResult LiteGoGame::takeAiMove() {
+  int16_t move = ai_.bestMove();
+  if (move == kPass) {
+    return pass();
+  }
+  return play((int8_t)litego::pointX(move), (int8_t)litego::pointY(move));
+}
+
+LiteGoGame::MoveResult LiteGoGame::cpuMoveBlocking() {
+  startAiTurn();
+  while (!tickAi(50)) {
+  }
+  return takeAiMove();
+}
+
+char LiteGoGame::currentPlayer() const { return colorChar(board_.toMove()); }
 
 char LiteGoGame::at(uint8_t x, uint8_t y) const {
   if (x >= kSize || y >= kSize) {
     return '.';
   }
-  return board_[y][x];
-}
-
-uint16_t LiteGoGame::moveCount() const {
-  return moveCount_;
-}
-
-uint8_t LiteGoGame::consecutivePasses() const {
-  return consecutivePasses_;
-}
-
-uint8_t LiteGoGame::blackCaptures() const {
-  return blackCaptures_;
-}
-
-uint8_t LiteGoGame::whiteCaptures() const {
-  return whiteCaptures_;
-}
-
-bool LiteGoGame::gameEndedByPasses() const {
-  return consecutivePasses_ >= 2;
+  return colorChar(board_.at(x, y));
 }
 
 String LiteGoGame::boardRow(uint8_t y) const {
@@ -234,29 +231,9 @@ String LiteGoGame::boardRow(uint8_t y) const {
   }
   row.reserve(kSize);
   for (uint8_t x = 0; x < kSize; x++) {
-    row += board_[y][x];
+    row += at(x, y);
   }
   return row;
-}
-
-String LiteGoGame::lastCoach() const {
-  return lastCoach_;
-}
-
-String LiteGoGame::describeMove(const MoveResult &result) const {
-  if (result.status == kMoveOk) {
-    String text = String(result.player) + " at " + String(result.x) + "," + String(result.y);
-    text += " captures=" + String(result.captures);
-    text += " libs=" + String(result.liberties);
-    return text;
-  }
-  if (result.status == kMovePass) {
-    return String(result.player) + " passed";
-  }
-  if (result.status == kMoveNoLegalMove) {
-    return String(result.player) + " passed: no legal moves";
-  }
-  return String("illegal: ") + describeStatus(result.status);
 }
 
 String LiteGoGame::describeStatus(MoveStatus status) const {
@@ -272,310 +249,66 @@ String LiteGoGame::describeStatus(MoveStatus status) const {
     case kMoveSuicide:
       return "suicide is not legal";
     case kMoveKo:
-      return "simple ko recapture";
-    case kMoveNoLegalMove:
-      return "no legal moves";
+      return "ko: that repeats a previous position";
+    case kMoveGameOver:
+      return "game is over";
   }
   return "unknown";
 }
 
+String LiteGoGame::describeMove(const MoveResult &result) const {
+  if (result.status == kMoveOk) {
+    String text = String(result.player) + " at " + String(result.x) + "," + String(result.y);
+    text += " captures=" + String(result.captures);
+    text += " libs=" + String(result.liberties);
+    return text;
+  }
+  if (result.status == kMovePass) {
+    return String(result.player) + " passed";
+  }
+  return String("illegal: ") + describeStatus(result.status);
+}
+
 String LiteGoGame::scoreSummary() const {
-  ScoreEstimate score = estimateScore();
+  ScoreEstimate s = estimateScore();
   String text = "B ";
-  text += String(score.blackArea);
+  text += String(s.blackArea);
   text += " W ";
-  text += String(score.whiteArea);
-  text += " margin ";
-  text += String(score.margin);
+  text += String(s.whiteArea);
+  text += " komi ";
+  text += halfPoints(s.komiX2);
+  text += " -> ";
+  text += resultText();
   return text;
 }
 
-LiteGoGame::ScoreEstimate LiteGoGame::estimateScore() const {
-  ScoreEstimate score;
-  score.blackStones = 0;
-  score.whiteStones = 0;
-  score.blackTerritory = 0;
-  score.whiteTerritory = 0;
-  score.neutralPoints = 0;
-  score.blackCaptures = blackCaptures_;
-  score.whiteCaptures = whiteCaptures_;
-  score.blackArea = 0;
-  score.whiteArea = 0;
-  score.margin = 0;
+String LiteGoGame::komiText() const { return halfPoints(board_.komiX2()); }
 
-  bool visited[kSize][kSize];
-  clearMarks(visited);
-
-  for (uint8_t y = 0; y < kSize; y++) {
-    for (uint8_t x = 0; x < kSize; x++) {
-      if (board_[y][x] == 'B') {
-        score.blackStones++;
-      } else if (board_[y][x] == 'W') {
-        score.whiteStones++;
-      }
-    }
+String LiteGoGame::resultText() const {
+  if (board_.state() == litego::kFinishedByResign) {
+    // The resigning side loses, so the winner is the other colour.
+    return String(board_.resignedBy() == kBlack ? 'W' : 'B') + "+R";
   }
-
-  for (uint8_t startY = 0; startY < kSize; startY++) {
-    for (uint8_t startX = 0; startX < kSize; startX++) {
-      if (board_[startY][startX] != '.' || visited[startY][startX]) {
-        continue;
-      }
-
-      int8_t stackX[kPointCount];
-      int8_t stackY[kPointCount];
-      uint8_t top = 0;
-      uint8_t region = 0;
-      bool touchesBlack = false;
-      bool touchesWhite = false;
-
-      stackX[top] = startX;
-      stackY[top] = startY;
-      top++;
-      visited[startY][startX] = true;
-
-      while (top > 0) {
-        top--;
-        int8_t x = stackX[top];
-        int8_t y = stackY[top];
-        region++;
-
-        for (uint8_t i = 0; i < 4; i++) {
-          int8_t nx = x + kDirs[i][0];
-          int8_t ny = y + kDirs[i][1];
-          if (!inBounds(nx, ny)) {
-            continue;
-          }
-          char neighbor = board_[ny][nx];
-          if (neighbor == 'B') {
-            touchesBlack = true;
-          } else if (neighbor == 'W') {
-            touchesWhite = true;
-          } else if (!visited[ny][nx]) {
-            visited[ny][nx] = true;
-            stackX[top] = nx;
-            stackY[top] = ny;
-            top++;
-          }
-        }
-      }
-
-      if (touchesBlack && !touchesWhite) {
-        score.blackTerritory += region;
-      } else if (touchesWhite && !touchesBlack) {
-        score.whiteTerritory += region;
-      } else {
-        score.neutralPoints += region;
-      }
-    }
+  int16_t marginX2 = estimateScore().marginX2;
+  if (marginX2 == 0) {
+    return "draw";
   }
-
-  score.blackArea = score.blackStones + score.blackTerritory;
-  score.whiteArea = score.whiteStones + score.whiteTerritory;
-  score.margin = score.blackArea - score.whiteArea;
-  return score;
-}
-
-bool LiteGoGame::inBounds(int8_t x, int8_t y) const {
-  return x >= 0 && x < (int8_t)kSize && y >= 0 && y < (int8_t)kSize;
-}
-
-char LiteGoGame::opponent(char player) const {
-  return player == 'B' ? 'W' : 'B';
-}
-
-void LiteGoGame::copyBoard(const char source[kSize][kSize], char target[kSize][kSize]) const {
-  for (uint8_t y = 0; y < kSize; y++) {
-    for (uint8_t x = 0; x < kSize; x++) {
-      target[y][x] = source[y][x];
-    }
-  }
-}
-
-bool LiteGoGame::sameBoard(const char left[kSize][kSize], const char right[kSize][kSize]) const {
-  for (uint8_t y = 0; y < kSize; y++) {
-    for (uint8_t x = 0; x < kSize; x++) {
-      if (left[y][x] != right[y][x]) {
-        return false;
-      }
-    }
-  }
-  return true;
-}
-
-void LiteGoGame::clearMarks(bool marks[kSize][kSize]) const {
-  for (uint8_t y = 0; y < kSize; y++) {
-    for (uint8_t x = 0; x < kSize; x++) {
-      marks[y][x] = false;
-    }
-  }
-}
-
-LiteGoGame::GroupInfo LiteGoGame::markGroup(const char board[kSize][kSize], int8_t x,
-                                            int8_t y, bool marks[kSize][kSize]) const {
-  GroupInfo info;
-  info.stones = 0;
-  info.liberties = 0;
-
-  if (!inBounds(x, y) || board[y][x] == '.') {
-    return info;
-  }
-
-  bool libertyMarks[kSize][kSize];
-  clearMarks(libertyMarks);
-
-  char color = board[y][x];
-  int8_t stackX[kPointCount];
-  int8_t stackY[kPointCount];
-  uint8_t top = 0;
-
-  stackX[top] = x;
-  stackY[top] = y;
-  top++;
-  marks[y][x] = true;
-
-  while (top > 0) {
-    top--;
-    int8_t cx = stackX[top];
-    int8_t cy = stackY[top];
-    info.stones++;
-
-    for (uint8_t i = 0; i < 4; i++) {
-      int8_t nx = cx + kDirs[i][0];
-      int8_t ny = cy + kDirs[i][1];
-      if (!inBounds(nx, ny)) {
-        continue;
-      }
-      if (board[ny][nx] == '.') {
-        if (!libertyMarks[ny][nx]) {
-          libertyMarks[ny][nx] = true;
-          info.liberties++;
-        }
-      } else if (board[ny][nx] == color && !marks[ny][nx]) {
-        marks[ny][nx] = true;
-        stackX[top] = nx;
-        stackY[top] = ny;
-        top++;
-      }
-    }
-  }
-
-  return info;
-}
-
-uint8_t LiteGoGame::removeMarked(char board[kSize][kSize], const bool marks[kSize][kSize]) const {
-  uint8_t removed = 0;
-  for (uint8_t y = 0; y < kSize; y++) {
-    for (uint8_t x = 0; x < kSize; x++) {
-      if (marks[y][x]) {
-        board[y][x] = '.';
-        removed++;
-      }
-    }
-  }
-  return removed;
-}
-
-uint8_t LiteGoGame::countAtariGroups(const char board[kSize][kSize], char player) const {
-  bool visited[kSize][kSize];
-  clearMarks(visited);
-  uint8_t atariGroups = 0;
-
-  for (uint8_t y = 0; y < kSize; y++) {
-    for (uint8_t x = 0; x < kSize; x++) {
-      if (board[y][x] != player || visited[y][x]) {
-        continue;
-      }
-      bool groupMarks[kSize][kSize];
-      clearMarks(groupMarks);
-      GroupInfo info = markGroup(board, x, y, groupMarks);
-      for (uint8_t gy = 0; gy < kSize; gy++) {
-        for (uint8_t gx = 0; gx < kSize; gx++) {
-          if (groupMarks[gy][gx]) {
-            visited[gy][gx] = true;
-          }
-        }
-      }
-      if (info.liberties == 1) {
-        atariGroups++;
-      }
-    }
-  }
-
-  return atariGroups;
-}
-
-LiteGoGame::MoveResult LiteGoGame::evaluateMove(char player, int8_t x, int8_t y,
-                                                char nextBoard[kSize][kSize]) const {
-  MoveResult result;
-  result.status = kMoveOk;
-  result.player = player;
-  result.x = x;
-  result.y = y;
-  result.captures = 0;
-  result.liberties = 0;
-  result.ownAtariGroups = 0;
-  result.opponentAtariGroups = 0;
-
-  copyBoard(board_, nextBoard);
-
-  if (!inBounds(x, y)) {
-    result.status = kMoveOutOfBounds;
-    return result;
-  }
-  if (board_[y][x] != '.') {
-    result.status = kMoveOccupied;
-    return result;
-  }
-
-  nextBoard[y][x] = player;
-  char other = opponent(player);
-
-  for (uint8_t i = 0; i < 4; i++) {
-    int8_t nx = x + kDirs[i][0];
-    int8_t ny = y + kDirs[i][1];
-    if (!inBounds(nx, ny) || nextBoard[ny][nx] != other) {
-      continue;
-    }
-
-    bool opponentMarks[kSize][kSize];
-    clearMarks(opponentMarks);
-    GroupInfo opponentInfo = markGroup(nextBoard, nx, ny, opponentMarks);
-    if (opponentInfo.liberties == 0) {
-      result.captures += removeMarked(nextBoard, opponentMarks);
-    }
-  }
-
-  bool ownMarks[kSize][kSize];
-  clearMarks(ownMarks);
-  GroupInfo ownInfo = markGroup(nextBoard, x, y, ownMarks);
-  result.liberties = ownInfo.liberties;
-  if (ownInfo.liberties == 0) {
-    result.status = kMoveSuicide;
-    return result;
-  }
-
-  if (hasPreviousBoard_ && sameBoard(nextBoard, previousBoard_)) {
-    result.status = kMoveKo;
-    return result;
-  }
-
-  result.ownAtariGroups = countAtariGroups(nextBoard, player);
-  result.opponentAtariGroups = countAtariGroups(nextBoard, other);
-  return result;
+  return String(marginX2 > 0 ? 'B' : 'W') + "+" + halfPoints(marginX2 > 0 ? marginX2 : -marginX2);
 }
 
 String LiteGoGame::buildCoach(const MoveResult &result) const {
   if (result.status == kMovePass) {
     String text = String(result.player) + " passed. ";
-    text += consecutivePasses_ >= 2 ? "Two consecutive passes have ended the review." : "Next pass ends the review.";
+    text += board_.finished() ? "Both players passed, so the game is scored: " + resultText() + "."
+                              : "Another pass ends the game.";
     return text;
   }
-  if (result.status == kMoveNoLegalMove) {
-    return "No legal board point found. Passing is the correct fallback.";
+  if (result.status == kMoveGameOver) {
+    return "The game is over. Tap NEW GAME to play again.";
   }
   if (result.status != kMoveOk) {
-    return String("Rejected: ") + describeStatus(result.status) + ". Try an empty point with liberties or a capture.";
+    return String("Rejected: ") + describeStatus(result.status) +
+           ". Pick an empty point that keeps a liberty, or capture.";
   }
 
   String text = String(result.player) + " played " + String(result.x) + "," + String(result.y);
@@ -586,13 +319,121 @@ String LiteGoGame::buildCoach(const MoveResult &result) const {
   if (result.liberties == 1 || result.ownAtariGroups > 0) {
     text += " Your stones are in atari; connect, extend, or capture.";
   } else if (result.opponentAtariGroups > 0) {
-    text += " Opponent has " + String(result.opponentAtariGroups) + " atari group";
+    text += " Opponent has " + String(result.opponentAtariGroups) + " group";
     if (result.opponentAtariGroups != 1) {
       text += "s";
     }
-    text += ".";
+    text += " in atari.";
   } else {
     text += " Shape is stable for now.";
   }
   return text;
+}
+
+bool LiteGoGame::runSelfTest(Print &out) {
+  litego::TestReport report;
+  report.emit = emitToPrint;
+  report.context = &out;
+  report.passed = 0;
+  report.failed = 0;
+  bool rulesOk = litego::runRulesFixtures(report);
+
+  // AI hygiene: a short game must stay legal, must never fill its own eye, and
+  // must terminate. This is the on-device half of the host harness's check.
+  //
+  // Heap, not stack: a GoAi carries two boards and their superko rings, so the
+  // pair below is about 16 KB - twice the Arduino loop task's stack.
+  litego::GoBoard *boardPtr = new litego::GoBoard();
+  litego::GoAi *aiPtr = new litego::GoAi();
+  if (boardPtr == nullptr || aiPtr == nullptr) {
+    delete boardPtr;
+    delete aiPtr;
+    out.println(F("[selftest] ai hygiene SKIPPED (out of memory)"));
+    out.println(rulesOk ? F("[selftest] overall PASS") : F("[selftest] overall FAIL"));
+    return rulesOk;
+  }
+  litego::GoBoard &board = *boardPtr;
+  litego::GoAi &ai = *aiPtr;
+
+  litego::AiConfig cfg = litego::aiConfigForLevel(litego::kLevelNormal);
+  cfg.maxPlayouts = 120;
+  cfg.budgetMs = 40;
+  ai.begin(cfg, 0x1234ABCDu);
+
+  bool legal = true;
+  bool noEyeFill = true;
+  uint16_t plies = 0;
+  const uint16_t kCap = 4 * litego::kPointCount;
+  MoveInfo info;
+  while (!board.finished() && plies < kCap) {
+    ai.start(board);
+    while (!ai.step(20)) {
+    }
+    int16_t move = ai.bestMove();
+    if (move == kPass) {
+      board.pass(info);
+    } else {
+      if (board.isTrueEye(move, board.toMove())) {
+        noEyeFill = false;
+      }
+      if (board.play(move, info, false) != litego::kMoveOk) {
+        legal = false;
+        break;
+      }
+    }
+    plies++;
+  }
+  bool terminated = plies < kCap;
+  delete boardPtr;
+  delete aiPtr;
+
+  out.println(legal ? F("[selftest] ai plays only legal moves       PASS")
+                    : F("[selftest] ai plays only legal moves       FAIL"));
+  out.println(noEyeFill ? F("[selftest] ai never fills its own eye      PASS")
+                        : F("[selftest] ai never fills its own eye      FAIL"));
+  out.println(terminated ? F("[selftest] ai self-play terminates         PASS")
+                         : F("[selftest] ai self-play terminates         FAIL"));
+
+  bool allOk = rulesOk && legal && noEyeFill && terminated;
+  out.println(allOk ? F("[selftest] overall PASS") : F("[selftest] overall FAIL"));
+  return allOk;
+}
+
+uint32_t LiteGoGame::benchmark(Print &out, uint32_t milliseconds) {
+  // Reuses the session's own searcher rather than putting an 11 KB GoAi on the
+  // stack. The caller must have abandoned any in-flight turn first; the level
+  // config is restored on the way out.
+  aiThinking_ = false;
+  litego::AiConfig cfg = litego::aiConfigForLevel(litego::kLevelHard);
+  cfg.maxPlayouts = 0xFFFFFFFFu;
+  cfg.budgetMs = milliseconds;
+  litego::GoAi &ai = ai_;
+  ai.setConfig(cfg);
+
+  uint32_t start = millis();
+  ai.start(board_);
+  while (!ai.step(milliseconds)) {
+  }
+  uint32_t elapsed = millis() - start;
+  ai_.setConfig(litego::aiConfigForLevel(level_));
+  if (elapsed == 0) {
+    elapsed = 1;
+  }
+  uint32_t rate = ai.playouts() * 1000UL / elapsed;
+
+  if (ai.playouts() == 0) {
+    // The searcher short-circuits when the game is over or the position has no
+    // legal non-eye points, so there is nothing to measure from here.
+    out.println(F("[bench] no playouts: the position has no searchable moves. "
+                  "Run bench during a live game."));
+    return 0;
+  }
+
+  out.println(String("[bench] ") + String(ai.playouts()) + " playouts in " + String(elapsed) +
+              " ms = " + String(rate) + " playouts/sec");
+  out.println(String("[bench] candidates=") + String(ai.candidateCount()) + " move=" +
+              String(board_.moveCount()) + " level budgets: normal=" +
+              String(litego::aiConfigForLevel(litego::kLevelNormal).budgetMs) + "ms hard=" +
+              String(litego::aiConfigForLevel(litego::kLevelHard).budgetMs) + "ms");
+  return rate;
 }

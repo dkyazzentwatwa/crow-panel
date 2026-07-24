@@ -18,6 +18,7 @@ secrets.h
 Secrets.h
 **/config/WiFiSecrets.h
 **/config/Pins.h
+**/config/LabProfile.h
 **/config/Devices.h
 **/config/Location.h
 

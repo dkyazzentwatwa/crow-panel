@@ -1,89 +1,50 @@
-# 15 - Pokedex Panel
+# Pokedex Panel
 
-An offline Pokedex-style CrowPanel port of the local
-`/Users/cypher/Documents/GitHub/esp32-pokedex` Cardputer app. The original app
-uses a keyboard, small screen, audio, and MicroSD catalog; this port makes it a
-large 1024x600 touch dashboard with Serial commands and an SD-backed catalog path
-behind a feature flag.
+An offline creature field guide for the Elecrow CrowPanel Advanced 7-inch
+display.
 
-## What it shows
+Browse or search a catalog on the left and get a large detail card on the right:
+generated Poke Ball art, type chips, stats, buddy distance, and second-move dust,
+plus extra pages for trainer notes, weaknesses, resistances, evolution, and
+moves. It ships with a built-in catalog, so it is useful the moment it boots with
+no SD card present.
 
-- A browse/search result list on the left.
-- A large detail card with generated Poke Ball art, type chips, GO stats, buddy
-  distance, and second-move dust.
-- Detail pages for trainer note, weaknesses, resistances, evolution, and moves.
-- Mock catalog entries by default, so the app is useful with no SD card.
-- Optional SD catalog streaming from the original `esp32-pokedex` layout.
+This is a touch rebuild of a Cardputer app that ran on a keyboard and a small
+screen; here it becomes a 1024x600 touch dashboard.
 
-The display is Arduino_GFX only, matching the rest of this repo. Sprite BMP
-rendering and Cardputer audio are not ported yet.
+> This is Project 15 in the [CrowPanel Arduino suite](../../README.md).
 
-## Serial Commands
+## Status
 
-| Command | Description |
-|---|---|
-| `status` | uptime, heap, flags, source mode, catalog state |
-| `browse [start]` | show 8 catalog rows starting at `start` |
-| `search <query>` | search name, dex number, type, or variant text |
-| `rows` | print the current result/browse rows |
-| `select <row>` | highlight a visible row |
-| `open` | open the selected row |
-| `open row <n>` | open visible row `n` |
-| `open <query>` | search and open the first match |
-| `page [next\|prev\|1-5]` | move through detail pages |
-| `demo` | search `mega` and open the first dramatic card |
-| `source` | show the source repo path and SD layout |
+Compile-ready across the baseline, display, SD, and display-plus-SD builds.
+Nothing has been uploaded or observed on a physical CrowPanel: the SD_MMC mount,
+the touch coordinates, and full-card JSON browsing all still need captured
+evidence. See the [technical reference](TECHNICAL.md).
 
-Useful searches:
+## What you get
 
-```text
-search pikachu
-search mega
-search electric
-open mewtwo
-open row 2
-```
+- A browse and search list covering names, dex numbers, types, and variants
+- A large detail card with generated art and type chips
+- Five detail pages per entry, paged by touch or by command
+- Touch controls: tap a row to open it, `LIST` to go back, `PAGE -` / `PAGE +`
+  to move through pages, `PREV` / `NEXT` to page the list
+- An offline mock catalog compiled into the sketch
+- Optional SD catalog streaming from the original project's card layout
 
-## Touch Controls
+## Not yet ported
 
-- Tap a visible row to open it.
-- Tap `LIST` to return from a detail page.
-- Tap `PAGE -` / `PAGE +` or the right detail panel to move through detail pages.
-- Tap `PREV` / `NEXT` on the list screen to page through browse rows.
+Sprite BMP rendering and the original Cardputer audio. The display here is
+Arduino_GFX only, matching the rest of this repo, and the SD path reads the
+catalog index and detail JSON but not the sprites or audio files.
 
-## SD Catalog Mode
+## Source boundary
 
-Default builds use the built-in mock catalog. To try the full source catalog,
-copy the contents of the `esp32-pokedex/sd/` folder to the root of the card:
+This is a local, offline educational field guide built on generated data from the
+source project. It does not connect to Pokémon GO, scrape accounts, or use any
+game service, and it is not affiliated with or endorsed by the rights holders.
 
-```text
-/pokemon/index.csv
-/pokemon/catalog_meta.json
-/pokemon/data/*.json
-/pokemon/sprites/*.bmp
-/config/settings.json
-/audio/...
-```
+## Technical reference
 
-Then compile with:
-
-```bash
-CTAGS_WORKAROUND=1 EXTRA_FLAGS="-DUSE_DISPLAY=1 -DUSE_SD_POKEDEX=1" ./scripts/compile-all.sh
-```
-
-The port reads `/pokemon/index.csv` and `/pokemon/data/*.json`. It does not read
-sprites or audio yet.
-
-## Proof State
-
-- `compile-ready`: baseline, display, SD, and display+SD flag rows are intended
-  to compile through the repo matrix.
-- `uploaded`: not yet proven for this project.
-- `field-proven`: not yet proven. SD_MMC mount, touch coordinates, and full-card
-  JSON browsing still need captured Serial/display evidence on the actual panel.
-
-## Source Boundary
-
-This is a local educational field guide. It uses generated offline data from the
-source project and does not connect to Pokemon GO, scrape accounts, or use game
-services.
+For installation, build flags, configuration, upload commands, device details,
+file layout, troubleshooting, safety boundaries, and proof terminology, see
+[TECHNICAL.md](TECHNICAL.md).

@@ -1,69 +1,56 @@
-# CrowPanel FieldOps Control Center
+# FieldOps Control Center
 
-LoRa-powered AIoT dashboard concept for remote field sensors on the CrowPanel Advanced 7-inch ESP32-P4 display.
+A remote-sensor operations dashboard for the Elecrow CrowPanel Advanced 7-inch
+display.
 
-Default mode is a Serial-only mock demo:
+It gives you a touch dashboard with four screens — a tappable roster of field
+nodes, a per-node detail view with ring gauges and a temperature sparkline, a
+warning/critical alert stream you acknowledge with a tap, and a paged event log.
+A tab bar switches screens; tap a node card to pin it, tap an alert to clear it.
+Out of the box it runs entirely on simulated packets, so you can explore the
+whole interface with no radio module, no gateway, and no network — and every
+touch control has a matching serial command.
 
-- Generates fake LoRa sensor packets every few seconds
-- Prints dashboard card updates
-- Simulates warning and critical alerts
-- Logs field events
-- Produces AI-style summaries through a mock client
+> This is Project 1 in the [CrowPanel Arduino suite](../../README.md).
 
-## Core Screens
+## Status
 
-- Dashboard
-- Node Detail
-- Alerts
-- AI Summary
-- Settings
+This project is compile-verified only: it builds green for the real ESP32-P4
+target, but no part of it has been observed running on a physical CrowPanel yet.
+The LoRa and ESP-NOW paths in particular are scaffolds waiting for a bring-up
+session. See the [technical reference](TECHNICAL.md) for the exact proof
+boundaries and the staged bring-up order.
 
-## Serial Commands
+## What you get
 
-115200 baud, line ending **Newline**:
+- **Roster** — a 2×3 grid of node cards with temperature, humidity, battery, and signal; tap a card to pin it
+- **Detail** — battery/temperature/humidity ring gauges and a temperature-trend sparkline for the pinned node
+- **Alerts** — warning and critical alerts driven by real thresholds, not canned text; tap a row to acknowledge it
+- **Log** — a scrollable rolling event log with paging controls
+- Serial parity for every touch action, plus a `selftest` that drives the whole flow with no panel attached
+- Mock AI shift summaries through a swappable client, and an offline demo that generates sensor traffic every few seconds
 
-- `help` / `status` / `history` — shared commands
-- `inject [node 0-3] [tempC] [batteryPct]` — simulate a packet through the same pipeline the mock and real drivers use. `inject 1 40 12` fires TEMP_WARNING and LOW_BATTERY on demand.
-- `feed <csv>` — inject a raw ESP-NOW bridge frame (bench-test the ESP-NOW path with no radio). `feed SENSOR,ATTIC,29.5,40,88,0,-58` adds a telemetry node; `feed PRESENCE,CYPHER_NODE,-70,chat` adds a presence tile.
+## Two ways to get real data in
 
-## Compile
+- **LoRa** — an SX1262 module driven by RadioLib, using Elecrow's Lesson13 radio
+  parameters (915 MHz by default; EU boards override to 868).
+- **ESP-NOW** — a spare ESP32 runs the radio and bridges frames to the panel over
+  UART, because the P4 has no radio of its own. Sensor nodes appear as telemetry
+  cards and chat nodes as presence tiles. See
+  [`espnow/README.md`](../../espnow/README.md).
 
-```sh
-../../scripts/compile-all.sh
-```
+Both are off by default and share the exact same code path as the mock source, so
+a demo you filmed offline behaves identically once the hardware is attached.
 
-The default FQBN targets the real ESP32-P4 (see the root README). Everything is compile-verified; nothing is hardware-verified until it runs on your CrowPanel.
+## Responsible use
 
-## Upload
+This project receives and displays sensor telemetry. It does not transmit on the
+LoRa band, join networks, or capture credentials. Keep your radio parameters
+legal for your region — the 915 MHz default is not licence-free everywhere — and
+keep the files holding your Wi-Fi password and pin assignments out of Git.
 
-```sh
-arduino-cli board list
-../../scripts/upload-project.sh projects/01-fieldops-control-center /dev/cu.usbmodem101
-```
+## Technical reference
 
-## LoRa / SX1262
-
-A real RadioLib SX1262 scaffold lives in `src/LoRaGateway.cpp` behind `USE_LORA_DRIVER` — compile-verified, not hardware-verified. Pins come from the active `HardwareProfile`; radio parameters mirror Elecrow's Lesson13 example (915 MHz default — EU boards must override to 868 in `config/Pins.h`, copied from `Pins.example.h`).
-
-Enable it only per `docs/hardware-bringup-checklist.md` Stage 6:
-
-1. Confirm the board revision (Stage 2) — the V1.2 wireless pin remap is unverified upstream.
-2. Fit the SX1262 module and an antenna.
-3. Build with `EXTRA_FLAGS="-DUSE_LORA_DRIVER=1"`.
-4. Have a second device transmitting (Elecrow's Lesson13 TX example).
-
-## ESP-NOW
-
-An alternative transport (`USE_ESPNOW`) feeds the same dashboard from an ESP-NOW mesh of plain ESP32s — sensor nodes plus cypher-chat chat nodes. The ESP32-P4 can't be an ESP-NOW peer (WiFi is remote on the C6), so a spare ESP32 runs the radio and bridges to the panel over UART. The dashboard shows sensor nodes with telemetry and chat nodes as presence tiles; tap a node to pin it. Full architecture, wiring, and flashing: [`espnow/README.md`](../../espnow/README.md).
-
-```sh
-CTAGS_WORKAROUND=1 EXTRA_FLAGS="-DUSE_ESPNOW=1 -DUSE_DISPLAY=1" \
-  ../../scripts/upload-project.sh projects/01-fieldops-control-center <PORT>
-```
-
-## What To Film
-
-- Serial boot log showing `CROWPANEL_P4_7IN_V1_2`.
-- Mock packets turning into dashboard rows.
-- `inject 1 40 12` firing LOW_BATTERY live, then `history` replaying the event log.
-- The hardware profile warning explaining why pins are revision-aware.
+For installation, build flags, configuration, upload commands, device details,
+file layout, troubleshooting, safety boundaries, and proof terminology, see
+[TECHNICAL.md](TECHNICAL.md).

@@ -128,11 +128,28 @@ void onRegister(const ControlDevice &device) {
 
 // --- Outbound: command a device and reflect the new state on the dashboard.
 void applyDeviceState(const String &id, bool on) {
-  if (!devices.setPin(id, on)) return;
+  bool ok = devices.setPin(id, on);
   ControlDevice *dev = devices.find(id);
+  // Reflect the (possibly unchanged, on failure) state back onto the dashboard
+  // so the detail screen's "last command / result" trail resolves either way.
   if (dev != nullptr) ui.renderDevice(*dev);
+  if (!ok) {
+    ui.renderEvent(id + " command failed");
+    return;
+  }
   eventLog.add(id + (on ? " ON" : " OFF"));
   ui.renderEvent(id + (on ? " -> ON" : " -> OFF"));
+}
+
+// --- World feeds: pull the latest snapshot and paint the World screen. Shared
+// by the `world` command and the on-screen REFRESH button.
+void refreshWorld(const String &which) {
+  String w = which;
+  w.trim();
+  if (w.length() == 0) w = "all";
+  if (world.refresh(worldFeeds, w)) {
+    ui.renderWorld(worldFeeds);
+  }
 }
 
 // --- Serial commands ---
@@ -193,9 +210,116 @@ void cmdWorld(const String &args) {
   which.trim();
   if (which.length() == 0) which = "all";
   Logger::info("cmd", "world refresh " + which);
-  if (world.refresh(worldFeeds, which)) {
-    ui.renderWorld(worldFeeds);
+  refreshWorld(which);
+}
+
+void cmdTouch(const String &) {
+  ui.printTouch(Serial);
+}
+
+void cmdScreen(const String &args) {
+  String name = args;
+  name.trim();
+  if (name.length() == 0) {
+    Serial.print(F("[screen] current="));
+    Serial.println(ui.screenName());
+    Serial.println(F("[screen] usage: screen <devices|detail|sensors|world|events>"));
+    return;
   }
+  if (ui.selectScreen(name)) {
+    Serial.print(F("[screen] -> "));
+    Serial.println(ui.screenName());
+  } else {
+    Logger::warn("cmd", "unknown screen " + name +
+                            " (devices|detail|sensors|world|events)");
+  }
+}
+
+void cmdSensor(const String &args) {
+  String name = args;
+  name.trim();
+  if (name.length() == 0) {
+    Serial.println(F("[sensor] usage: sensor <nodeName> - pin a node into the gauges"));
+    Serial.print(F("[sensor] on screen "));
+    Serial.println(ui.screenName());
+    return;
+  }
+  if (ui.selectSensor(name)) {
+    Serial.print(F("[sensor] pinned "));
+    Serial.println(name);
+  } else {
+    Logger::warn("cmd", "no live sensor '" + name +
+                            "' to pin (display build only; feed one first)");
+  }
+}
+
+// End-to-end mock flow check: drives the real app objects (DeviceController,
+// the sensor pipeline, and the world feeds) headlessly and prints PASS/FAIL
+// lines. Works with no panel attached - it exercises logic, not the display.
+void cmdSelfTest(const String &) {
+  uint8_t pass = 0, fail = 0;
+  auto check = [&](const char *name, bool ok) {
+    char line[80];
+    snprintf(line, sizeof(line), "[selftest] %-38s %s", name, ok ? "PASS" : "FAIL");
+    Serial.println(line);
+    if (ok) pass++; else fail++;
+  };
+
+  // 1) A device is seeded and controllable through the same path touch uses.
+  bool haveDevice = devices.count() > 0;
+  check("device registry seeded", haveDevice);
+
+  if (haveDevice) {
+    const String id = devices.at(0).deviceId;
+    applyDeviceState(id, true);
+    ControlDevice *d = devices.find(id);
+    check("device ON commanded", d != nullptr && d->state);
+    applyDeviceState(id, false);
+    d = devices.find(id);
+    check("device OFF commanded", d != nullptr && !d->state);
+    bool before = d != nullptr && d->state;
+    applyDeviceState(id, !before);  // toggle
+    d = devices.find(id);
+    check("device TOGGLE flips state", d != nullptr && d->state != before);
+  } else {
+    check("device ON commanded", false);
+    check("device OFF commanded", false);
+    check("device TOGGLE flips state", false);
+  }
+
+  // 2) A telemetry frame parses and drives the inbound pipeline.
+  uint32_t eventsBefore = storage.eventCount();
+  SensorReading reading;
+  bool parsed = parseSensorCsv("SENSOR,SELFTEST,24.5,44,90,1,-61", reading);
+  check("telemetry CSV parses", parsed && reading.nodeId == "SELFTEST");
+  if (parsed) onSensor(reading);
+  check("telemetry increments event count", storage.eventCount() == eventsBefore + 1);
+
+  // 3) A presence frame parses and is flagged presence-only.
+  SensorReading presence;
+  bool presParsed = parseSensorCsv("PRESENCE,SELFTEST-P,-70,heartbeat", presence);
+  check("presence CSV parses", presParsed && presence.presenceOnly);
+  if (presParsed) onSensor(presence);
+
+  // 4) A malformed frame is rejected.
+  SensorReading bad;
+  check("malformed frame rejected", !parseSensorCsv("GARBAGE,only", bad));
+
+  // 5) The world feeds populate (canned in mock mode, live under USE_WIFI).
+  refreshWorld("all");
+  check("world weather valid", worldFeeds.weatherValid);
+  check("world aurora valid", worldFeeds.auroraValid);
+
+  // 6) Screen navigation parity for every tabbed screen.
+  bool nav = ui.selectScreen("sensors") && ui.selectScreen("world") &&
+             ui.selectScreen("events") && ui.selectScreen("devices");
+  check("screen navigation reachable", nav);
+
+  char summary[72];
+  snprintf(summary, sizeof(summary), "[selftest] overall %s  (%u pass, %u fail)",
+           fail == 0 ? "PASS" : "FAIL", pass, fail);
+  Serial.println(summary);
+  eventLog.add(fail == 0 ? "Selftest PASS" : "Selftest FAIL");
 }
 
 void setup() {
@@ -235,19 +359,30 @@ void setup() {
   router.on("set", "set <deviceId> <on|off|toggle> - command a device's GPIO", cmdSet);
   router.on("feed", "inject a sensor frame, e.g. feed SENSOR,ATTIC,29.5,40,88,0,-58", cmdFeed);
   router.on("world", "print/refresh weather, quakes, aurora, air", cmdWorld);
+  router.on("screen", "switch/report UI screen: screen <devices|detail|sensors|world|events>", cmdScreen);
+  router.on("sensor", "pin a node into the gauges: sensor <nodeName> (serial parity for the sensor tap)", cmdSensor);
+  router.on("touch", "print raw + mapped touch coords, tap count, current screen", cmdTouch);
+  router.on("selftest", "drive the mock flow end-to-end and print PASS/FAIL", cmdSelfTest);
 }
 
 void loop() {
   router.poll();
   network.maintain();
   server.handle();
-  ui.tick();
 
-  // Drain a touch-queued device toggle from the dashboard.
-  String pendingId;
-  bool desiredOn = false;
-  if (ui.takePendingToggle(pendingId, desiredOn)) {
-    applyDeviceState(pendingId, desiredOn);
+  // Execute the typed UI event the dashboard produced this frame. The UI never
+  // mutates app state itself - it only asks, and the sketch acts.
+  HubUiEvent ev = ui.tick();
+  switch (ev.type) {
+    case kHubSetDevice:
+      applyDeviceState(ev.deviceId, ev.on);
+      break;
+    case kHubRefreshWorld:
+      refreshWorld("all");
+      break;
+    case kHubNone:
+    default:
+      break;
   }
 
 #if !USE_WIFI

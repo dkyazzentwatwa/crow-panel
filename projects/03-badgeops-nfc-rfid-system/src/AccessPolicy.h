@@ -6,8 +6,9 @@
 #include "BadgeRegistry.h"
 
 struct AccessDecision {
-  String status;
-  String message;
+  String status;   // "granted" | "denied" — drives the network post and banner color
+  String message;  // full audit line, e.g. "ACCESS_GRANTED Demo Operator zone=lab"
+  String reason;   // short human reason for the Result screen, e.g. "Badge suspended"
 };
 
 class AccessPolicy {

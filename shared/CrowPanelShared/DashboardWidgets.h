@@ -82,6 +82,41 @@ int16_t pill(Arduino_GFX *g, int16_t x, int16_t y, const char *s,
 // Small signal-tower glyph (mast + broadcast arcs), ~28x28 at (x,y) top-left.
 void towerIcon(Arduino_GFX *g, int16_t x, int16_t y, uint16_t color);
 
+// --- Touch-UI chrome. Layout constants match the 1024x600 DSI panel. ---
+//
+// Names carry a kChrome/touch/Rect prefix on purpose: seven projects pull this
+// namespace in with `using namespace Widgets`, and bare names like kChromeW,
+// kChromeHeaderH, button and hit are already taken by project-local constants.
+
+constexpr int16_t kChromeW = 1024;
+constexpr int16_t kChromeH = 600;
+constexpr int16_t kChromeHeaderH = 72;  // headerBar() height
+constexpr int16_t kChromeTabH = 64;     // tabBar() height
+constexpr int16_t kChromeTabY = kChromeH - kChromeTabH;
+
+// Point-in-rect test for hit-testing touch releases against a control.
+inline bool hitRect(int16_t px, int16_t py, int16_t x, int16_t y, int16_t w, int16_t h) {
+  return px >= x && px < (int16_t)(x + w) && py >= y && py < (int16_t)(y + h);
+}
+
+// Rounded tappable button. `active` swaps the accent fill in (pressed or
+// selected state) for the muted surface fill.
+void touchButton(Arduino_GFX *g, int16_t x, int16_t y, int16_t w, int16_t h,
+                 const char *label, bool active, uint16_t accent = kAccent);
+
+// Full-width top chrome: title on the left, subtitle beneath it, and an
+// optional status pill on the right. Pass nullptr to omit subtitle/pill.
+void headerBar(Arduino_GFX *g, const char *title, const char *subtitle = nullptr,
+               const char *rightPill = nullptr, uint16_t pillColor = kAccent);
+
+// Full-width bottom navigation strip of evenly-spaced tabs; `selected` is
+// drawn in the accent color with an underline.
+void tabBar(Arduino_GFX *g, const char *const *labels, uint8_t count, uint8_t selected,
+            uint16_t accent = kAccent);
+
+// Which tab a touch at (px,py) landed on, or -1 if the point misses the strip.
+int8_t tabHit(int16_t px, int16_t py, uint8_t count);
+
 }  // namespace Widgets
 
 #endif  // USE_DISPLAY && CONFIG_IDF_TARGET_ESP32P4

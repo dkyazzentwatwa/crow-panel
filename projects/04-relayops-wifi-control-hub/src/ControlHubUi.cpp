@@ -4,24 +4,24 @@
 void ControlHubUi::begin() {
   const UiTheme &theme = defaultUiTheme();
   Logger::info("ui", String("theme=") + theme.name +
-                         " screens=Dashboard,Sensor Detail,Devices,Settings");
+                         " screens=Devices,Detail,Sensors,World,Events");
   // Brings up the panel + touch and paints the dashboard chrome. No-op when
   // USE_DISPLAY=0 (the sketch keeps running Serial-only).
   dashboard_.begin();
 }
 
-void ControlHubUi::tick() {
-  dashboard_.tick();
+HubUiEvent ControlHubUi::tick() {
+  return dashboard_.tick();
 }
 
 void ControlHubUi::renderSensor(const SensorReading &reading) {
   if (reading.presenceOnly) {
-    Serial.print(F("[screen:dashboard] presence node="));
+    Serial.print(F("[screen:sensors] presence node="));
     Serial.print(reading.nodeId);
     Serial.print(F(" rssi="));
     Serial.println(reading.rssi);
   } else {
-    Serial.print(F("[screen:dashboard] node="));
+    Serial.print(F("[screen:sensors] node="));
     Serial.print(reading.nodeId);
     Serial.print(F(" tempC="));
     Serial.print(reading.temperatureC, 1);
@@ -52,10 +52,6 @@ void ControlHubUi::renderEvent(const String &message) {
   Serial.print(F("[screen:event] "));
   Serial.println(message);
   dashboard_.onEvent(message);
-}
-
-bool ControlHubUi::takePendingToggle(String &deviceId, bool &desiredOn) {
-  return dashboard_.takePendingToggle(deviceId, desiredOn);
 }
 
 void ControlHubUi::renderWorld(const WorldFeeds &feeds) {

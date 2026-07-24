@@ -1,103 +1,53 @@
-# CrowPanel SurveyOps Wardriver Panel
+# SurveyOps Wardriver Panel
 
-Passive GPS/Wi-Fi survey dashboard inspired by `esp32-gps-wifi-wigle`.
+A passive site-survey dashboard for the Elecrow CrowPanel Advanced 7-inch
+display.
 
-V1 is mock-first. It visualizes GPS fix state, Wi-Fi AP rows, logging state,
-rotation, and storage health. Hardware paths are opt-in compile scaffolds only
-until the exact CrowPanel, wiring, upload, and runtime behavior are verified.
+It pairs a GPS fix with a list of the Wi-Fi access points around you, draws them
+on an animated survey scope, and can log everything to SD in WiGLE-style CSV with
+automatic file rotation. The default build is fully simulated, so the entire
+dashboard works with no GPS receiver, no card, and no scanning.
 
-The `USE_DISPLAY=1` path now uses a SurveyOps-specific full-screen UI rather
-than the shared generic tile grid: an animated passive survey scope, AP row
-list, GPS fix card, WiGLE/logging detail panel, touch row selection, and a
-footer that keeps the passive-only boundary visible on camera.
+> This is Project 13 in the [CrowPanel Arduino suite](../../README.md).
 
-This port is passive survey/logging only. It does not join networks, capture
-credentials, inject packets, deauth clients, or run active tests.
+## Status
 
-## Feature Flags
+Compile-ready. The display, GPS, passive scan, and SD logging paths all build for
+the real ESP32-P4 target, and none of them has been observed on hardware — no GPS
+fix, no live scan rows, and no storage logs have been captured. See the
+[technical reference](TECHNICAL.md).
 
-Build flags are passed through `EXTRA_FLAGS`:
+## What you get
 
-```sh
-CTAGS_WORKAROUND=1 EXTRA_FLAGS="-DUSE_GPS_DRIVER=1" ./scripts/compile-all.sh
-```
+- An animated passive survey scope with the highlighted AP called out
+- An access-point row list with SSID, RSSI, channel, and auth mode
+- A GPS fix card with the current position and fix quality
+- A logging and storage panel showing file state, rotation, and health
+- WiGLE-style CSV output with a standard header and row rotation
+- Touch row selection on the scope and list
+- An offline demo with simulated GPS, AP, and CSV state, plus an `nmea` command
+  for testing the parser without a receiver
 
-| Flag | What it gates | Proof state |
-|---|---|---|
-| `USE_DISPLAY=1` | SurveyOps full-screen scope, AP list, GPS card, logging panel, and touch row selection | compile-ready only unless uploaded and observed |
-| `USE_GPS_DRIVER=1` | TinyGPSPlus NMEA parsing from `Serial1` when available | compile-ready; not field-proven |
-| `USE_WIFI_SCAN=1` | Passive station Wi-Fi scan rows through `WiFi.scanNetworks(... passive=true ...)` | compile-ready; not field-proven |
-| `USE_SD_WIGLE_LOG=1` | WiGLE-style CSV file creation, row append, rotation, and storage health on SD | compile-ready; not field-proven |
+## Passive only
 
-With no flags, the project stays fully mock/passive and uses demo GPS, AP, and
-CSV state.
+This panel listens and records. It does not join networks, capture credentials,
+inject packets, deauthenticate clients, or run active tests. Touch selects and
+highlights rows — it cannot start a scan, start logging, or take any network
+action.
 
-## Wiring And Storage Assumptions
+Nothing is configured by default: the GPS pins and the SD chip-select pin all
+start unset, and the drivers refuse to start rather than drive a guessed pin on
+your panel.
 
-Project-local defaults are intentionally unconfigured:
+## Privacy and responsible use
 
-```cpp
-SURVEYOPS_GPS_RX_PIN=-1
-SURVEYOPS_GPS_TX_PIN=-1
-SURVEYOPS_SD_CS_PIN=-1
-SURVEYOPS_GPS_SERIAL_BAUD=9600
-SURVEYOPS_WIGLE_FILE_PREFIX="/wigle"
-SURVEYOPS_WIGLE_ROTATE_ROWS=200
-```
+A real scan captures the SSIDs and BSSIDs of networks belonging to people around
+you, alongside your own coordinates. Treat the CSV logs as local lab artifacts.
+Do not publish them raw, and think carefully before uploading a survey of a place
+where the people living there did not choose to be mapped.
 
-When `USE_GPS_DRIVER=1`, TinyGPSPlus is used if the library is installed, but
-the hardware UART will not start until `SURVEYOPS_GPS_RX_PIN` is set. The `nmea`
-Serial command can still smoke-test parsing without wiring a receiver.
+## Technical reference
 
-When `USE_SD_WIGLE_LOG=1`, the logger refuses to call `SD.begin()` until
-`SURVEYOPS_SD_CS_PIN` is set. This avoids driving guessed storage pins on the
-CrowPanel. The CSV header is WiGLE-style:
-
-```text
-WigleWifi-1.4,...
-MAC,SSID,AuthMode,FirstSeen,Channel,RSSI,CurrentLatitude,CurrentLongitude,AltitudeMeters,AccuracyMeters,Type
-```
-
-Real Wi-Fi scans can expose nearby SSIDs and BSSIDs. Treat logs as local lab
-artifacts and avoid publishing them raw.
-
-## Serial Commands
-
-- `help` / `status` / `history`
-- `gps`
-- `scan`
-- `log on` / `log off`
-- `feed ap <ssid> <rssi>`
-- `rotate`
-- `storage`
-- `nmea <gps sentence>`
-
-With `USE_DISPLAY=1`, Serial remains the control surface. Touch selects AP rows
-or cycles the highlighted AP on the scope; it does not start scans, logging, or
-network actions.
-
-## Serial Smoke Script
-
-Use 115200 baud with Newline line ending.
-
-```text
-status
-gps
-scan
-log on
-scan
-feed ap DemoAP -55
-storage
-rotate
-log off
-nmea $GPRMC,092751.000,A,5321.6802,N,00630.3372,W,0.06,31.66,280511,,,A*43
-gps
-history
-```
-
-Expected proof language:
-
-- `compile-ready`: Arduino CLI build passed for the selected flags.
-- `uploaded`: the sketch was flashed to a detected CrowPanel port.
-- `field-proven`: GPS, passive scan, SD logging, and/or display behavior was
-  observed on real hardware with the exact wiring and storage media documented.
+For installation, build flags, configuration, upload commands, device details,
+file layout, troubleshooting, safety boundaries, and proof terminology, see
+[TECHNICAL.md](TECHNICAL.md).

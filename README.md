@@ -1,6 +1,6 @@
 # crowpanel-aiot-arduino-suite
 
-Arduino CLI tutorial scaffold for eighteen Elecrow CrowPanel Advanced 7-inch ESP32-P4 HMI AI Display projects.
+Arduino CLI tutorial scaffold for twenty-one Elecrow CrowPanel Advanced 7-inch ESP32-P4 HMI AI Display projects.
 
 This repo is mock-first. Every sketch boots into a Serial-driven demo you can teach, film, and iterate on — and every real driver path (Wi-Fi, LoRa, NFC/RFID, display/touch) now exists behind a feature flag as a **compile-verified scaffold**. Display rendering uses the Adafruit-GFX-style API (no LVGL by design). Two words carry this repo's honesty contract:
 
@@ -35,19 +35,20 @@ The first four builds are hardware-path teaching projects:
 The newer ports are mock-first CrowPanel product surfaces inspired by sibling GitHub repos. They compile as standalone sketches and mirror their Serial-driven state onto a touch dashboard when `USE_DISPLAY=1`:
 
 5. `projects/05-cypherdrive-wireless-ops` — safe Wi-Fi/BLE visibility console inspired by `cypher-drive`; no HID or captive-portal capture in v1.
-6. `projects/06-wiretap-benchops-console` — bench protocol console inspired by `WireTap-32`; default probe mode is high-Z/read-oriented, and SPI ID clocking requires an explicit lab opt-in.
 7. `projects/07-nfc-field-lab-badgeops-pro` — combined PN532/Cypherbox Mini NFC lab; UID-only and APDU/payment boundaries stay visible.
 8. `projects/08-cypher-gamer-arcade` — large touch arcade launcher inspired by `cardputer-games`; Pong, Snake, and 2048 are the v1 playable set.
 9. `projects/09-cypher-tune-mpc` — touch MPC/groovebox inspired by `cardputer-mpc`; silent/mock audio until `USE_AUDIO` becomes a real hardware path.
-10. `projects/10-litego-touch-coach` — local 9x9 Go coach inspired by `ai-go`, rewritten as Arduino C++ logic.
+10. `projects/10-litego-touch-coach` — playable offline 9x9 Go with a Monte-Carlo opponent, touch placement, and full rules including superko and komi.
 11. `projects/11-cardrf-spectrum-console` — receive-only spectrum console inspired by `cardputer-hackrf`; no TX/replay/jamming controls.
-12. `projects/12-creatorops-board` — local content pipeline board inspired by `techtiff-brain`; no publishing or external mutations.
 13. `projects/13-surveyops-wardriver-panel` — passive GPS/Wi-Fi survey dashboard inspired by `esp32-gps-wifi-wigle`; no network joins or active testing.
 14. `projects/14-adsb-flight-tracker-radar` — live/mock aircraft radar inspired by ADS-B tracker projects; public APIs and world-feed panels behind Wi-Fi.
 15. `projects/15-pokedex-panel` — large touch Pokedex inspired by `esp32-pokedex`; offline mock catalog by default, source SD catalog behind `USE_SD_POKEDEX`.
 16. `projects/16-cypher-flock-panel` — passive dual-band detector UI; a BW16 scans 2.4/5 GHz Wi-Fi, an ESP32 scans BLE and aggregates both UART streams, and the P4 renders/persists derived detections.
 17. `projects/17-littlehakr-rf-lab` — touch-first nRF24 and CC1101 register-proof lab with fixed, authorized receive-only activity profiles; no TX, payload reads, IDs, replay, or jamming. The onboard C6 has separate aggregate Wi-Fi and firmware-gated BLE status pages.
 18. `projects/18-cypher-desk-panel` — Cypher Desk OS creator workstation with a 3x4 app grid, reusable touch keyboard, the complete legacy Writer, local calendar/contacts/clock/calculator/files, hosted-C6 Wi-Fi setup, and honest hardware-gated media apps.
+19. `projects/19-starbeam-console` — full 1:1 port of project-starbeam: native 5x nRF24 + 2x CC1101 on one shared SPI bus (jammers, 2.4 GHz spectrum, 433 MHz scan/RSSI, raw record/replay) with a touch console UI, plus the Wi-Fi/BLE/attack half proxied over UART to an ESP32 running stock starbeam_v2. Transmit is arm-gated behind a local `LabProfile.h`.
+20. `projects/20-pipboy-terminal` — unofficial Pip-Boy 3000-style showpiece using only the panel's touch display, SD_MMC, hosted-C6 Wi-Fi, and onboard I2S speaker; no radio, enclosure, or sensors required.
+21. `projects/21-cypher-keys-hid-deck` — USB-HID showcase: the panel is a native USB keyboard, macro pad, and trackpad for a Mac. Reuses the Cypher Desk touch keyboard, adds switchable macro presets (a macOS set and a ChatGPT/Codex keypad), and drives the host over TinyUSB. Real HID is gated behind `USE_USB_HID` + a `USBMode=default` build; the default build is a Serial-logging mock.
 
 ## Toolchain
 
@@ -108,26 +109,22 @@ Every sketch runs an interactive command router on Serial (115200 baud, line end
 
 | Project | Command | What it does |
 |---|---|---|
-| 01 FieldOps | `inject [node 0-3] [tempC] [batteryPct]` | Simulate a sensor packet — `inject 1 40 12` fires TEMP and LOW_BATTERY alerts on demand |
-| 02 Vision Guard | `scan [text]` | Simulate a QR scan — `scan INSPECT-CUSTOM-1` |
-| 03 BadgeOps | `tap [uid]` | Simulate a badge tap — `tap C2:44:10:AA` (suspended badge), `tap 11:22:33:44` (unknown) |
-| 03 BadgeOps | `badges` | Print the badge registry |
-| 04 RelayOps | `set <id> <on\|off\|toggle>` | Command a device's GPIO — `set shop-light on` (mock: log-only; `USE_WIFI`: real HTTP) |
-| 04 RelayOps | `feed <csv>` | Inject a sensor reading — `feed SENSOR,ATTIC,29.5,40,88,0,-58` |
-| 04 RelayOps | `devices` | List controllable devices and their HTTP targets |
-| 05 CypherDrive | `scan wifi`, `scan ble`, `qr set/show`, `logs` | Safe wireless visibility and QR handoff mock console |
-| 06 WireTap | `mode`, `pins`, `i2c`, `spi`, `uart`, `gpio` | Bench protocol console; default probes avoid output drive, SPI ID clocking is explicit opt-in |
-| 07 NFC Lab | `scan`, `tap`, `ndef`, `apdu`, `files`, `badges` | Safe NFC lab and BadgeOps Pro mock flows |
-| 08 Arcade | `catalog`, `play`, `score` | Launch and score the v1 touch arcade demos |
+| 01 FieldOps | `inject [node 0-3] [tempC] [batteryPct]`, `pin`, `ack`, `screen`, `touch`, `selftest` | Simulate a packet (`inject 1 40 12` fires TEMP + LOW_BATTERY), pin/ack from Serial, drive the touch roster/detail/alerts/log screens |
+| 02 Vision Guard | `scan [text]`, `check`, `eval`, `open`, `screen`, `touch`, `selftest` | Simulate a QR scan, toggle checklist items, run the eval, reopen history — mirrors the Live/Scan/Checklist/Result/History touch screens |
+| 03 BadgeOps | `tap [uid]`, `badges`, `reader`, `screen`, `touch`, `selftest` | Simulate a badge tap (`tap C2:44:10:AA` suspended, `tap 11:22:33:44` unknown), pick reader, drive the Tap/Result/Registry/Attendance/Readers screens |
+| 04 RelayOps | `set <id> <on\|off\|toggle>`, `feed <csv>`, `devices`, `sensor`, `world`, `screen`, `touch`, `selftest` | Command GPIO (mock log-only; `USE_WIFI`: real HTTP), inject a reading, pin a sensor, drive the Devices/Detail/Sensors/World/Log screens |
+| 05 CypherDrive | `scan wifi`, `scan ble`, `qr set/show`, `logs`, `net`, `page`, `screen`, `touch`, `selftest` | Passive Wi-Fi/BLE visibility and QR handoff across the Wi-Fi/BLE/Log/QR touch screens |
+| 07 NFC Lab | `scan`, `tap`, `ndef`, `apdu`, `step`, `files`, `badges`, `screen`, `touch`, `selftest` | Safe NFC lab: UID scan, NDEF preview, step the read-only APDU trace, badge decision, files list |
+| 08 Arcade | `catalog`, `play`, `move`, `step`, `reset`, `score`, `scores`, `cal`, `touch`, `selftest` | Launch and play Pong/Snake/2048, pause overlay, per-game high-score screen |
 | 09 MPC | `pad`, `step`, `bpm`, `play`, `stop`, `record`, `pattern` | Touch groovebox mock transport and pattern state |
-| 10 LiteGo | `play`, `cpu`, `pass`, `reset`, `score` | Local 9x9 Go coach actions |
+| 10 LiteGo | `play`, `pass`, `undo`, `resign`, `new`, `level`, `komi`, `score`, `bench` | Playable 9x9 Go vs a Monte-Carlo opponent |
 | 11 CardRF | `scan`, `feed`, `power`, `preset`, `stop` | Receive-only mock spectrum rows |
-| 12 CreatorOps | `pipeline`, `idea`, `draft`, `channel`, `task` | Local content pipeline dashboard |
 | 13 SurveyOps | `gps`, `scan`, `log`, `feed`, `rotate` | Passive GPS/Wi-Fi survey mock console |
 | 14 ADS-B Radar | `planes`, `range`, `poll`, `mock`, `screen`, `world` | Mock/live aircraft radar plus weather, quake, aurora, and air screens |
 | 15 Pokedex | `browse`, `search`, `open`, `page`, `demo`, `source` | Offline Pokedex catalog browser and detail cards |
 | 16 Cypher Flock | `demo`, `inject`, `bridge`, `witness`, `screen`, `filter`, `source`, `save`, `session`, `stealth` | Detector feed, C6 nearby-Wi-Fi witness, UART controls, and sessions |
 | 18 Cypher Desk | `files`, `new`, `open`, `type`, `save`, `back`, `demo`, `touch`, `page`, `daily`, `scrap`, `focus`, `ritual`, `theme`, `sound`, `stats`, `time`, `storage` | Offline-first lofi notebook, scraps, focus sessions, prompt rituals, and SD-backed plain-text workspace |
+| 21 Cypher Keys | `hid`, `key`, `combo`, `tap`, `preset`, `mode`, `mouse`, `click`, `scroll`, `media` | USB-HID deck: type, fire macro-preset shortcuts, and drive the trackpad (mock logs the reports; `USE_USB_HID` + `USBMode=default` sends them for real) |
 
 Injected events run the exact same pipeline as mock (and future real) drivers — one code path per project (`processPacket` / `processScan` / `processTap` / `onSensor`).
 
@@ -148,10 +145,8 @@ Each flag gates a compile-verified scaffold. Flip ONE at a time following `docs/
 | `USE_WIFI_SCAN` | Passive Wi-Fi scan rows for CypherDrive and SurveyOps | C6 pin/firmware path applied; scan rows still need field proof |
 | `USE_BLE_UART_BRIDGE` | CypherDrive BLE sidecar feed over UART | hardware-gated |
 | `USE_QR_PERSISTENCE` | CypherDrive persisted QR URL state | hardware-gated |
-| `USE_BENCH_PROBES` | WireTap high-Z GPIO reads, I2C address scans, UART RX, and opt-in SPI ID clocking | hardware-gated |
 | `USE_SD_HIGHSCORES` | Arcade SD high-score persistence | hardware-gated |
 | `USE_RF_UART_BRIDGE` | CardRF receive-only host/HackRF row bridge | hardware-gated |
-| `USE_CREATOROPS_API` | CreatorOps read-only local/static/API cache source | hardware-gated |
 | `USE_GPS_DRIVER` | SurveyOps GPS parser | hardware-gated |
 | `USE_SD_WIGLE_LOG` | SurveyOps WiGLE-style CSV logging and rotation | hardware-gated |
 | `USE_SD_POKEDEX` | Pokedex Panel streams the source `/pokemon/index.csv` and detail JSON from SD_MMC | hardware-gated |
@@ -162,6 +157,10 @@ Each flag gates a compile-verified scaffold. Flip ONE at a time following `docs/
 | `USE_CYPHER_DESK_AUDIO` | Project 18 enables generated key sounds and 16 kHz mono WAV ambience with silent failure fallback | compile target only until the speaker and mixing bench pass |
 | `USE_CYPHER_DESK_MEDIA` | Project 18 indexes local music/podcast/recording folders and enables the guarded media surface | compile-ready; speaker playback remains bench-gated |
 | `USE_CYPHER_DESK_RECORDER` | Project 18 compiles the recorder surface without claiming an unverified microphone path | compile-ready guard only; microphone pins, input format, record, reboot, and playback need device proof |
+| `USE_STARBEAM_RADIOS` | Project 19 compiles the native 5x nRF24 + 2x CC1101 stack (RF24 + SmartRC-CC1101 libraries) on one shared SPI bus | compile-ready; per-radio register IDs and shared-SPI CS isolation need hardware proof |
+| `USE_STARBEAM_COPROC` | Project 19 enables the UART link to the ESP32 dev module running stock starbeam_v2 (Wi-Fi/BLE/attack half) | compile-ready; UART round-trip and telemetry parsing need hardware proof |
+| `STARBEAM_TX_CONFIRMED` | Project 19 arms all transmit (nRF24/CC1101 jammers, raw replay, forwarded attacks); must be set from a local gitignored `LabProfile.h` | disarmed by default; receive/analysis and the full UI still run without it |
+| `USE_USB_HID` | Project 21 makes the panel a native USB keyboard + consumer-control + mouse (TinyUSB). **Requires a `USBMode=default` FQBN** (USB-OTG); under the default `USBMode=hwcdc` it falls back to a Serial-logging mock with a `#warning` | compile-ready (mock and real USB-OTG builds both green); host enumeration on the CrowPanel USB-C not yet proven |
 
 Per-machine settings live in gitignored files copied from templates: `config/Pins.example.h` → `Pins.h` (radio params, reader pins) and `config/WiFiSecrets.example.h` → `WiFiSecrets.h` (credentials).
 

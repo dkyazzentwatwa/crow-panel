@@ -9,6 +9,10 @@ StorageManager storage;
 LiteGoGame game;
 LiteGoTouchView touchView;
 
+// True while the opponent's search is running so loop() keeps slicing it and
+// the sketch does not accept a second move on top of it.
+bool aiTurnActive = false;
+
 bool parsePoint(const String &args, int8_t &x, int8_t &y) {
   int xi;
   int yi;
@@ -29,12 +33,7 @@ void printBoard() {
     Serial.println(game.boardRow(y));
   }
   Serial.println(String("[board] next=") + String(game.currentPlayer()) +
-                 " moves=" + String(game.moveCount()) +
-                 " " + game.scoreSummary());
-}
-
-void refreshGo(const String &banner) {
-  touchView.setStatus(banner);
+                 " moves=" + String(game.moveCount()) + " " + game.scoreSummary());
 }
 
 void reportMove(const LiteGoGame::MoveResult &result, const char *source) {
@@ -45,37 +44,56 @@ void reportMove(const LiteGoGame::MoveResult &result, const char *source) {
   Serial.print(F("[coach] "));
   Serial.println(game.lastCoach());
 
-  if (result.status == LiteGoGame::kMoveOk || result.status == LiteGoGame::kMovePass ||
-      result.status == LiteGoGame::kMoveNoLegalMove) {
+  if (result.status == LiteGoGame::kMoveOk || result.status == LiteGoGame::kMovePass) {
     eventLog.add(String(source) + " " + game.describeMove(result));
   }
 
   printBoard();
-  touchView.setLastResult(result, source);
+  touchView.noteMoveResult(result, source);
+}
+
+// Starts the opponent's search when it is their turn and the game is live.
+void maybeStartAiTurn() {
+  if (aiTurnActive || game.finished() || game.humanToMove()) {
+    return;
+  }
+  game.startAiTurn();
+  aiTurnActive = true;
+  touchView.setThinking(true);
+}
+
+// Abandons a search in progress. Any command that changes the board has to
+// call this first, or loop() would apply the stale result on top of the new
+// position as soon as the slice finished.
+void cancelAiTurn() {
+  if (!aiTurnActive) {
+    return;
+  }
+  aiTurnActive = false;
+  touchView.setThinking(false);
 }
 
 void cmdStatus(const String &) {
   printSystemStatus(Serial, "litego-coach", storage.eventCount());
   Serial.println(String("[go] next=") + String(game.currentPlayer()) +
                  " moves=" + String(game.moveCount()) +
-                 " passes=" + String(game.consecutivePasses()));
+                 " passes=" + String(game.consecutivePasses()) + " level=" + game.levelName() +
+                 " komi=" + game.komiText() + " you=" + String(game.humanColor()) +
+                 (game.finished() ? String(" result=") + game.resultText() : String()));
 }
 
-void cmdHistory(const String &) {
-  eventLog.printHistory(Serial);
-}
+void cmdHistory(const String &) { eventLog.printHistory(Serial); }
 
-void cmdBoard(const String &) {
-  printBoard();
-}
+void cmdBoard(const String &) { printBoard(); }
 
 void cmdHint(const String &) {
   Serial.print(F("[coach] "));
   Serial.println(game.lastCoach());
-  refreshGo(String("Hint: ") + game.lastCoach());
+  touchView.setStatus(String("Hint: ") + game.lastCoach());
 }
 
 void cmdPlay(const String &args) {
+  cancelAiTurn();
   int8_t x;
   int8_t y;
   if (!parsePoint(args, x, y)) {
@@ -83,53 +101,214 @@ void cmdPlay(const String &args) {
     touchView.setStatus("Use play <x> <y> with coordinates 0-8.", true);
     return;
   }
-
-  LiteGoGame::MoveResult result = game.play(x, y);
-  reportMove(result, "serial");
+  reportMove(game.play(x, y), "serial");
+  maybeStartAiTurn();
 }
 
 void cmdCpu(const String &) {
-  LiteGoGame::MoveResult result = game.cpuMove();
-  reportMove(result, "cpu");
+  cancelAiTurn();
+  // Blocking on purpose: a Serial user asked for one move and wants it now.
+  reportMove(game.cpuMoveBlocking(), "cpu");
 }
 
 void cmdPass(const String &) {
-  LiteGoGame::MoveResult result = game.pass();
-  reportMove(result, "pass");
+  cancelAiTurn();
+  reportMove(game.pass(), "pass");
+  maybeStartAiTurn();
 }
 
 void cmdReset(const String &) {
+  cancelAiTurn();
   game.reset();
-  touchView.clearLastMove();
-  eventLog.add("Board reset");
-  Serial.println(F("[go] board reset; Black to move"));
+  touchView.clearGhost();
+  touchView.requestFullRepaint();
+  eventLog.add("New game");
+  Serial.println(F("[go] new game; Black to move"));
   printBoard();
-  refreshGo("new game");
+  touchView.setStatus("New game. Tap an intersection to preview, tap again to place.");
+  maybeStartAiTurn();
+}
+
+void cmdUndo(const String &) {
+  cancelAiTurn();
+  if (!game.undo()) {
+    Serial.println(F("[go] nothing to undo"));
+    touchView.setStatus("Nothing to undo yet.", true);
+    return;
+  }
+  touchView.clearGhost();
+  touchView.requestBoardRepaint();
+  touchView.requestScoreRepaint();
+  touchView.setStatus(game.lastCoach());
+  Serial.println(String("[go] undo -> move ") + String(game.moveCount()) + " " +
+                 String(game.currentPlayer()) + " to play");
+  printBoard();
+  // Normally undo lands on the human's turn and this is a no-op, but undoing a
+  // resignation can leave the opponent to move - without this the game would
+  // sit there with nobody searching.
+  maybeStartAiTurn();
+}
+
+void cmdResign(const String &) {
+  cancelAiTurn();
+  game.resign();
+  touchView.requestFullRepaint();
+  eventLog.add(String("Resigned: ") + game.resultText());
+  Serial.println(String("[go] resigned; result ") + game.resultText());
+  touchView.setStatus(String("Resigned. Result ") + game.resultText() + ".");
 }
 
 void cmdScore(const String &) {
-  LiteGoGame::ScoreEstimate score = game.estimateScore();
-  Serial.println(String("[score] black_area=") + String(score.blackArea) +
-                 " white_area=" + String(score.whiteArea) +
-                 " margin=" + String(score.margin));
-  Serial.println(String("[score] stones B") + String(score.blackStones) +
-                 " W" + String(score.whiteStones) +
-                 " territory B" + String(score.blackTerritory) +
-                 " W" + String(score.whiteTerritory) +
-                 " neutral=" + String(score.neutralPoints));
-  refreshGo(String("Score: ") + game.scoreSummary() +
-            ". Territory B" + String(score.blackTerritory) +
-            " W" + String(score.whiteTerritory) +
-            " neutral " + String(score.neutralPoints) +
-            ". No komi or seki adjudication.");
+  litego::ScoreEstimate s = game.estimateScore();
+  Serial.println(String("[score] black_area=") + String(s.blackArea) +
+                 " white_area=" + String(s.whiteArea) + " komi=" + game.komiText() +
+                 " result=" + game.resultText());
+  Serial.println(String("[score] stones B") + String(s.blackStones) + " W" +
+                 String(s.whiteStones) + " territory B" + String(s.blackTerritory) + " W" +
+                 String(s.whiteTerritory) + " neutral=" + String(s.neutralPoints));
+  touchView.setStatus(String("Score: ") + game.scoreSummary() +
+                      ". Area scoring, no dead-stone marking - play the dame out.");
+  touchView.requestScoreRepaint();
+}
+
+void cmdLevel(const String &args) {
+  String value = args;
+  value.trim();
+  value.toLowerCase();
+  if (value == "easy") {
+    game.setLevel(litego::kLevelEasy);
+  } else if (value == "normal") {
+    game.setLevel(litego::kLevelNormal);
+  } else if (value == "hard") {
+    game.setLevel(litego::kLevelHard);
+  } else if (value.length() > 0) {
+    Serial.println(F("[go] usage: level <easy|normal|hard>"));
+    return;
+  }
+  Serial.println(String("[go] level=") + game.levelName());
+  touchView.setStatus(String("Opponent level: ") + game.levelName() + ".");
+  touchView.requestScoreRepaint();
+}
+
+void cmdKomi(const String &args) {
+  String value = args;
+  value.trim();
+  if (value.length() > 0) {
+    // Parsed as halves so the engine's integer scoring stays exact.
+    float komi = value.toFloat();
+    game.setKomiX2((int16_t)lroundf(komi * 2.0f));
+  }
+  Serial.println(String("[go] komi=") + game.komiText());
+  touchView.setStatus(String("Komi set to ") + game.komiText() + ".");
+  touchView.requestScoreRepaint();
+}
+
+void cmdColor(const String &args) {
+  cancelAiTurn();
+  String value = args;
+  value.trim();
+  if (value.length() > 0) {
+    game.setHumanColor(value.charAt(0) == 'w' || value.charAt(0) == 'W' ? 'W' : 'B');
+  }
+  Serial.println(String("[go] you play ") + String(game.humanColor()));
+  touchView.setStatus(String("You play ") + (game.humanColor() == 'B' ? "Black." : "White."));
+  touchView.requestScoreRepaint();
+  touchView.requestFullRepaint();
+  maybeStartAiTurn();
 }
 
 void cmdSelfTest(const String &) {
   bool ok = LiteGoGame::runSelfTest(Serial);
   eventLog.add(ok ? "Selftest PASS" : "Selftest FAIL");
-  touchView.setStatus(ok ? "Selftest PASS. Serial scenarios covered capture, suicide, pass, score, CPU, and ko."
-                         : "Selftest FAIL. Check Serial output for the failing scenario.",
+  touchView.setStatus(ok ? "Selftest PASS: rules fixtures and AI hygiene all green."
+                         : "Selftest FAIL. Check Serial output for the failing check.",
                       !ok);
+}
+
+void cmdBench(const String &args) {
+  cancelAiTurn();  // benchmark borrows the session's searcher
+  String value = args;
+  value.trim();
+  uint32_t ms = value.length() > 0 ? (uint32_t)value.toInt() : 1000;
+  if (ms < 100) {
+    ms = 100;
+  }
+  uint32_t rate = game.benchmark(Serial, ms);
+  touchView.setStatus(String("Bench: ") + String(rate) +
+                      " playouts/sec. Tune level budgets from this.");
+}
+
+void cmdTouchCal(const String &) {
+  touchView.reportCalibration(Serial);
+  // Also on screen: USB-CDC serial on this board drops once the app runs, so
+  // the panel has to be able to show the calibration on its own.
+  touchView.setStatus(touchView.calibrationSummary());
+}
+
+void cmdAutoplay(const String &args) {
+  cancelAiTurn();
+  String value = args;
+  value.trim();
+  int moves = value.length() > 0 ? value.toInt() : 10;
+  if (moves < 1) {
+    moves = 1;
+  }
+  for (int i = 0; i < moves && !game.finished(); i++) {
+    LiteGoGame::MoveResult result = game.cpuMoveBlocking();
+    Serial.print(F("[autoplay] "));
+    Serial.println(game.describeMove(result));
+  }
+  printBoard();
+  touchView.requestFullRepaint();
+}
+
+void handleAction(const LiteGoTouchView::Action &action) {
+  switch (action.type) {
+    case LiteGoTouchView::kActionPlay:
+      reportMove(game.play(action.x, action.y), "touch");
+      maybeStartAiTurn();
+      break;
+    case LiteGoTouchView::kActionPass:
+      reportMove(game.pass(), "touch-pass");
+      maybeStartAiTurn();
+      break;
+    case LiteGoTouchView::kActionUndo:
+      cmdUndo(String());
+      break;
+    case LiteGoTouchView::kActionResign:
+      cmdResign(String());
+      break;
+    case LiteGoTouchView::kActionScore:
+      cmdScore(String());
+      break;
+    case LiteGoTouchView::kActionHint:
+      cmdHint(String());
+      break;
+    case LiteGoTouchView::kActionNewGame:
+      cmdReset(String());
+      break;
+    case LiteGoTouchView::kActionLevel: {
+      // Cycles easy -> normal -> hard -> easy.
+      litego::Level next = game.level() == litego::kLevelEasy     ? litego::kLevelNormal
+                           : game.level() == litego::kLevelNormal ? litego::kLevelHard
+                                                                  : litego::kLevelEasy;
+      game.setLevel(next);
+      Serial.println(String("[go] level=") + game.levelName());
+      touchView.setStatus(String("Opponent level: ") + game.levelName() + ".");
+      touchView.requestScoreRepaint();
+      break;
+    }
+    case LiteGoTouchView::kActionColor:
+      cancelAiTurn();
+      game.setHumanColor(game.humanColor() == 'B' ? 'W' : 'B');
+      Serial.println(String("[go] you play ") + String(game.humanColor()));
+      touchView.setStatus(String("You play ") + (game.humanColor() == 'B' ? "Black." : "White."));
+      touchView.requestScoreRepaint();
+      maybeStartAiTurn();
+      break;
+    case LiteGoTouchView::kActionNone:
+      break;
+  }
 }
 
 void setup() {
@@ -137,52 +316,57 @@ void setup() {
   Logger::info("app", "CrowPanel LiteGo Touch Coach");
   printHardwareProfile(Serial, activeHardwareProfile());
   storage.begin("litego");
-  game.reset();
+
+  game.begin();
+  game.setKomiX2(LITEGO_KOMI_X2);
+  game.setLevel((litego::Level)LITEGO_DEFAULT_LEVEL);
+  game.setHumanColor(LITEGO_HUMAN_COLOR);
+
   touchView.begin(&game);
-  refreshGo("coach board ready");
+  touchView.setStatus("Tap an intersection to preview, tap it again to place.");
   eventLog.add("LiteGo Touch Coach booted");
+
   router.begin(Serial, "litego");
-  router.on("status", "uptime, heap, profile, flags", cmdStatus);
+  router.on("status", "uptime, heap, profile, game settings", cmdStatus);
   router.on("history", "recent events", cmdHistory);
   router.on("board", "print 9x9 board", cmdBoard);
   router.on("hint", "show liberty/atari coach text", cmdHint);
   router.on("play", "play <x> <y>", cmdPlay);
-  router.on("cpu", "make simple CPU move", cmdCpu);
+  router.on("cpu", "make one opponent move now", cmdCpu);
   router.on("pass", "pass turn", cmdPass);
-  router.on("reset", "reset board", cmdReset);
-  router.on("score", "rough area score estimate", cmdScore);
-  router.on("selftest", "run rules smoke scenarios", cmdSelfTest);
+  router.on("undo", "take back your last move", cmdUndo);
+  router.on("resign", "resign the game", cmdResign);
+  router.on("new", "start a new game", cmdReset);
+  router.on("reset", "start a new game", cmdReset);
+  router.on("score", "area score with komi", cmdScore);
+  router.on("level", "level <easy|normal|hard>", cmdLevel);
+  router.on("komi", "komi <points>", cmdKomi);
+  router.on("color", "color <b|w> - the side you play", cmdColor);
+  router.on("selftest", "run rules fixtures and AI hygiene", cmdSelfTest);
+  router.on("bench", "bench <ms> - measure playouts/sec", cmdBench);
+  router.on("touchcal", "print raw and mapped touch coordinates", cmdTouchCal);
+  router.on("autoplay", "autoplay <n> - opponent plays n moves", cmdAutoplay);
+
   printBoard();
+  maybeStartAiTurn();
 }
 
 void loop() {
   router.poll();
 
-  LiteGoTouchView::Action action;
-  if (touchView.tick(action)) {
-    switch (action.type) {
-      case LiteGoTouchView::kActionPlay:
-        reportMove(game.play(action.x, action.y), "touch");
-        break;
-      case LiteGoTouchView::kActionPass:
-        reportMove(game.pass(), "touch-pass");
-        break;
-      case LiteGoTouchView::kActionCpu:
-        reportMove(game.cpuMove(), "touch-cpu");
-        break;
-      case LiteGoTouchView::kActionReset:
-        cmdReset(String());
-        break;
-      case LiteGoTouchView::kActionScore:
-        cmdScore(String());
-        break;
-      case LiteGoTouchView::kActionHint:
-        cmdHint(String());
-        break;
-      case LiteGoTouchView::kActionNone:
-        break;
+  // Slice the opponent's search so touch stays live while it thinks.
+  if (aiTurnActive) {
+    if (game.tickAi(LITEGO_AI_SLICE_MS)) {
+      aiTurnActive = false;
+      touchView.setThinking(false);
+      reportMove(game.takeAiMove(), "cpu");
     }
   }
 
-  delay(20);
+  LiteGoTouchView::Action action;
+  if (touchView.tick(action)) {
+    handleAction(action);
+  }
+
+  delay(2);
 }

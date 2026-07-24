@@ -5,173 +5,89 @@
 #include <CrowPanelShared.h>
 #endif
 
-void LiteGoTouchView::begin(LiteGoGame *game) {
-  game_ = game;
-  dirty_ = true;
-  wasTouched_ = false;
-  lastMoveValid_ = false;
-  lastMoveX_ = -1;
-  lastMoveY_ = -1;
-  status_ = "Board ready. Tap an intersection or command pill.";
-  statusWarning_ = false;
-
-#if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
-  lastTouchMap_ = "none";
-  lastTouchActionMs_ = 0;
-  if (CrowDisplay::canvas() == nullptr) {
-    CrowDisplay::begin(activeHardwareProfile(), "LiteGo Touch Coach");
-  }
-#endif
-}
-
-void LiteGoTouchView::requestRepaint() {
-  dirty_ = true;
-}
-
-void LiteGoTouchView::clearLastMove() {
-  lastMoveValid_ = false;
-  lastMoveX_ = -1;
-  lastMoveY_ = -1;
-  dirty_ = true;
-}
-
-void LiteGoTouchView::setLastResult(const LiteGoGame::MoveResult &result, const char *source) {
-  if (result.status == LiteGoGame::kMoveOk) {
-    lastMoveValid_ = true;
-    lastMoveX_ = result.x;
-    lastMoveY_ = result.y;
-  }
-  if (result.status == LiteGoGame::kMovePass || result.status == LiteGoGame::kMoveNoLegalMove) {
-    lastMoveValid_ = false;
-  }
-
-  String label = source ? source : "move";
-  status_ = label + ": ";
-  if (game_ != nullptr) {
-    status_ += game_->describeMove(result);
-  } else {
-    status_ += result.status == LiteGoGame::kMoveOk ? "played" : "updated";
-  }
-  statusWarning_ = result.status != LiteGoGame::kMoveOk &&
-                   result.status != LiteGoGame::kMovePass &&
-                   result.status != LiteGoGame::kMoveNoLegalMove;
-  dirty_ = true;
-}
-
 void LiteGoTouchView::setStatus(const String &message, bool warning) {
   status_ = message;
   statusWarning_ = warning;
-  dirty_ = true;
+#if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
+  dirtyStatus_ = true;
+#endif
 }
 
+#if !(USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4))
+
+// Headless build: the game is fully playable over Serial, so the view degrades
+// to a no-op rather than disappearing behind #ifdefs at every call site.
+void LiteGoTouchView::begin(LiteGoGame *game) { game_ = game; }
+bool LiteGoTouchView::ready() const { return false; }
+void LiteGoTouchView::requestFullRepaint() {}
+void LiteGoTouchView::requestBoardRepaint() {}
+void LiteGoTouchView::requestStatusRepaint() {}
+void LiteGoTouchView::requestScoreRepaint() {}
+void LiteGoTouchView::noteMoveResult(const LiteGoGame::MoveResult &, const char *) {}
+void LiteGoTouchView::clearGhost() {}
+void LiteGoTouchView::setThinking(bool) {}
 bool LiteGoTouchView::tick(Action &action) {
   action.type = kActionNone;
   action.x = -1;
   action.y = -1;
-
-#if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
-  if (game_ == nullptr || CrowDisplay::canvas() == nullptr) {
-    return false;
-  }
-
-  if (dirty_) {
-    draw();
-    dirty_ = false;
-  }
-
-  int16_t rx;
-  int16_t ry;
-  bool touched = CrowDisplay::touchPoint(rx, ry);
-  unsigned long now = millis();
-  bool tapped = touched && !wasTouched_ && (now - lastTouchActionMs_) > 120;
-
-  if (tapped) {
-    struct TouchCandidate {
-      int16_t x;
-      int16_t y;
-      const char *name;
-    };
-    const TouchCandidate candidates[] = {
-        {rx, ry, "raw"},
-        {ry, rx, "swap"},
-        {(int16_t)(1024 - 1 - rx), ry, "flipX"},
-        {rx, (int16_t)(600 - 1 - ry), "flipY"},
-        {(int16_t)(1024 - 1 - rx), (int16_t)(600 - 1 - ry), "flipXY"},
-        {(int16_t)(1024 - 1 - ry), rx, "swapFlipX"},
-        {ry, (int16_t)(600 - 1 - rx), "swapFlipY"},
-        {(int16_t)(1024 - 1 - ry), (int16_t)(600 - 1 - rx), "swapFlipXY"},
-    };
-
-    for (uint8_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
-      int16_t tx = candidates[i].x;
-      int16_t ty = candidates[i].y;
-      if (tx < 0 || tx >= 1024 || ty < 0 || ty >= 600) {
-        continue;
-      }
-
-      bool duplicate = false;
-      for (uint8_t j = 0; j < i; j++) {
-        if (candidates[j].x == tx && candidates[j].y == ty) {
-          duplicate = true;
-          break;
-        }
-      }
-      if (duplicate) {
-        continue;
-      }
-
-      if (mapTouch(tx, ty, action)) {
-        lastTouchMap_ = candidates[i].name;
-        lastTouchActionMs_ = now;
-        Logger::info("touch", String("map=") + lastTouchMap_ +
-                                  " raw=" + String(rx) + "," + String(ry) +
-                                  " mapped=" + String(tx) + "," + String(ty) +
-                                  " action=" + String((int)action.type) +
-                                  " point=" + String(action.x) + "," + String(action.y));
-        wasTouched_ = touched;
-        return true;
-      }
-    }
-
-    lastTouchActionMs_ = now;
-    Logger::info("touch", "ignored raw=" + String(rx) + "," + String(ry));
-  }
-
-  wasTouched_ = touched;
-#else
-  (void)action;
-#endif
   return false;
 }
+void LiteGoTouchView::reportCalibration(Print &out) const {
+  out.println(F("[touchcal] display build required (USE_DISPLAY=1)"));
+}
+String LiteGoTouchView::calibrationSummary() const {
+  return "Touch calibration needs a USE_DISPLAY=1 build.";
+}
 
-#if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
+#else
+
 namespace {
+
 constexpr int16_t kScreenW = 1024;
 constexpr int16_t kScreenH = 600;
 constexpr int16_t kHeaderH = 56;
 constexpr int16_t kFooterY = 548;
-constexpr int16_t kFooterH = 52;
-constexpr int16_t kBoardPanelX = 24;
-constexpr int16_t kBoardPanelY = 80;
-constexpr int16_t kBoardPanelW = 500;
-constexpr int16_t kBoardPanelH = 452;
-constexpr int16_t kSideX = 548;
-constexpr int16_t kSideY = 80;
-constexpr int16_t kSideW = 452;
-constexpr int16_t kSideH = 452;
-constexpr int16_t kOriginX = 100;
-constexpr int16_t kOriginY = 150;
-constexpr int16_t kCell = 42;
-constexpr int16_t kGridSpan = kCell * (LiteGoGame::kSize - 1);
-constexpr int16_t kStoneR = 15;
-constexpr int16_t kHitPad = kCell / 2;
+constexpr int16_t kFooterH = kScreenH - kFooterY;
 
-constexpr uint16_t kBoard = Widgets::rgb(0xD8, 0xB8, 0x73);
-constexpr uint16_t kBoardHi = Widgets::rgb(0xF1, 0xCE, 0x83);
+// Board geometry. 48 px cells with 20 px stones give a target a fingertip can
+// hit, and preview-then-confirm covers the rest.
+constexpr int16_t kCell = 48;
+constexpr int16_t kGridSpan = kCell * (LiteGoGame::kSize - 1);  // 384
+constexpr int16_t kTilePad = 34;
+constexpr int16_t kTileX = 22;
+constexpr int16_t kTileY = 68;
+constexpr int16_t kTileSize = kGridSpan + 2 * kTilePad;  // 452
+constexpr int16_t kOriginX = kTileX + kTilePad;          // 56
+constexpr int16_t kOriginY = kTileY + kTilePad;          // 102
+constexpr int16_t kStoneR = 20;
+constexpr int16_t kCellHalf = kCell / 2;
+constexpr int16_t kHitPad = kCellHalf;
+
+// Side column
+constexpr int16_t kSideX = 496;
+constexpr int16_t kSideW = 512;
+constexpr int16_t kCardY = 68;
+constexpr int16_t kCardH = 96;
+constexpr int16_t kCardW = 164;
+constexpr int16_t kStatusY = 176;
+constexpr int16_t kStatusH = 88;
+constexpr int16_t kCoachY = 274;
+constexpr int16_t kCoachH = 118;
+constexpr int16_t kThinkY = 402;
+constexpr int16_t kThinkH = 28;
+constexpr int16_t kRow1Y = 438;
+constexpr int16_t kRow2Y = 490;
+constexpr int16_t kButtonH = 46;
+
+constexpr uint16_t kBoardWood = Widgets::rgb(0xD8, 0xB8, 0x73);
+constexpr uint16_t kBoardEdge = Widgets::rgb(0xF1, 0xCE, 0x83);
 constexpr uint16_t kBoardLine = Widgets::rgb(0x4D, 0x3A, 0x22);
 constexpr uint16_t kBlackStone = Widgets::rgb(0x07, 0x0A, 0x11);
 constexpr uint16_t kWhiteStone = Widgets::rgb(0xF4, 0xF0, 0xE4);
-constexpr uint16_t kWhiteLine = Widgets::rgb(0xB6, 0xAD, 0x98);
+constexpr uint16_t kWhiteEdge = Widgets::rgb(0xB6, 0xAD, 0x98);
+constexpr uint16_t kStoneShadow = Widgets::rgb(0xA8, 0x8C, 0x52);
+constexpr uint16_t kGhostBlack = Widgets::rgb(0x86, 0x74, 0x50);
+constexpr uint16_t kGhostWhite = Widgets::rgb(0xE7, 0xDA, 0xB8);
 
 struct ButtonDef {
   LiteGoTouchView::ActionType type;
@@ -185,15 +101,34 @@ struct ButtonDef {
 };
 
 const ButtonDef kButtons[] = {
-    {LiteGoTouchView::kActionPass, "PASS", 564, 476, 76, 36, Widgets::kSurfaceHi, Widgets::kTextHi},
-    {LiteGoTouchView::kActionCpu, "CPU", 648, 476, 70, 36, Widgets::kAccent, Widgets::kBg},
-    {LiteGoTouchView::kActionHint, "HINT", 726, 476, 78, 36, Widgets::kSurfaceHi, Widgets::kTextHi},
-    {LiteGoTouchView::kActionScore, "SCORE", 812, 476, 86, 36, Widgets::kSurfaceHi, Widgets::kTextHi},
-    {LiteGoTouchView::kActionReset, "RESET", 906, 476, 78, 36, Widgets::kRed, Widgets::kBg},
+    {LiteGoTouchView::kActionPass, "PASS", 496, kRow1Y, 96, kButtonH, Widgets::kSurfaceHi,
+     Widgets::kTextHi},
+    {LiteGoTouchView::kActionUndo, "UNDO", 600, kRow1Y, 96, kButtonH, Widgets::kSurfaceHi,
+     Widgets::kTextHi},
+    {LiteGoTouchView::kActionHint, "HINT", 704, kRow1Y, 96, kButtonH, Widgets::kSurfaceHi,
+     Widgets::kTextHi},
+    {LiteGoTouchView::kActionScore, "SCORE", 808, kRow1Y, 96, kButtonH, Widgets::kSurfaceHi,
+     Widgets::kTextHi},
+    {LiteGoTouchView::kActionResign, "RESIGN", 912, kRow1Y, 96, kButtonH, Widgets::kSurfaceHi,
+     Widgets::kRed},
+    {LiteGoTouchView::kActionNewGame, "NEW GAME", 496, kRow2Y, 164, kButtonH, Widgets::kAccent,
+     Widgets::kBg},
+    {LiteGoTouchView::kActionLevel, "LEVEL", 670, kRow2Y, 164, kButtonH, Widgets::kSurfaceHi,
+     Widgets::kTextHi},
+    {LiteGoTouchView::kActionColor, "SWAP SIDES", 844, kRow2Y, 164, kButtonH, Widgets::kSurfaceHi,
+     Widgets::kTextHi},
 };
+constexpr uint8_t kButtonCount = sizeof(kButtons) / sizeof(kButtons[0]);
 
-int16_t pointCoord(int8_t index, int16_t origin) {
-  return origin + (int16_t)index * kCell;
+const int8_t kStarPoints[5][2] = {{2, 2}, {6, 2}, {4, 4}, {2, 6}, {6, 6}};
+
+int16_t pointCoordX(int8_t index) { return kOriginX + (int16_t)index * kCell; }
+int16_t pointCoordY(int8_t index) { return kOriginY + (int16_t)index * kCell; }
+
+int16_t clampi(int32_t v, int32_t lo, int32_t hi) {
+  if (v < lo) return (int16_t)lo;
+  if (v > hi) return (int16_t)hi;
+  return (int16_t)v;
 }
 
 String fitText(Arduino_GFX *g, const String &text, const GFXfont *font, int16_t maxW) {
@@ -207,6 +142,8 @@ String fitText(Arduino_GFX *g, const String &text, const GFXfont *font, int16_t 
   return t + "...";
 }
 
+// Greedy word wrap. Falls back to a character break for a single long word,
+// and elides the tail into the final line rather than dropping it silently.
 void drawWrapped(Arduino_GFX *g, int16_t x, int16_t y, int16_t maxW, uint8_t maxLines,
                  const String &source, const GFXfont *font, uint16_t color) {
   String text = source;
@@ -244,13 +181,12 @@ void drawWrapped(Arduino_GFX *g, int16_t x, int16_t y, int16_t maxW, uint8_t max
       line = fitText(g, line + " " + text, font, maxW);
       text = "";
     }
-    Widgets::text(g, x, y + lineNo * 24, line.c_str(), font, color, Widgets::kLeft);
+    Widgets::text(g, x, y + lineNo * 22, line.c_str(), font, color, Widgets::kLeft);
   }
 }
 
-void metricCard(Arduino_GFX *g, int16_t x, int16_t y, int16_t w, int16_t h,
-                const char *label, const String &value, const String &sub,
-                uint16_t accent) {
+void metricCard(Arduino_GFX *g, int16_t x, int16_t y, int16_t w, int16_t h, const char *label,
+                const String &value, const String &sub, uint16_t accent) {
   Widgets::panel(g, x, y, w, h, 8, Widgets::kSurface, 1, Widgets::kLine);
   Widgets::text(g, x + 12, y + 10, label, Widgets::fontS(), Widgets::kTextMut, Widgets::kLeft);
   Widgets::text(g, x + 12, y + 34, fitText(g, value, Widgets::fontL(), w - 24).c_str(),
@@ -261,192 +197,607 @@ void metricCard(Arduino_GFX *g, int16_t x, int16_t y, int16_t w, int16_t h,
   }
 }
 
-void drawButton(Arduino_GFX *g, const ButtonDef &button) {
-  g->fillRoundRect(button.x, button.y, button.w, button.h, button.h / 2, button.fill);
-  Widgets::text(g, button.x + button.w / 2, button.y + 9, button.label,
-                Widgets::fontS(), button.text, Widgets::kCenter);
-}
+// Accumulated dirty row range; render() turns it into a single cache sync.
+int16_t gFlushTop = 0x7FFF;
+int16_t gFlushBottom = -1;
 
-void drawStone(Arduino_GFX *g, int16_t cx, int16_t cy, char stone, bool last) {
-  if (stone == 'B') {
-    g->fillCircle(cx + 2, cy + 2, kStoneR, Widgets::rgb(0x2B, 0x22, 0x17));
-    g->fillCircle(cx, cy, kStoneR, kBlackStone);
-    g->drawCircle(cx, cy, kStoneR, Widgets::kLine);
-  } else if (stone == 'W') {
-    g->fillCircle(cx + 2, cy + 2, kStoneR, Widgets::rgb(0x83, 0x6A, 0x42));
-    g->fillCircle(cx, cy, kStoneR, kWhiteStone);
-    g->drawCircle(cx, cy, kStoneR, kWhiteLine);
+void markRows(int16_t y, int16_t h) {
+  if (y < gFlushTop) {
+    gFlushTop = y;
   }
-  if (last) {
-    g->drawCircle(cx, cy, kStoneR + 5, Widgets::kAccent);
-    g->drawCircle(cx, cy, kStoneR + 6, Widgets::kAccent);
+  if (y + h > gFlushBottom) {
+    gFlushBottom = y + h;
   }
 }
+
+}  // namespace
+
+// --- touch ------------------------------------------------------------------
+
+int16_t LiteGoTouchView::mapX(int16_t rawX, int16_t rawY) const {
+  int32_t raw = LITEGO_TOUCH_SWAP_XY ? rawY : rawX;
+  int32_t span = (int32_t)LITEGO_TOUCH_MAX_X - LITEGO_TOUCH_MIN_X;
+  if (span == 0) {
+    span = 1;
+  }
+  int32_t v = (raw - LITEGO_TOUCH_MIN_X) * (kScreenW - 1) / span;
+#if LITEGO_TOUCH_INVERT_X
+  v = (kScreenW - 1) - v;
+#endif
+  return clampi(v, 0, kScreenW - 1);
 }
 
-bool LiteGoTouchView::hitButton(int16_t tx, int16_t ty, Action &action) const {
-  for (uint8_t i = 0; i < sizeof(kButtons) / sizeof(kButtons[0]); i++) {
-    const ButtonDef &button = kButtons[i];
-    if (tx >= button.x - 8 && tx <= button.x + button.w + 8 &&
-        ty >= button.y - 8 && ty <= button.y + button.h + 8) {
-      action.type = button.type;
-      action.x = -1;
-      action.y = -1;
-      return true;
+int16_t LiteGoTouchView::mapY(int16_t rawX, int16_t rawY) const {
+  int32_t raw = LITEGO_TOUCH_SWAP_XY ? rawX : rawY;
+  int32_t span = (int32_t)LITEGO_TOUCH_MAX_Y - LITEGO_TOUCH_MIN_Y;
+  if (span == 0) {
+    span = 1;
+  }
+  int32_t v = (raw - LITEGO_TOUCH_MIN_Y) * (kScreenH - 1) / span;
+#if LITEGO_TOUCH_INVERT_Y
+  v = (kScreenH - 1) - v;
+#endif
+  return clampi(v, 0, kScreenH - 1);
+}
+
+void LiteGoTouchView::sampleTouch() {
+  int16_t rx = 0;
+  int16_t ry = 0;
+  bool down = CrowDisplay::touchPoint(rx, ry);
+  if (down) {
+    rawX_ = rx;
+    rawY_ = ry;
+    touchX_ = mapX(rx, ry);
+    touchY_ = mapY(rx, ry);
+  }
+  wasDown_ = down_;
+  down_ = down;
+}
+
+void LiteGoTouchView::reportCalibration(Print &out) const {
+  out.println(String("[touchcal] swap=") + String(LITEGO_TOUCH_SWAP_XY) + " invertX=" +
+              String(LITEGO_TOUCH_INVERT_X) + " invertY=" + String(LITEGO_TOUCH_INVERT_Y) +
+              " rangeX=" + String(LITEGO_TOUCH_MIN_X) + ".." + String(LITEGO_TOUCH_MAX_X) +
+              " rangeY=" + String(LITEGO_TOUCH_MIN_Y) + ".." + String(LITEGO_TOUCH_MAX_Y));
+  if (down_) {
+    out.println(String("[touchcal] raw=") + String(rawX_) + "," + String(rawY_) + " mapped=" +
+                String(touchX_) + "," + String(touchY_));
+  } else {
+    out.println(F("[touchcal] no finger down; hold the screen and run touchcal again"));
+  }
+}
+
+String LiteGoTouchView::calibrationSummary() const {
+  if (!down_) {
+    return String("Touchcal: hold a finger on the screen, then run touchcal again. Mapping "
+                  "swap=") +
+           String(LITEGO_TOUCH_SWAP_XY) + " invX=" + String(LITEGO_TOUCH_INVERT_X) +
+           " invY=" + String(LITEGO_TOUCH_INVERT_Y) + ".";
+  }
+  int8_t px = 0;
+  int8_t py = 0;
+  String text = String("Touchcal raw ") + String(rawX_) + "," + String(rawY_) + " -> mapped " +
+                String(touchX_) + "," + String(touchY_);
+  if (pointAt(touchX_, touchY_, px, py)) {
+    text += " = point " + String(px) + "," + String(py);
+  } else {
+    text += " (off the board)";
+  }
+  return text;
+}
+
+int8_t LiteGoTouchView::buttonAt(int16_t x, int16_t y) const {
+  for (uint8_t i = 0; i < kButtonCount; i++) {
+    const ButtonDef &b = kButtons[i];
+    if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
+      return (int8_t)i;
     }
   }
-  return false;
+  return -1;
 }
 
-bool LiteGoTouchView::mapTouch(int16_t tx, int16_t ty, Action &action) const {
-  if (hitButton(tx, ty, action)) {
-    return true;
-  }
-
-  if (tx < kOriginX - kHitPad || tx > kOriginX + kGridSpan + kHitPad ||
-      ty < kOriginY - kHitPad || ty > kOriginY + kGridSpan + kHitPad) {
+bool LiteGoTouchView::pointAt(int16_t x, int16_t y, int8_t &px, int8_t &py) const {
+  if (x < kOriginX - kHitPad || x > kOriginX + kGridSpan + kHitPad || y < kOriginY - kHitPad ||
+      y > kOriginY + kGridSpan + kHitPad) {
     return false;
   }
-
-  int16_t localX = tx - kOriginX;
-  int16_t localY = ty - kOriginY;
-  int8_t nearestX = (localX >= 0) ? (localX + kHitPad) / kCell : (localX - kHitPad) / kCell;
-  int8_t nearestY = (localY >= 0) ? (localY + kHitPad) / kCell : (localY - kHitPad) / kCell;
-
-  if (nearestX < 0 || nearestX >= (int8_t)LiteGoGame::kSize ||
-      nearestY < 0 || nearestY >= (int8_t)LiteGoGame::kSize) {
+  int16_t nx = (x - kOriginX + kCellHalf) / kCell;
+  int16_t ny = (y - kOriginY + kCellHalf) / kCell;
+  if (nx < 0 || nx >= (int16_t)LiteGoGame::kSize || ny < 0 || ny >= (int16_t)LiteGoGame::kSize) {
     return false;
   }
-
-  int16_t centerX = pointCoord(nearestX, kOriginX);
-  int16_t centerY = pointCoord(nearestY, kOriginY);
-  if (abs(tx - centerX) > kHitPad || abs(ty - centerY) > kHitPad) {
-    return false;
-  }
-
-  action.type = kActionPlay;
-  action.x = nearestX;
-  action.y = nearestY;
+  px = (int8_t)nx;
+  py = (int8_t)ny;
   return true;
 }
 
-void LiteGoTouchView::draw() {
+bool LiteGoTouchView::tick(Action &action) {
+  action.type = kActionNone;
+  action.x = -1;
+  action.y = -1;
+
+  if (game_ == nullptr || !ready_) {
+    return false;
+  }
+
+  render();
+  sampleTouch();
+
+  uint32_t now = millis();
+  bool committed = false;
+
+  if (down_ && !wasDown_) {
+    // Press: remember where the finger landed and light up any button under it.
+    pressX_ = touchX_;
+    pressY_ = touchY_;
+    int8_t button = buttonAt(touchX_, touchY_);
+    if (button != pressedButton_) {
+      pressedButton_ = button;
+      dirtyButtons_ = true;
+    }
+  } else if (!down_ && wasDown_) {
+    // Release: the action only fires if the finger is still on the target it
+    // pressed, so sliding off cancels - the standard touch contract.
+    int8_t releasedButton = buttonAt(pressX_, pressY_);
+    int8_t pressedIndex = pressedButton_;
+    if (pressedButton_ >= 0) {
+      pressedButton_ = -1;
+      dirtyButtons_ = true;
+    }
+
+    // Contact bounce lasts a few milliseconds. Keep this well under the gap
+    // between two deliberate taps, or it swallows the confirm tap that places
+    // the stone.
+    if (now - lastActionMs_ < 60) {
+      return false;
+    }
+
+    if (releasedButton >= 0 && releasedButton == pressedIndex) {
+      action.type = kButtons[releasedButton].type;
+      lastActionMs_ = now;
+      committed = true;
+      if (action.type != kActionHint && action.type != kActionScore) {
+        clearGhost();
+      }
+    } else {
+      int8_t px = 0;
+      int8_t py = 0;
+      if (pointAt(pressX_, pressY_, px, py)) {
+        // Board taps belong to the human's own turn only. Without this a tap
+        // during the opponent's search would place a stone of the opponent's
+        // colour, because the engine always plays for the side to move.
+        if (game_->finished()) {
+          setStatus(String("Game over: ") + game_->resultText() + ". Tap NEW GAME to play again.");
+          lastActionMs_ = now;
+          return false;
+        }
+        if (!game_->humanToMove()) {
+          setStatus("Opponent is thinking - wait for their move.");
+          lastActionMs_ = now;
+          return false;
+        }
+        if (game_->at((uint8_t)px, (uint8_t)py) != '.') {
+          // No point parking a preview on a stone - say so instead of letting
+          // the confirm tap bounce off the rules engine.
+          clearGhost();
+          char taken[64];
+          snprintf(taken, sizeof(taken), "Point %d,%d already has a stone.", px, py);
+          setStatus(taken, true);
+          lastActionMs_ = now;
+          return false;
+        }
+        if (px == ghostX_ && py == ghostY_) {
+          // Second tap on the same intersection commits the stone.
+          action.type = kActionPlay;
+          action.x = px;
+          action.y = py;
+          lastActionMs_ = now;
+          committed = true;
+          clearGhost();
+        } else {
+          int8_t oldX = ghostX_;
+          int8_t oldY = ghostY_;
+          ghostX_ = px;
+          ghostY_ = py;
+          if (oldX >= 0) {
+            markPointDirty((uint8_t)oldX, (uint8_t)oldY);
+          }
+          markPointDirty((uint8_t)px, (uint8_t)py);
+          dirtyStatus_ = true;
+          char buf[72];
+          snprintf(buf, sizeof(buf), "Preview at %d,%d. Tap it again to place the stone.", px, py);
+          status_ = buf;
+          statusWarning_ = false;
+          lastActionMs_ = now;
+        }
+      }
+    }
+  }
+
+  return committed;
+}
+
+// --- lifecycle and dirty tracking -------------------------------------------
+
+void LiteGoTouchView::begin(LiteGoGame *game) {
+  game_ = game;
+  status_ = "Tap an intersection to preview, tap it again to place.";
+  statusWarning_ = false;
+  ghostX_ = -1;
+  ghostY_ = -1;
+  pressedButton_ = -1;
+  dirtyPointCount_ = 0;
+
+  // manualFlush=true: Arduino_GFX otherwise cache-syncs on every primitive,
+  // which for a text-heavy screen means thousands of syncs per repaint.
+  ready_ = CrowDisplay::begin(activeHardwareProfile(), "LiteGo Touch Coach", true);
+  if (!ready_) {
+    Logger::warn("view", "display init failed; Serial play still works");
+    return;
+  }
+  requestFullRepaint();
+}
+
+bool LiteGoTouchView::ready() const { return ready_; }
+
+void LiteGoTouchView::requestFullRepaint() {
+  dirtyChrome_ = true;
+  dirtyBoard_ = true;
+  dirtyStatus_ = true;
+  dirtyScore_ = true;
+  dirtyButtons_ = true;
+  thinkingShown_ = 255;
+}
+
+void LiteGoTouchView::requestBoardRepaint() { dirtyBoard_ = true; }
+void LiteGoTouchView::requestStatusRepaint() { dirtyStatus_ = true; }
+void LiteGoTouchView::requestScoreRepaint() { dirtyScore_ = true; }
+
+void LiteGoTouchView::markPointDirty(uint8_t x, uint8_t y) {
+  if (dirtyBoard_ || dirtyPointCount_ >= kMaxDirtyPoints) {
+    return;
+  }
+  uint8_t index = (uint8_t)(y * LiteGoGame::kSize + x);
+  for (uint8_t i = 0; i < dirtyPointCount_; i++) {
+    if (dirtyPoints_[i] == index) {
+      return;
+    }
+  }
+  dirtyPoints_[dirtyPointCount_++] = index;
+}
+
+void LiteGoTouchView::clearGhost() {
+  if (ghostX_ >= 0) {
+    markPointDirty((uint8_t)ghostX_, (uint8_t)ghostY_);
+  }
+  ghostX_ = -1;
+  ghostY_ = -1;
+}
+
+void LiteGoTouchView::setThinking(bool thinking) { thinking_ = thinking; }
+
+void LiteGoTouchView::noteMoveResult(const LiteGoGame::MoveResult &result, const char *source) {
+  if (result.status == LiteGoGame::kMoveOk) {
+    // Only the placed stone, the stones it removed, and the cell that used to
+    // carry the last-move marker changed - so only those cells are redrawn.
+    // The old marker cell has to be dirtied explicitly: the game has already
+    // moved its own last-move pointer to the new stone by now.
+    if (markerX_ >= 0) {
+      markPointDirty((uint8_t)markerX_, (uint8_t)markerY_);
+    }
+    markPointDirty((uint8_t)result.x, (uint8_t)result.y);
+    for (uint8_t i = 0; i < result.captures; i++) {
+      uint8_t p = result.capturedPoints[i];
+      markPointDirty((uint8_t)(p % LiteGoGame::kSize), (uint8_t)(p / LiteGoGame::kSize));
+    }
+    markerX_ = result.x;
+    markerY_ = result.y;
+  } else if (result.status == LiteGoGame::kMovePass) {
+    if (markerX_ >= 0) {
+      markPointDirty((uint8_t)markerX_, (uint8_t)markerY_);
+    }
+    markerX_ = -1;
+    markerY_ = -1;
+  }
+
+  String label = source != nullptr ? source : "move";
+  status_ = label + ": ";
+  status_ += game_ != nullptr ? game_->describeMove(result) : String("updated");
+  statusWarning_ = result.status != LiteGoGame::kMoveOk && result.status != LiteGoGame::kMovePass;
+  dirtyStatus_ = true;
+  dirtyScore_ = true;
+  dirtyButtons_ = true;
+}
+
+// --- drawing ----------------------------------------------------------------
+
+void LiteGoTouchView::drawChrome() {
+  Arduino_GFX *g = CrowDisplay::canvas();
+  g->fillScreen(Widgets::kBg);
+
+  g->fillRect(0, 0, kScreenW, kHeaderH, Widgets::kSurface);
+  g->fillRect(0, kHeaderH - 2, kScreenW, 2, Widgets::kAccent);
+  Widgets::text(g, 20, 8, "LITEGO", Widgets::fontL(), Widgets::kTextHi, Widgets::kLeft);
+  Widgets::text(g, 20, 32, "9x9 GO - OFFLINE", Widgets::fontS(), Widgets::kTextMut, Widgets::kLeft);
+
+  // Wood tile and full grid.
+  g->fillRoundRect(kTileX, kTileY, kTileSize, kTileSize, 10, kBoardWood);
+  g->drawRoundRect(kTileX, kTileY, kTileSize, kTileSize, 10, kBoardEdge);
+  for (uint8_t i = 0; i < LiteGoGame::kSize; i++) {
+    g->drawFastHLine(kOriginX, pointCoordY((int8_t)i), kGridSpan + 1, kBoardLine);
+    g->drawFastVLine(pointCoordX((int8_t)i), kOriginY, kGridSpan + 1, kBoardLine);
+  }
+  for (uint8_t i = 0; i < 5; i++) {
+    g->fillCircle(pointCoordX(kStarPoints[i][0]), pointCoordY(kStarPoints[i][1]), 4, kBoardLine);
+  }
+  for (uint8_t i = 0; i < LiteGoGame::kSize; i++) {
+    char n[3];
+    snprintf(n, sizeof(n), "%u", i);
+    Widgets::text(g, pointCoordX((int8_t)i), kOriginY + kGridSpan + 16, n, Widgets::fontS(),
+                  kBoardLine, Widgets::kCenter);
+    Widgets::text(g, kOriginX - 26, pointCoordY((int8_t)i) - 7, n, Widgets::fontS(), kBoardLine,
+                  Widgets::kCenter);
+  }
+
+  g->fillRect(0, kFooterY, kScreenW, kFooterH, Widgets::kSurface);
+  g->fillRect(0, kFooterY, kScreenW, 2, Widgets::kLine);
+
+  markRows(0, kScreenH);
+}
+
+void LiteGoTouchView::drawCell(uint8_t x, uint8_t y) {
+  Arduino_GFX *g = CrowDisplay::canvas();
+  int16_t cx = pointCoordX((int8_t)x);
+  int16_t cy = pointCoordY((int8_t)y);
+
+  // Repaint the cell's own square of wood, then put back everything that
+  // belongs inside it. Stones are smaller than the cell, so neighbours are
+  // never clipped and no full-board repaint is needed.
+  int16_t left = cx - kCellHalf;
+  int16_t top = cy - kCellHalf;
+  g->fillRect(left, top, kCell, kCell, kBoardWood);
+
+  int16_t hFrom = clampi(left, kOriginX, kOriginX + kGridSpan);
+  int16_t hTo = clampi(left + kCell, kOriginX, kOriginX + kGridSpan);
+  int16_t vFrom = clampi(top, kOriginY, kOriginY + kGridSpan);
+  int16_t vTo = clampi(top + kCell, kOriginY, kOriginY + kGridSpan);
+  g->drawFastHLine(hFrom, cy, hTo - hFrom + 1, kBoardLine);
+  g->drawFastVLine(cx, vFrom, vTo - vFrom + 1, kBoardLine);
+
+  for (uint8_t i = 0; i < 5; i++) {
+    int16_t sx = pointCoordX(kStarPoints[i][0]);
+    int16_t sy = pointCoordY(kStarPoints[i][1]);
+    if (sx >= left && sx < left + kCell && sy >= top && sy < top + kCell) {
+      g->fillCircle(sx, sy, 4, kBoardLine);
+    }
+  }
+
+  char stone = game_->at(x, y);
+  if (stone == 'B' || stone == 'W') {
+    g->fillCircle(cx + 2, cy + 2, kStoneR, kStoneShadow);
+    g->fillCircle(cx, cy, kStoneR, stone == 'B' ? kBlackStone : kWhiteStone);
+    g->drawCircle(cx, cy, kStoneR, stone == 'B' ? Widgets::kLine : kWhiteEdge);
+    bool last = game_->hasLastMove() && game_->lastMoveX() == (int8_t)x &&
+                game_->lastMoveY() == (int8_t)y;
+    if (last) {
+      // Marker sits inside the stone so it cannot bleed into the next cell.
+      g->fillCircle(cx, cy, 5, Widgets::kAccent);
+    }
+  } else if (ghostX_ == (int8_t)x && ghostY_ == (int8_t)y) {
+    bool black = game_->currentPlayer() == 'B';
+    g->fillCircle(cx, cy, kStoneR - 3, black ? kGhostBlack : kGhostWhite);
+    g->drawCircle(cx, cy, kStoneR, Widgets::kAccent);
+    g->drawCircle(cx, cy, kStoneR - 1, Widgets::kAccent);
+  }
+
+  markRows(top, kCell);
+}
+
+void LiteGoTouchView::drawBoardAll() {
+  for (uint8_t y = 0; y < LiteGoGame::kSize; y++) {
+    for (uint8_t x = 0; x < LiteGoGame::kSize; x++) {
+      drawCell(x, y);
+    }
+  }
+  dirtyPointCount_ = 0;
+  // Resync the tracked marker cell: a full repaint follows an undo or a new
+  // game, either of which can move the last-move marker without a move result.
+  markerX_ = game_->hasLastMove() ? game_->lastMoveX() : -1;
+  markerY_ = game_->hasLastMove() ? game_->lastMoveY() : -1;
+}
+
+void LiteGoTouchView::drawScorePanel() {
+  Arduino_GFX *g = CrowDisplay::canvas();
+  litego::ScoreEstimate s = game_->estimateScore();
+
+  char toMove[2] = {game_->currentPlayer(), '\0'};
+  bool yourTurn = game_->humanToMove();
+  metricCard(g, kSideX, kCardY, kCardW, kCardH, "TO MOVE", toMove,
+             yourTurn ? "your move" : "opponent", yourTurn ? Widgets::kGreen : Widgets::kAmber);
+  metricCard(g, kSideX + kCardW + 10, kCardY, kCardW, kCardH, "CAPTURES",
+             String("B") + String(game_->blackCaptures()) + " W" + String(game_->whiteCaptures()),
+             "prisoners", Widgets::kAmber);
+  metricCard(g, kSideX + 2 * (kCardW + 10), kCardY, kCardW, kCardH, "SCORE", game_->resultText(),
+             String("B") + String(s.blackArea) + " W" + String(s.whiteArea) + " komi " +
+                 game_->komiText(),
+             s.marginX2 == 0 ? Widgets::kTextHi : Widgets::kAccent);
+
+  // Footer line: the settings that decide how the game plays.
+  g->fillRect(0, kFooterY + 2, kScreenW, kFooterH - 2, Widgets::kSurface);
+  Widgets::statusDot(g, 22, kFooterY + 26, 5, game_->finished() ? Widgets::kAmber : Widgets::kGreen);
+  String left = String("LEVEL ") + game_->levelName() + "   KOMI " + game_->komiText() +
+                "   YOU PLAY " + String(game_->humanColor() == 'B' ? "BLACK" : "WHITE") +
+                "   MOVE " + String(game_->moveCount());
+  Widgets::text(g, 40, kFooterY + 17, left.c_str(), Widgets::fontS(), Widgets::kTextMut,
+                Widgets::kLeft);
+  // Named local: a temporary String's c_str() inside a ternary survives only to
+  // the end of the full expression, which is a trap waiting for the next edit.
+  String right = game_->finished() ? String("GAME OVER  ") + game_->resultText()
+                                   : String("Serial: help");
+  Widgets::text(g, kScreenW - 16, kFooterY + 17, right.c_str(), Widgets::fontS(),
+                game_->finished() ? Widgets::kAmber : Widgets::kTextMut, Widgets::kRight);
+
+  markRows(kCardY, kCardH);
+  markRows(kFooterY, kFooterH);
+}
+
+void LiteGoTouchView::drawStatusPanel() {
+  Arduino_GFX *g = CrowDisplay::canvas();
+  uint16_t border = statusWarning_ ? Widgets::kRed : Widgets::kLine;
+  uint16_t fill = statusWarning_ ? Widgets::rgb(0x31, 0x18, 0x24) : Widgets::kSurfaceHi;
+
+  Widgets::panel(g, kSideX, kStatusY, kSideW, kStatusH, 8, fill, 1, border);
+  Widgets::text(g, kSideX + 18, kStatusY + 12, statusWarning_ ? "ATTENTION" : "LAST ACTION",
+                Widgets::fontS(), statusWarning_ ? Widgets::kRed : Widgets::kTextMut,
+                Widgets::kLeft);
+  drawWrapped(g, kSideX + 18, kStatusY + 36, kSideW - 36, 2, status_, Widgets::fontS(),
+              Widgets::kTextHi);
+
+  Widgets::panel(g, kSideX, kCoachY, kSideW, kCoachH, 8, Widgets::kSurface, 1, Widgets::kLine);
+  Widgets::text(g, kSideX + 18, kCoachY + 12, "COACH", Widgets::fontS(), Widgets::kTextMut,
+                Widgets::kLeft);
+  drawWrapped(g, kSideX + 18, kCoachY + 36, kSideW - 36, 4, game_->lastCoach(), Widgets::fontS(),
+              Widgets::kTextHi);
+
+  markRows(kStatusY, kStatusH);
+  markRows(kCoachY, kCoachH);
+}
+
+void LiteGoTouchView::drawButtons() {
+  Arduino_GFX *g = CrowDisplay::canvas();
+  for (uint8_t i = 0; i < kButtonCount; i++) {
+    const ButtonDef &b = kButtons[i];
+    bool pressed = pressedButton_ == (int8_t)i;
+    bool disabled = (b.type == kActionUndo && !game_->canUndo()) ||
+                    (b.type == kActionResign && game_->finished()) ||
+                    (b.type == kActionPass && game_->finished());
+
+    uint16_t fill = pressed ? Widgets::kAccent : b.fill;
+    uint16_t text = pressed ? Widgets::kBg : b.text;
+    if (disabled) {
+      fill = Widgets::kSurface;
+      text = Widgets::kLine;
+    }
+
+    g->fillRoundRect(b.x, b.y, b.w, b.h, 10, fill);
+    g->drawRoundRect(b.x, b.y, b.w, b.h, 10, Widgets::kLine);
+
+    // LEVEL and SWAP SIDES show their current value, so the label is dynamic.
+    String label = b.label;
+    if (b.type == kActionLevel) {
+      label = String("LEVEL: ") + game_->levelName();
+    } else if (b.type == kActionColor) {
+      label = String("YOU: ") + (game_->humanColor() == 'B' ? "BLACK" : "WHITE");
+    }
+    Widgets::text(g, b.x + b.w / 2, b.y + b.h / 2 - 7,
+                  fitText(g, label, Widgets::fontS(), b.w - 12).c_str(), Widgets::fontS(), text,
+                  Widgets::kCenter);
+  }
+  markRows(kRow1Y, kRow2Y + kButtonH - kRow1Y);
+}
+
+void LiteGoTouchView::drawThinking() {
+  Arduino_GFX *g = CrowDisplay::canvas();
+  g->fillRect(kSideX, kThinkY, kSideW, kThinkH, Widgets::kBg);
+
+  if (!thinking_) {
+    thinkingShown_ = 255;
+    markRows(kThinkY, kThinkH);
+    return;
+  }
+
+  uint8_t pct = game_->aiProgressPercent();
+  Widgets::text(g, kSideX, kThinkY + 6, "THINKING", Widgets::fontS(), Widgets::kAccent,
+                Widgets::kLeft);
+  Widgets::hBar(g, kSideX + 92, kThinkY + 8, kSideW - 92 - 60, 12, pct / 100.0f, Widgets::kAccent);
+  char buf[8];
+  snprintf(buf, sizeof(buf), "%u%%", pct);
+  Widgets::text(g, kSideX + kSideW, kThinkY + 6, buf, Widgets::fontS(), Widgets::kTextMut,
+                Widgets::kRight);
+  thinkingShown_ = pct;
+  markRows(kThinkY, kThinkH);
+}
+
+void LiteGoTouchView::drawGameOver() {
+  Arduino_GFX *g = CrowDisplay::canvas();
+  const int16_t w = 300;
+  const int16_t h = 108;
+  const int16_t x = kTileX + (kTileSize - w) / 2;
+  const int16_t y = kTileY + (kTileSize - h) / 2;
+
+  Widgets::panel(g, x, y, w, h, 10, Widgets::kSurface, 2, Widgets::kAccent);
+  Widgets::text(g, x + w / 2, y + 14, "GAME OVER", Widgets::fontS(), Widgets::kTextMut,
+                Widgets::kCenter);
+  Widgets::text(g, x + w / 2, y + 40, game_->resultText().c_str(), Widgets::fontL(),
+                Widgets::kAccent, Widgets::kCenter);
+  Widgets::text(g, x + w / 2, y + 74, "Tap NEW GAME to play again", Widgets::fontS(),
+                Widgets::kTextMut, Widgets::kCenter);
+  markRows(y, h);
+}
+
+void LiteGoTouchView::render() {
   Arduino_GFX *g = CrowDisplay::canvas();
   if (g == nullptr || game_ == nullptr) {
     return;
   }
 
-  LiteGoGame::ScoreEstimate score = game_->estimateScore();
-  g->fillScreen(Widgets::kBg);
+  gFlushTop = 0x7FFF;
+  gFlushBottom = -1;
 
-  g->fillRect(0, 0, kScreenW, kHeaderH, Widgets::kSurface);
-  g->fillRect(0, kHeaderH - 2, kScreenW, 2, Widgets::kAccent);
-  Widgets::text(g, 20, 10, "LITEGO TOUCH COACH", Widgets::fontL(),
-                Widgets::kTextHi, Widgets::kLeft);
-  Widgets::text(g, 20, 34, "OFFLINE 9x9 GO REVIEW", Widgets::fontS(),
-                Widgets::kTextMut, Widgets::kLeft);
-
-  char moves[20];
-  snprintf(moves, sizeof(moves), "MOVES %u", game_->moveCount());
-  int16_t x = kScreenW - 16;
-  x -= Widgets::pill(g, x - Widgets::textWidth(g, moves, Widgets::fontS()) - 24, 14,
-                     moves, Widgets::fontS(), Widgets::kTextHi, Widgets::kSurfaceHi);
-  x -= 10;
-  x -= Widgets::pill(g, x - Widgets::textWidth(g, "9x9", Widgets::fontS()) - 24, 14,
-                     "9x9", Widgets::fontS(), Widgets::kTextHi, Widgets::kSurfaceHi);
-  x -= 10;
-  Widgets::pill(g, x - Widgets::textWidth(g, "LOCAL", Widgets::fontS()) - 24, 14,
-                "LOCAL", Widgets::fontS(), Widgets::kBg, Widgets::kAccent);
-
-  Widgets::panel(g, kBoardPanelX, kBoardPanelY, kBoardPanelW, kBoardPanelH,
-                 8, Widgets::kSurface, 1, Widgets::kLine);
-  Widgets::text(g, kBoardPanelX + 20, kBoardPanelY + 16, "BOARD",
-                Widgets::fontS(), Widgets::kTextMut, Widgets::kLeft);
-  Widgets::text(g, kBoardPanelX + kBoardPanelW - 20, kBoardPanelY + 16,
-                game_->gameEndedByPasses() ? "TWO PASSES" : "TAP TO PLAY",
-                Widgets::fontS(), game_->gameEndedByPasses() ? Widgets::kAmber : Widgets::kAccent,
-                Widgets::kRight);
-
-  int16_t boardX = kOriginX - 34;
-  int16_t boardY = kOriginY - 34;
-  int16_t boardSize = kGridSpan + 68;
-  g->fillRoundRect(boardX, boardY, boardSize, boardSize, 8, kBoard);
-  g->drawRoundRect(boardX, boardY, boardSize, boardSize, 8, kBoardHi);
-
-  for (uint8_t i = 0; i < LiteGoGame::kSize; i++) {
-    int16_t pos = pointCoord(i, 0);
-    g->drawFastHLine(kOriginX, kOriginY + pos, kGridSpan, kBoardLine);
-    g->drawFastVLine(kOriginX + pos, kOriginY, kGridSpan, kBoardLine);
+  if (dirtyChrome_) {
+    drawChrome();
+    dirtyChrome_ = false;
+    dirtyBoard_ = true;
   }
 
-  const int8_t starPoints[5][2] = {{2, 2}, {6, 2}, {4, 4}, {2, 6}, {6, 6}};
-  for (uint8_t i = 0; i < 5; i++) {
-    g->fillCircle(pointCoord(starPoints[i][0], kOriginX),
-                  pointCoord(starPoints[i][1], kOriginY), 4, kBoardLine);
+  bool boardRedrawn = dirtyBoard_;
+  if (dirtyBoard_) {
+    drawBoardAll();
+    dirtyBoard_ = false;
+  } else {
+    boardRedrawn = dirtyPointCount_ > 0;
+    for (uint8_t i = 0; i < dirtyPointCount_; i++) {
+      drawCell((uint8_t)(dirtyPoints_[i] % LiteGoGame::kSize),
+               (uint8_t)(dirtyPoints_[i] / LiteGoGame::kSize));
+    }
+    dirtyPointCount_ = 0;
   }
 
-  for (uint8_t y = 0; y < LiteGoGame::kSize; y++) {
-    for (uint8_t x = 0; x < LiteGoGame::kSize; x++) {
-      char stone = game_->at(x, y);
-      bool last = lastMoveValid_ && lastMoveX_ == (int8_t)x && lastMoveY_ == (int8_t)y;
-      if (stone != '.') {
-        drawStone(g, pointCoord(x, kOriginX), pointCoord(y, kOriginY), stone, last);
-      } else if (last) {
-        g->drawCircle(pointCoord(x, kOriginX), pointCoord(y, kOriginY), 10, Widgets::kAccent);
-      }
+  if (dirtyScore_) {
+    drawScorePanel();
+    dirtyScore_ = false;
+  }
+  if (dirtyStatus_) {
+    drawStatusPanel();
+    dirtyStatus_ = false;
+  }
+  if (dirtyButtons_) {
+    drawButtons();
+    dirtyButtons_ = false;
+  }
+  if (thinking_ || thinkingShown_ != 255) {
+    uint8_t pct = thinking_ ? game_->aiProgressPercent() : 255;
+    if (pct != thinkingShown_) {
+      drawThinking();
     }
   }
 
-  for (uint8_t i = 0; i < LiteGoGame::kSize; i++) {
-    char n[3];
-    snprintf(n, sizeof(n), "%u", i);
-    Widgets::text(g, pointCoord(i, kOriginX), kOriginY + kGridSpan + 28, n,
-                  Widgets::fontS(), kBoardLine, Widgets::kCenter);
-    Widgets::text(g, kOriginX - 30, pointCoord(i, kOriginY) - 8, n,
-                  Widgets::fontS(), kBoardLine, Widgets::kCenter);
+  // The overlay is only repainted when it first appears or when something
+  // underneath it was redrawn; drawing it every pass would flush its rows on
+  // every loop() for the rest of the game.
+  if (game_->finished()) {
+    if (!gameOverShown_ || boardRedrawn) {
+      drawGameOver();
+      gameOverShown_ = true;
+    }
+  } else {
+    gameOverShown_ = false;
   }
 
-  Widgets::panel(g, kSideX, kSideY, kSideW, kSideH, 8, Widgets::kSurface, 1, Widgets::kLine);
-  Widgets::text(g, kSideX + 18, kSideY + 16, "GAME STATE",
-                Widgets::fontS(), Widgets::kTextMut, Widgets::kLeft);
-  Widgets::statusDot(g, kSideX + kSideW - 26, kSideY + 26, 6,
-                     statusWarning_ ? Widgets::kRed : Widgets::kGreen);
-
-  char toMove[2] = {game_->currentPlayer(), '\0'};
-  metricCard(g, 564, 116, 132, 92, "TO MOVE", toMove,
-             game_->currentPlayer() == 'B' ? "black stones" : "white stones", Widgets::kAccent);
-  metricCard(g, 708, 116, 132, 92, "CAPTURES",
-             String("B") + String(game_->blackCaptures()) + " W" + String(game_->whiteCaptures()),
-             "prisoners", Widgets::kAmber);
-  metricCard(g, 852, 116, 132, 92, "AREA",
-             String(score.margin >= 0 ? "B+" : "W+") + String(abs(score.margin)),
-             String("B") + String(score.blackArea) + " W" + String(score.whiteArea),
-             score.margin == 0 ? Widgets::kTextHi : Widgets::kGreen);
-
-  Widgets::panel(g, 564, 224, 420, 78, 8,
-                 statusWarning_ ? Widgets::rgb(0x31, 0x18, 0x24) : Widgets::kSurfaceHi,
-                 1, statusWarning_ ? Widgets::kRed : Widgets::kLine);
-  Widgets::text(g, 582, 238, statusWarning_ ? "ATTENTION" : "LAST ACTION",
-                Widgets::fontS(), statusWarning_ ? Widgets::kRed : Widgets::kTextMut, Widgets::kLeft);
-  drawWrapped(g, 582, 262, 384, 2, status_, Widgets::fontS(), Widgets::kTextHi);
-
-  Widgets::panel(g, 564, 318, 420, 128, 8, Widgets::kSurface, 1, Widgets::kLine);
-  Widgets::text(g, 582, 334, "COACH", Widgets::fontS(), Widgets::kTextMut, Widgets::kLeft);
-  drawWrapped(g, 582, 362, 384, 4, game_->lastCoach(), Widgets::fontS(), Widgets::kTextHi);
-
-  for (uint8_t i = 0; i < sizeof(kButtons) / sizeof(kButtons[0]); i++) {
-    drawButton(g, kButtons[i]);
+  // One cache sync for every row that changed, instead of one per primitive.
+  if (gFlushBottom > gFlushTop) {
+    CrowDisplay::flush(0, gFlushTop, kScreenW, gFlushBottom - gFlushTop);
   }
-
-  g->fillRect(0, kFooterY, kScreenW, kFooterH, Widgets::kSurface);
-  g->fillRect(0, kFooterY, kScreenW, 2, Widgets::kLine);
-  Widgets::statusDot(g, 22, kFooterY + 27, 5, Widgets::kAmber);
-  Widgets::text(g, 40, kFooterY + 18, "compile-ready until flashed and touch-proven",
-                Widgets::fontS(), Widgets::kTextMut, Widgets::kLeft);
-  Widgets::text(g, kScreenW / 2, kFooterY + 18,
-                String("last touch map: " + String(lastTouchMap_)).c_str(),
-                Widgets::fontS(), Widgets::kTextMut, Widgets::kCenter);
-  Widgets::text(g, kScreenW - 16, kFooterY + 18, "Serial: selftest",
-                Widgets::fontS(), Widgets::kTextMut, Widgets::kRight);
 }
-#endif
+
+#endif  // USE_DISPLAY && CONFIG_IDF_TARGET_ESP32P4

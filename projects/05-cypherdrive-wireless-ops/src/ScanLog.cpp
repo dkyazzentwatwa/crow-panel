@@ -71,6 +71,17 @@ const char *ScanLog::latestSummary() const {
   return entries_[latest].summary;
 }
 
+bool ScanLog::rowFromNewest(uint8_t index, Row &out) const {
+  if (index >= count_) return false;
+  const Entry &entry = entryAt((uint8_t)(count_ - 1 - index));
+  out.type = entry.type;
+  out.timestampMs = entry.timestampMs;
+  out.category = entry.category;
+  out.summary = entry.summary;
+  out.detail = entry.detail;
+  return true;
+}
+
 void ScanLog::push(EntryType type, const String &category, const String &summary,
                    const String &detail) {
   Entry &entry = entries_[head_];

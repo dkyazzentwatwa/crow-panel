@@ -41,15 +41,11 @@ inline void printSystemStatus(Stream &out, const char *appName, uint32_t eventCo
   out.print(F(" USE_BLE_UART_BRIDGE="));
   out.print(USE_BLE_UART_BRIDGE);
   out.print(F(" USE_QR_PERSISTENCE="));
-  out.print(USE_QR_PERSISTENCE);
-  out.print(F(" USE_BENCH_PROBES="));
-  out.println(USE_BENCH_PROBES);
+  out.println(USE_QR_PERSISTENCE);
   out.print(F("[status] flags USE_SD_HIGHSCORES="));
   out.print(USE_SD_HIGHSCORES);
   out.print(F(" USE_RF_UART_BRIDGE="));
   out.print(USE_RF_UART_BRIDGE);
-  out.print(F(" USE_CREATOROPS_API="));
-  out.print(USE_CREATOROPS_API);
   out.print(F(" USE_GPS_DRIVER="));
   out.print(USE_GPS_DRIVER);
   out.print(F(" USE_SD_WIGLE_LOG="));

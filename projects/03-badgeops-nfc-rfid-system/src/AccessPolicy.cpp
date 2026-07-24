@@ -8,18 +8,21 @@ void AccessPolicy::begin(const char *zone) {
 
 AccessDecision AccessPolicy::evaluate(const BadgeRead &read, const BadgeRecord &record, bool found) const {
   if (!found) {
-    return {"denied", "ACCESS_DENIED unknown uid=" + read.uid};
+    return {"denied", "ACCESS_DENIED unknown uid=" + read.uid, "Badge not in registry"};
   }
 
   if (record.status != "active") {
-    return {"denied", "ACCESS_DENIED inactive badge=" + record.badgeId};
+    return {"denied", "ACCESS_DENIED inactive badge=" + record.badgeId,
+            "Badge " + record.status};
   }
 
   if (!zoneAllowed(record.allowedZones, zone_)) {
-    return {"denied", "ACCESS_DENIED zone=" + zone_ + " badge=" + record.badgeId};
+    return {"denied", "ACCESS_DENIED zone=" + zone_ + " badge=" + record.badgeId,
+            "Zone " + zone_ + " not permitted"};
   }
 
-  return {"granted", "ACCESS_GRANTED " + record.name + " zone=" + zone_};
+  return {"granted", "ACCESS_GRANTED " + record.name + " zone=" + zone_,
+          "Zone " + zone_ + " confirmed"};
 }
 
 // allowedZones is a comma-separated list like "lab,front-desk".

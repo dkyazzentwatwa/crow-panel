@@ -1,58 +1,67 @@
-# CrowPanel Vision Guard Inspection Kiosk
+# Vision Guard Inspection Kiosk
 
-Camera-based inspection and check-in kiosk concept for the CrowPanel Advanced 7-inch ESP32-P4 display.
+A touch-first check-in and inspection kiosk for the Elecrow CrowPanel Advanced
+7-inch display.
 
-Default mode is a Serial-only mock demo:
+Scan a code, walk a tappable checklist, get a pass or fail with a per-item
+breakdown, and keep an auditable history of every run. It ships as a full
+offline demo — simulated camera status, simulated scans, and a deterministic
+checklist — so you can build and film the whole kiosk flow before any camera
+exists.
 
-- Simulates camera status
-- Simulates QR scans
-- Runs a fake inspection checklist
-- Generates pass/fail results
-- Logs kiosk events
-- Calls an AI vision API stub
+> This is Project 2 in the [CrowPanel Arduino suite](../../README.md).
 
-## Core Screens
+## Status
 
-- Live Camera / Status
-- Scan QR
-- Inspection Checklist
-- Result
-- Event History
-- Settings
+Compile-ready only: the sketch builds green for the real ESP32-P4 target
+(baseline, display, Wi-Fi, and camera-flag rows) but has **not been observed
+running on a physical CrowPanel** — no panel is attached to this workspace.
+Nothing here has been touch-verified on hardware.
 
-## Serial Commands
+The camera is a deliberate stub, not an unfinished feature. `esp32-camera` does
+not ship for the ESP32-P4 in Arduino core 3.3.x — the P4's camera path is
+MIPI-CSI through ESP-IDF's `esp_video`, and the only official example is an
+Elecrow IDF lesson. The Live screen therefore renders an honest placeholder
+viewfinder that says `p4-csi-unavailable-in-arduino` on its face; it never shows
+a fabricated image. Real camera support means waiting for core support or
+porting the IDF lesson. See the [technical reference](TECHNICAL.md).
 
-115200 baud, line ending **Newline**:
+## Screens
 
-- `help` / `status` / `history` — shared commands
-- `scan [text]` — simulate a QR scan through the same pipeline the mock scanner uses, e.g. `scan INSPECT-CUSTOM-1`. Every 4th scan fails the checklist.
+The panel is a five-tab console (bottom tab bar, live header pill):
 
-## Compile
+- **Live** — camera status card plus an honest placeholder frame; the stub
+  reason is printed inside the viewfinder, never a fake picture.
+- **Scan** — QR/code capture with a mock decode panel and a CAPTURE action.
+- **Checks** — the inspection items as tappable rows that cycle
+  pass → fail → skip, with a live progress bar and running P/F/S counts.
+- **Result** — a large pass/fail hero with the verdict, the AI vision note, and
+  a per-item outcome summary.
+- **History** — an auditable, paged list of past runs; tap a row to re-open its
+  result.
 
-```sh
-../../scripts/compile-all.sh
-```
+Every screen fills with believable data at boot (the history is pre-seeded) and
+every control responds with no hardware attached.
 
-The default FQBN targets the real ESP32-P4 (see the root README).
+## What you get
 
-## Upload
+- A live camera / status screen backed by a simulated feed and an honest stub
+- QR scan entry you can drive from touch or Serial with any payload you like
+- A seven-item inspection checklist with per-item state and notes
+- A pass/fail result that summarizes every check, not just one line
+- An in-session audit history you can page through and re-open
+- A mock AI vision client that becomes a real API call once Wi-Fi is proven
+- A `selftest` command that drives the whole mock flow headlessly
 
-```sh
-arduino-cli board list
-../../scripts/upload-project.sh projects/02-vision-guard-inspection-kiosk /dev/cu.usbmodem101
-```
+## Responsible use
 
-## Camera Integration Notes
+This kiosk records inspection results locally on the panel. It does not capture
+images, upload footage, or identify people. If you later wire it to a real
+backend, treat the inspection log as operational data and decide deliberately
+what leaves the device.
 
-There is deliberately no camera driver: `esp32-camera` does not ship for the ESP32-P4 in Arduino core 3.3.x (the P4 camera path is MIPI-CSI via ESP-IDF's `esp_video`). The only official example is Elecrow's IDF lesson `example/V1.0/idf-code/Lesson13-Camera_Real-Time`. `USE_CAMERA_DRIVER=1` still compiles — the stub reports `p4-csi-unavailable-in-arduino` — so the flag matrix stays honest. Real camera work means waiting for core support or porting the IDF lesson.
+## Technical reference
 
-## AI Vision API Stub
-
-`VisionAiClient` returns deterministic mock results. Once `USE_WIFI` is hardware-verified it POSTs to the mock API's `/summary` endpoint; replace with a real API client only after timeouts and offline fallback are designed.
-
-## What To Film
-
-- Serial boot showing hardware profile.
-- Mock live camera status.
-- `scan INSPECT-CUSTOM-1` producing a live checklist run, then `history`.
-- Explanation of why the P4 camera path is IDF-only for now (honest-scaffold beat).
+For installation, build flags, configuration, upload commands, device details,
+file layout, troubleshooting, safety boundaries, and proof terminology, see
+[TECHNICAL.md](TECHNICAL.md).

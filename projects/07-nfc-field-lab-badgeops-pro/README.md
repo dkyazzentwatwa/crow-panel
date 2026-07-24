@@ -1,113 +1,61 @@
-# CrowPanel NFC Field Lab / BadgeOps Pro
+# NFC Field Lab / BadgeOps Pro
 
-Combined CrowPanel port inspired by `cypher-pn532` and `cypherbox-mini`.
+An NFC and RFID inspection lab for the Elecrow CrowPanel Advanced 7-inch display,
+combining a tag-reading bench with the BadgeOps access-decision flow.
 
-The default build is mock-first. Real PN532 and MFRC522 paths are compiled only
-when their project flags are enabled, and runtime proof still requires the real
-CrowPanel, the exact wired reader module, and Serial or display evidence.
+A five-screen touch console lets you scan a tag to see its UID, type, and
+reader; preview the public NDEF record it carries; step through a read-only APDU
+exchange one command at a time; run the same badge grant/deny logic on top; and
+browse the tag's file list. Every touch control has a matching serial command.
+The default build is fully simulated, so every screen works with no reader
+module attached.
 
-## Safety Boundary
+> This is Project 7 in the [CrowPanel Arduino suite](../../README.md).
 
-UID-only RFID/NFC access is suitable for demos, attendance tracking, event
-check-in, prototypes, and low-risk internal tools. It should not be treated as
-secure access control. Many low-cost RFID/NFC cards and tags can be cloned. For
-serious access control, use stronger credential design, signed tokens, backend
-validation, secure elements, audit logging, and proper threat modeling.
+## Status
 
-The APDU lab is read-only. It only selects the public Type 4 NDEF application
-and reads the CC, NLEN, and bounded NDEF preview bytes. It does not select
-payment AIDs, proprietary applets, or send write APDUs.
+Compile-ready: the mock, display, PN532, MFRC522, and both-readers builds all
+compile for the real ESP32-P4 target. No reader has been wired and no tag has
+been tapped on a physical CrowPanel yet, so nothing here is hardware-proven. See
+the [technical reference](TECHNICAL.md) for the screen list, touch controls,
+wiring assumptions, and the exact bring-up order.
 
-## Project Flags
+## What you get
 
-All flags are passed with `EXTRA_FLAGS` so they reach the sketch and shared
-library translation units.
+- A touch console with five screens: **Scan**, **NDEF**, **APDU**, **Badge**,
+  and **Files**, with a bottom tab bar and a persistent read-only banner
+- UID scanning with tag type, technology, and the active reader shown
+- An NDEF preview of the public record on a tag
+- A step-by-step APDU stepper for a read-only Type 4 NDEF exchange, command and
+  response side by side, one tap per step
+- The BadgeOps grant, suspended-deny, and unknown-deny decision flow
+- The on-tag file/application list and a browsable badge registry
+- Two reader options behind flags: PN532 over I2C, or MFRC522 over SPI
+- A `selftest` command that drives the whole mock flow with PASS/FAIL output
+- An offline demo covering every command with simulated tags
 
-- Default mock mode: no reader flag enabled, uses `MockNfcReader`.
-- `USE_DISPLAY=1`: mirrors the Serial state onto the CrowPanel display.
-- `USE_PN532_DRIVER=1`: enables the PN532 I2C UID reader and Type 4 NDEF preview.
-- `USE_MFRC522_DRIVER=1`: enables the MFRC522 SPI UID reader.
-- `NFC_LAB_PN532_IRQ` / `NFC_LAB_PN532_RESET`: required when PN532 is enabled.
-- `NFC_LAB_MFRC522_SS` / `NFC_LAB_MFRC522_RST`: default to `10` / `9`.
-- `NFC_LAB_MAX_NDEF_PREVIEW_BYTES`: defaults to `48`.
+## Where the lab stops
 
-## Wiring Assumptions
+The APDU path is read-only and narrow on purpose. It selects the public Type 4
+NDEF application and reads the capability container, the record length, and a
+bounded preview of the NDEF bytes. That is all. It does not select payment AIDs
+or proprietary applets, and it never sends a write APDU.
 
-PN532 is assumed to be in I2C mode on the CrowPanel touch bus:
+## Security warning
 
-- SDA: `45`
-- SCL: `46`
-- PN532 I2C address: commonly `0x24`
-- GT911 touch address: `0x5D` or `0x14`
+**UID-only RFID/NFC is not secure access control.** It suits demos, attendance
+tracking, event check-in, prototypes, and low-risk internal tools. Many low-cost
+cards and tags can be cloned. Anything that actually protects something needs
+stronger credential design, signed tokens, backend validation, a secure element,
+audit logging, and real threat modeling.
 
-MFRC522 is assumed to use the wireless-socket SPI pins from the active hardware
-profile:
+## Responsible use
 
-- SCK: `8`
-- MISO: `7`
-- MOSI: `6`
-- SS: `10` by default
-- RST: `9` by default
+Read tags you own or are authorized to inspect. This project does not clone
+cards, emulate credentials, brute-force keys, or touch payment applications.
 
-Bring up one physical reader at a time first. If using the wireless socket for
-MFRC522, remove any conflicting socket radio module before wiring the reader.
-V1.2 wireless pin behavior remains revision-sensitive until field-proven.
+## Technical reference
 
-## Serial Commands
-
-- `help` / `status` / `history`
-- `scan`
-- `tap [uid]`
-- `ndef`
-- `apdu`
-- `files`
-- `badges`
-
-## Serial Smoke Script
-
-```text
-help
-status
-badges
-scan
-tap 04:A1:22:9C
-tap C2:44:10:AA
-tap 11:22:33:44
-ndef
-apdu
-history
-```
-
-Expected mock-mode proof:
-
-- `scan` prints a mock UID, type, and reader.
-- `tap` prints granted, suspended-denied, and unknown-denied demo decisions.
-- `ndef` prints a mock public NDEF URI preview.
-- `apdu` prints the safe Type 4 NDEF read trace.
-
-## Compile Checks
-
-From the repo root:
-
-```sh
-CTAGS_WORKAROUND=1 ./scripts/compile-all.sh
-CTAGS_WORKAROUND=1 EXTRA_FLAGS="-DUSE_DISPLAY=1" ./scripts/compile-all.sh
-CTAGS_WORKAROUND=1 EXTRA_FLAGS="-DUSE_PN532_DRIVER=1" ./scripts/compile-all.sh
-CTAGS_WORKAROUND=1 EXTRA_FLAGS="-DUSE_MFRC522_DRIVER=1" ./scripts/compile-all.sh
-CTAGS_WORKAROUND=1 EXTRA_FLAGS="-DUSE_PN532_DRIVER=1 -DUSE_MFRC522_DRIVER=1" ./scripts/compile-all.sh
-```
-
-For runtime PN532 bring-up, add the real IRQ and reset pins, for example:
-
-```sh
-CTAGS_WORKAROUND=1 EXTRA_FLAGS="-DUSE_PN532_DRIVER=1 -DNFC_LAB_PN532_IRQ=<pin> -DNFC_LAB_PN532_RESET=<pin>" ./scripts/compile-all.sh
-```
-
-## Proof States
-
-- `compile-ready`: the sketch compiles for the selected FQBN and flags.
-- `uploaded`: the compiled sketch was uploaded to the detected CrowPanel port.
-- `field-proven`: the real CrowPanel, real NFC/RFID reader, and real tag were
-  observed through Serial output or display behavior.
-
-Do not claim hardware support from compile success alone.
+For installation, build flags, configuration, upload commands, device details,
+file layout, troubleshooting, safety boundaries, and proof terminology, see
+[TECHNICAL.md](TECHNICAL.md).

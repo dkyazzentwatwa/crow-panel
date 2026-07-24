@@ -33,8 +33,10 @@ EXTRA_FLAGS="-DUSE_DISPLAY=1 -DUSE_WIFI=1" ../../scripts/compile-all.sh
 - `DeviceController` — `setPin()` logs the URL and flips local state in a mock
   build; issues a real `HTTPClient` GET under `USE_WIFI`. Members are declared
   unconditionally so the registry behaves identically either way.
-- `ControlHubDashboard` — gated on `USE_DISPLAY`; `takePendingToggle()` returns
-  false with no display (there is no touch surface to queue a tap).
+- `ControlHubDashboard` — gated on `USE_DISPLAY`; `tick()` returns a typed
+  `HubUiEvent` describing the action the touch surface launched (always `kHubNone`
+  with no display, since there is no touch surface). The sketch executes the
+  event against the real app objects; the UI never mutates state itself.
 
 ## Function ordering / ctags
 

@@ -16,33 +16,42 @@ still need their own scan logs before their rows move beyond compile-ready.
 
 | Project | Hardware-gated flags | Real path | Current proof target |
 |---|---|---|---|
-| 05 CypherDrive Wireless Ops | `USE_WIFI_SCAN`, `USE_BLE_UART_BRIDGE`, `USE_QR_PERSISTENCE` | hosted/C6 passive Wi-Fi scan with shared SDIO pin remap, UART BLE sidecar feed, persisted QR URL | compile-ready until passive scan and sidecar run logs are captured |
-| 06 WireTap BenchOps Console | `USE_BENCH_PROBES`, optional `WIRETAP_ALLOW_SPI_ID_CLOCKING` | high-Z GPIO reads, I2C address scan, UART RX; SPI ID clocking only after explicit lab opt-in | compile-ready until probes are wired and Serial logs are captured |
-| 07 NFC Field Lab / BadgeOps Pro | `USE_PN532_DRIVER`, `USE_MFRC522_DRIVER` | UID reads, NDEF preview, safe read-only Type 4/NDEF APDU path | compile-ready until reader wiring and tag taps are captured |
-| 08 Cypher Gamer Arcade | `USE_DISPLAY`, `USE_SD_HIGHSCORES` | touch-playable Pong, Snake, 2048; optional SD high-score persistence | compile-ready until touch play is observed on panel |
+| 01 FieldOps Control Center | `USE_DISPLAY`, `USE_LORA_DRIVER`, `USE_ESPNOW`, `USE_WIFI` | touch roster/detail/alerts/log console (ring gauges, temp sparkline, tap-to-pin, tap-to-ack) over mock packets; real SX1262 (RadioLib) and ESP-NOW-over-UART transports behind flags | baseline + display + all flag combos compile-ready; touch nav, gauge redraw, and the radio/ESP-NOW feeds each need on-panel acceptance |
+| 02 Vision Guard Inspection Kiosk | `USE_DISPLAY`, `USE_CAMERA_DRIVER`, `USE_WIFI` | five-screen touch kiosk (Live/Scan/Checklist/Result/History) with tappable checklist and in-session audit history; camera stays an honest `p4-csi-unavailable-in-arduino` stub | baseline + display + wifi + camera compile-ready; touch flow and the camera stub boundary need on-panel acceptance |
+| 03 BadgeOps NFC/RFID System | `USE_DISPLAY`, `USE_PN532_DRIVER`, `USE_MFRC522_DRIVER`, `USE_WIFI` | Tap/Result/Registry/Attendance/Readers touch terminal over the mock reader; PN532 (I2C) and MFRC522 (SPI) scaffolds behind flags | baseline + display + both readers + kitchen-sink compile-ready; touch nav and real tag reads each need on-panel acceptance |
+| 04 RelayOps Wi-Fi Control Hub | `USE_DISPLAY`, `USE_WIFI` | Devices/Detail/Sensors/World/Log touch hub with tap-to-toggle relays and per-sensor sparklines; real web server + HTTP GPIO controller and world feeds behind `USE_WIFI` | baseline + display + wifi + kitchen-sink compile-ready; touch toggles, the server/controller round-trip, and the live world feeds each need on-panel acceptance |
+| 05 CypherDrive Wireless Ops | `USE_WIFI_SCAN`, `USE_BLE_UART_BRIDGE`, `USE_QR_PERSISTENCE` | Wi-Fi/BLE/Log/QR touch console (RSSI signal bars, on-panel QR handoff block, persistent passive banner); hosted/C6 passive Wi-Fi scan, UART BLE sidecar feed, persisted QR URL behind flags | baseline + display + all flag combos compile-ready; passive scan, sidecar, and touch nav logs still to be captured |
+| 07 NFC Field Lab / BadgeOps Pro | `USE_DISPLAY`, `USE_PN532_DRIVER`, `USE_MFRC522_DRIVER` | Scan/NDEF/APDU/Badge/Files touch console with a step-through read-only APDU trace; UID reads, NDEF preview, safe Type 4/NDEF APDU path behind flags | baseline + display + both readers compile-ready; reader wiring, tag taps, and touch nav still to be captured |
+| 08 Cypher Gamer Arcade | `USE_DISPLAY`, `USE_SD_HIGHSCORES` | touch-playable Pong, Snake, 2048 with a `Widgets::` catalog/chrome, pause overlay, and per-game high-score screen (animated playfield via internal-SRAM offscreen canvas); optional SD high-score persistence | baseline + display + SD combos compile-ready; touch play and SD-persisted scores need on-panel acceptance |
 | 09 Cypher Tune MPC | `USE_AUDIO` | I2S/audio path plus silent fallback transport | compile-ready until audio output is heard or measured |
-| 10 LiteGo Touch Coach | `USE_DISPLAY` | ADS-B-inspired full-screen touch coach with typed board, pass, CPU, reset, score, and hint actions plus Serial `selftest` | compile-ready until touch moves and command pills are observed on panel |
+| 10 LiteGo Touch Coach | `USE_DISPLAY` | playable 9x9 Go: Monte-Carlo opponent with difficulty levels, positional superko, komi scoring, undo/resign, preview-then-confirm touch placement, dirty-region redraw, plus Serial `selftest`/`bench`/`touchcal` | compile-ready and host-tested (28/28 rules fixtures, AI hygiene green via scripts/test-litego.sh); needs on-panel touch play, `bench`-tuned level budgets, and a game played to a result for `field-proven` |
 | 11 CardRF Spectrum Console | `USE_RF_UART_BRIDGE` | receive-only host/HackRF `SCANROW` and `POWER` serial bridge | compile-ready until host bridge feed is captured |
-| 12 CreatorOps Board | `USE_CREATOROPS_API` | read-only local/static/API cache source | compile-ready until read-only data fetch/cache is observed |
 | 13 SurveyOps Wardriver Panel | `USE_GPS_DRIVER`, `USE_WIFI_SCAN`, `USE_SD_WIGLE_LOG` | GPS parser, passive Wi-Fi scan with shared SDIO pin remap, WiGLE-style CSV logging/rotation | compile-ready until GPS, passive scan, and storage logs are captured |
 | 14 ADS-B Flight Tracker Radar | `USE_DISPLAY`, `USE_WIFI` | touch radar plus airplanes.live / adsb.fi, weather, quake, aurora, and air-quality feeds | field-proven for the tested live Wi-Fi path; new changes still need their own proof |
 | 15 Pokedex Panel | `USE_DISPLAY`, `USE_SD_POKEDEX` | touch Pokedex UI plus source `esp32-pokedex` SD catalog streaming | compile-ready until SD_MMC mount, touch navigation, and JSON detail browsing are captured |
 | 16 Cypher Flock Panel | `USE_DISPLAY`, `USE_FLOCK_UART_BRIDGE`, `USE_FLOCK_PERSISTENCE`, `USE_FLOCK_C6_WITNESS` | BW16 passive 2.4/5 GHz Wi-Fi, ESP32 passive BLE/aggregation, C6 passive AP witness, evidence catalog, five-screen P4 UI and CRC v2 FFat sessions | compile-ready; needs all three uploads/UART plus live C6 witness rows for `uploaded`, real raw 2.4+5 GHz for `dual-band-proven`, and >=90% recall with no unexplained high-tier false positives for `field-proven` |
 | 18 Cypher Desk OS | `USE_DISPLAY`, `USE_CYPHER_DESK_SD`, optional `USE_WIFI`, `USE_CYPHER_DESK_AUDIO`, `USE_CYPHER_DESK_MEDIA`, `USE_CYPHER_DESK_RECORDER` | 3x4 OS launcher, reusable app router/status/keyboard, complete Writer, Today, local calendar, contacts, clock, calculator, files, Wi-Fi settings, and guarded recorder/music/podcast/weather surfaces | baseline and display+SD+Wi-Fi builds compile-ready; launcher touch, local data persistence, hosted-C6 states, SD recovery, speaker, and microphone each need new device acceptance |
+| 19 Starbeam Console | `USE_DISPLAY`, `USE_STARBEAM_RADIOS`, `USE_STARBEAM_COPROC`, `STARBEAM_TX_CONFIRMED` | full 1:1 project-starbeam port: native 5x nRF24 + 2x CC1101 on one shared SPI bus (jammers, 2.4 GHz spectrum, 433 MHz scan/RSSI, raw record/replay); Wi-Fi/BLE/attack half proxied over UART to an ESP32 running stock starbeam_v2; touch console UI. Transmit is arm-gated behind a local `LabProfile.h` | baseline/display/radios/coproc/full builds compile-ready; needs per-radio register IDs, shared-SPI CS isolation, touch zones, tear-free animated spectrum, and the UART co-processor round-trip captured on hardware before `uploaded` |
+| 21 Cypher Keys HID Deck | `USE_DISPLAY`, `USE_USB_HID` (needs `USBMode=default`) | native USB-OTG HID: touch keyboard with Mac modifiers, switchable macro presets (macOS + ChatGPT/Codex), and a trackpad, sent as keyboard + consumer-control + mouse; Serial-logging mock by default | all builds compile-ready; **uploaded** and **host-enumerated** on a Mac — the live `USBMode=default`+`USE_USB_HID=1` binary flashed and macOS bound `ESP32P4_DEV` (VID 0x303A) as a composite HID keyboard (1/6) + mouse (1/2) + consumer control (12/1); full `host-proven` still needs typed characters, macro shortcuts, media keys, and cursor moves observed landing in a host app |
 
 ## Safety Boundaries
 
 - Wireless scan paths are passive visibility tools only.
-- BenchOps must default to high-Z/read-oriented behavior; SPI ID clocking must stay explicitly opt-in and documented.
 - NFC APDU support is read-only lab inspection, not payment or credential work.
 - CardRF is receive-only; no RF transmit, replay, jamming, or injection controls.
 - SurveyOps must not join networks, deauth clients, inject frames, or collect
   credentials.
-- CreatorOps must not publish, post, delete, or mutate external services.
 - Pokedex Panel must stay offline/source-only; it must not connect to Pokemon GO,
   scrape accounts, or imply official game-service integration.
 - Cypher Flock must remain detection-only: no network joins, deauthentication,
   credential capture, payload forwarding, or claims that RSSI indicates location.
+- Starbeam Console is the one transmit-capable port (a faithful 1:1 of the
+  owner's own project-starbeam). Every transmit/attack path — nRF24/CC1101
+  jammers, raw replay, and forwarded co-processor attacks — is disarmed unless a
+  local, gitignored `config/LabProfile.h` sets `STARBEAM_TX_CONFIRMED 1`, and the
+  touch UI additionally requires an authorized-use acknowledgement before arming.
+  Operate only on radios, frequencies, and networks you own or are authorized to
+  test.
 
 ## Coordinator Acceptance
 

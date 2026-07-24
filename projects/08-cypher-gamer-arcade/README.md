@@ -1,108 +1,49 @@
-# CrowPanel Cypher Gamer Arcade
+# Cypher Gamer Arcade
 
-Large touch arcade launcher inspired by `cardputer-games`.
+A touch arcade for the Elecrow CrowPanel Advanced 7-inch display.
 
-V1 includes a project-local game engine for Pong, Snake, and 2048. The default
-build is offline and Serial-smokeable. When `USE_DISPLAY=1` is compiled for the
-CrowPanel ESP32-P4 target, the sketch renders its own touch arcade surface.
+Browse a catalog of games, tap a card to play, and pause any time for resume,
+restart, scores, or quit. Pong has a draggable paddle, Snake is steered by
+swipes, and 2048 merges tiles with swipes. A dedicated high-score screen tracks
+your best run in each game, optionally saved to an SD card. Serial commands
+drive the same game state as touch, so you can smoke-test everything without a
+screen.
 
-## Touch Controls
+> This is Project 8 in the [CrowPanel Arduino suite](../../README.md).
 
-- Menu: tap `PONG`, `SNAKE`, or `2048`.
-- Pong: drag inside the playfield to move the left paddle.
-- Snake: swipe anywhere to turn. Reverse turns are ignored.
-- 2048: swipe anywhere to slide and merge tiles.
-- In-game buttons: `MENU` returns to the catalog; `RESTART` resets the active
-  game.
+## Status
 
-## Serial Commands
+Compile-ready: the baseline, display, and both SD-high-score builds compile for
+the real ESP32-P4 target. Touch play, the offscreen Pong playfield, and SD
+high-score persistence have not been observed on a physical CrowPanel yet. See
+the [technical reference](TECHNICAL.md) for the acceptance steps.
 
-- `help` / `status` / `history`
-- `catalog`
-- `play pong`
-- `play snake`
-- `play 2048`
-- `move up`
-- `move down`
-- `move left`
-- `move right`
-- `step`
-- `reset`
-- `score`
-- `cal`
+## What you get
 
-Serial remains the smoke path even without a display. `play`, `move`, `step`,
-`reset`, and `score` exercise the same local state that touch uses.
+- A **catalog** screen with large Widgets cards for each game, showing its best
+  score, and a bottom tab bar that switches to the scores screen
+- A per-game **high-score** screen; tap a card there to jump straight into that
+  game
+- A **pause overlay** reachable during any game with Resume / Restart / Scores /
+  Quit buttons
+- **Pong** — drag inside the playfield to move your paddle (the animated field
+  is composited in an internal-SRAM offscreen canvas and blitted per frame)
+- **Snake** — swipe anywhere to turn; reverse turns are ignored
+- **2048** — swipe to slide and merge tiles
+- Optional SD high-score persistence, with a clean fallback to RAM scores if the
+  card does not mount
+- A full Serial command set that exercises the same state touch uses, plus a
+  headless `selftest`
 
-## Feature Flags
+## If touch feels rotated or clipped
 
-- `USE_DISPLAY=1`: enables the CrowPanel display/touch path through
-  `CrowDisplay`. Rendering and game state stay project-local.
-- `USE_SD_HIGHSCORES=1`: attempts SD_MMC high-score persistence at
-  `/cypher-gamer-scores.txt`. If the card does not mount, the sketch falls back
-  to RAM high scores and reports `sd_ready=0`.
-- `ARCADE_SDMMC_1BIT=1`: default SD_MMC mount mode for conservative bring-up.
-- `ARCADE_TOUCH_MIN_X`, `ARCADE_TOUCH_MAX_X`, `ARCADE_TOUCH_MIN_Y`,
-  `ARCADE_TOUCH_MAX_Y`: raw GT911 range mapping.
-- `ARCADE_TOUCH_SWAP_XY=1`: swaps raw touch axes before mapping.
-- `ARCADE_TOUCH_INVERT_X=1` / `ARCADE_TOUCH_INVERT_Y=1`: flips mapped axes.
+Run the `touch` (or `cal`) command, tap each corner, read the raw and mapped
+coordinates from Serial, then rebuild with the shared `CROW_TOUCH_*` calibration
+flags set to match your panel. The details are in the
+[technical reference](TECHNICAL.md).
 
-Example display build:
+## Technical reference
 
-```sh
-CTAGS_WORKAROUND=1 EXTRA_FLAGS="-DUSE_DISPLAY=1" ./scripts/compile-all.sh
-```
-
-Example SD high-score build:
-
-```sh
-CTAGS_WORKAROUND=1 EXTRA_FLAGS="-DUSE_DISPLAY=1 -DUSE_SD_HIGHSCORES=1" ./scripts/compile-all.sh
-```
-
-## Test Flow
-
-1. Compile baseline:
-
-   ```sh
-   CTAGS_WORKAROUND=1 ./scripts/compile-all.sh
-   ```
-
-2. Compile display path:
-
-   ```sh
-   CTAGS_WORKAROUND=1 EXTRA_FLAGS="-DUSE_DISPLAY=1" ./scripts/compile-all.sh
-   ```
-
-3. Serial smoke after upload:
-
-   ```text
-   status
-   catalog
-   play pong
-   move up
-   step
-   score
-   play snake
-   move right
-   step
-   play 2048
-   move left
-   score
-   cal
-   ```
-
-4. Touch smoke with `USE_DISPLAY=1`: tap each game card, verify Pong drag,
-   Snake swipes, 2048 swipes, `MENU`, and `RESTART`.
-
-5. If touch is rotated or clipped, run `cal`, tap corners, read the raw and
-   mapped coordinates from Serial, then rebuild with the calibration flags.
-
-## Proof States
-
-- `compile-ready`: both baseline and requested feature-flag builds compile.
-- `uploaded`: the sketch was flashed to a named serial port.
-- `touch-proven`: the real CrowPanel accepted touch in all three games.
-- `sd-proven`: `USE_SD_HIGHSCORES=1` mounted SD_MMC and retained scores across
-  reboot.
-
-Do not claim `touch-proven`, `uploaded`, or `sd-proven` from a compile-only run.
+For installation, build flags, configuration, upload commands, device details,
+file layout, troubleshooting, safety boundaries, and proof terminology, see
+[TECHNICAL.md](TECHNICAL.md).
