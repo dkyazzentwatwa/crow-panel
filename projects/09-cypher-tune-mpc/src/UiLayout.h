@@ -85,14 +85,41 @@ constexpr int16_t kVoicesH = 108;  // ..560
 constexpr int16_t kThemeX = 948, kThemeW = 64;
 constexpr int16_t kThemeY = 462, kThemeH = 44;
 
-// Live output scope + VU, sharing the panel with the THEME button: the trace
-// stops at x=940 so it never runs under the button.
+// Live output scope + VU. Theme and kit moved to the settings screen, so the
+// trace gets the panel's full width.
 constexpr int16_t kScopeX = 560;
-constexpr int16_t kScopeW = 380;  // 560..940
+constexpr int16_t kScopeW = 452;  // 560..1012
 constexpr int16_t kScopeTraceY = 474;
 constexpr int16_t kScopeTraceH = 56;
 constexpr int16_t kVuY = 536;
 constexpr int16_t kVuH = 14;
+
+// SET button: top-right of the step-lane header, away from every play control.
+constexpr int16_t kSetBtnX = 944, kSetBtnW = 70;
+constexpr int16_t kSetBtnY = 66, kSetBtnH = 30;
+
+// --- Settings screen (full-screen view) ---
+constexpr int16_t kSetHeaderH = 60;
+constexpr int16_t kSetBackX = 24, kSetBackW = 110;
+constexpr int16_t kSetBackY = 14, kSetBackH = 36;
+// Rows: label on the left, [-]/[<] then a bar or name, then [+]/[>], value.
+constexpr int16_t kSetRow0Y = 92;
+constexpr int16_t kSetRowPitch = 76;
+constexpr int16_t kSetRowH = 52;
+constexpr int16_t kSetLabelX = 40;
+constexpr int16_t kSetMinusX = 250, kSetStepW = 76;
+constexpr int16_t kSetBarX = 344, kSetBarW = 430;  // 344..774
+constexpr int16_t kSetPlusX = 792;
+constexpr int16_t kSetValueX = 1000;  // right-aligned
+constexpr uint8_t kSetRowBrightness = 0;
+constexpr uint8_t kSetRowVolume = 1;
+constexpr uint8_t kSetRowTheme = 2;
+constexpr uint8_t kSetRowKit = 3;
+constexpr uint8_t kSetRowIdleDim = 4;
+constexpr uint8_t kSetRowCount = 5;
+constexpr int16_t kSetInfoY = 480;
+
+inline int16_t setRowY(uint8_t row) { return kSetRow0Y + row * kSetRowPitch; }
 
 constexpr int16_t kStatusY = 560;
 constexpr int16_t kStatusH = 40;
@@ -122,6 +149,15 @@ enum Control : int16_t {
   kControlKitPrev,
   kControlKitNext,
   kControlTheme,
+  kControlOpenSettings,
+  kControlBack,
+  kControlBrightMinus,
+  kControlBrightPlus,
+  kControlVolumeMinus,
+  kControlVolumePlus,
+  kControlThemePrev,
+  kControlThemeNext,
+  kControlIdleDim,
   kControlPadBase = 100,   // +0..15
   kControlStepBase = 200,  // +0..15
 };
@@ -214,12 +250,53 @@ inline int16_t hitTest(int16_t x, int16_t y) {
       }
     }
   }
-  if (y >= kKitY && y < kKitY + kKitH) {
-    if (inRect(x, y, kKitPrevX, kKitY, kKitArrowW, kKitH)) return kControlKitPrev;
-    if (inRect(x, y, kKitNextX, kKitY, kKitArrowW, kKitH)) return kControlKitNext;
+  if (inRect(x, y, kSetBtnX, kSetBtnY, kSetBtnW, kSetBtnH)) {
+    return kControlOpenSettings;
   }
-  if (inRect(x, y, kThemeX, kThemeY, kThemeW, kThemeH)) {
-    return kControlTheme;
+  return kControlNone;
+}
+
+// Settings view. Separate from hitTest() because the two screens share no
+// controls - dispatching by view keeps a stale pad rect from ever firing while
+// settings is up.
+inline int16_t hitTestSettings(int16_t x, int16_t y) {
+  if (inRect(x, y, kSetBackX, kSetBackY, kSetBackW, kSetBackH)) {
+    return kControlBack;
+  }
+  for (uint8_t row = 0; row < kSetRowCount; row++) {
+    int16_t ry = setRowY(row);
+    if (y < ry || y >= ry + kSetRowH) {
+      continue;
+    }
+    bool minus = inRect(x, y, kSetMinusX, ry, kSetStepW, kSetRowH);
+    bool plus = inRect(x, y, kSetPlusX, ry, kSetStepW, kSetRowH);
+    switch (row) {
+      case kSetRowBrightness:
+        if (minus) return kControlBrightMinus;
+        if (plus) return kControlBrightPlus;
+        break;
+      case kSetRowVolume:
+        if (minus) return kControlVolumeMinus;
+        if (plus) return kControlVolumePlus;
+        break;
+      case kSetRowTheme:
+        if (minus) return kControlThemePrev;
+        if (plus) return kControlThemeNext;
+        break;
+      case kSetRowKit:
+        if (minus) return kControlKitPrev;
+        if (plus) return kControlKitNext;
+        break;
+      case kSetRowIdleDim:
+        // The whole row toggles: a two-state control needs no stepper.
+        if (minus || plus || inRect(x, y, kSetBarX, ry, kSetBarW, kSetRowH)) {
+          return kControlIdleDim;
+        }
+        break;
+      default:
+        break;
+    }
+    return kControlNone;
   }
   return kControlNone;
 }

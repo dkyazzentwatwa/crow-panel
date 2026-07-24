@@ -24,6 +24,16 @@
 #define USE_GB_AUDIO 0
 #endif
 
+// Additional consoles. Both default 0 and neither core is vendored yet; the
+// flags exist so the picker can honestly mark those ROMs unplayable instead of
+// listing them as if they would launch.
+#ifndef USE_GENESIS_CORE
+#define USE_GENESIS_CORE 0
+#endif
+#ifndef USE_NES_CORE
+#define USE_NES_CORE 0
+#endif
+
 // --- Game Boy frame geometry -----------------------------------------------
 // The GB frame is 160x144. It is composited into an internal-SRAM offscreen
 // canvas and blitted with integer nearest-neighbour scaling: integer scale

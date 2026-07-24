@@ -42,8 +42,23 @@ class CamStreamServer {
   bool hasViewer() const { return viewerConnected_; }
   uint8_t viewerCount() const { return viewerConnected_ ? 1 : 0; }
 
+  // Devices associated with the soft-AP, which is a DIFFERENT question from
+  // viewerCount(). A phone can join the network (stations > 0) and still fail
+  // to load the page - that split is what separates a radio problem from an
+  // HTTP problem, and without it both look identical from the panel.
+  uint8_t stationCount() const;
+
   const String &ssid() const { return ssid_; }
   const String &url() const { return url_; }
+
+  // Station-mode address, when the panel has joined an existing network.
+  //
+  // This is the RELIABLE path on this board: station mode is proven (project 14
+  // fetches live data over it), whereas soft-AP over the hosted C6 is not
+  // demonstrated by anything in this repo. Given credentials, browsing to the
+  // panel on your own LAN avoids the AP entirely.
+  String stationUrl() const;
+  bool stationConnected() const;
 
   // Frames per second actually delivered to the viewer, measured. The link to
   // the C6 is SDIO and its real throughput under video load is unmeasured, so
@@ -78,9 +93,16 @@ class CamStreamServer {
   uint32_t fpsWindowStartMs_ = 0;
   uint32_t fpsWindowFrames_ = 0;
   float streamFps_ = 0.0f;
-  // Latest frame the snapshot endpoint can serve. The frame itself is not kept
-  // (it belongs to the camera driver); this only records whether one has been
-  // seen, so /snapshot can answer honestly before the first capture.
+  // Latest frame, republished each handle() call so the /snapshot route can
+  // reach it. Borrowed, never owned - it points at a live camera buffer and is
+  // only valid for the duration of one handle() call, which is exactly when
+  // handleClient() can invoke the route.
+  //
+  // This exists because the route MUST be registered once, in begin(). An
+  // earlier version re-registered it every loop to capture the frame pointer;
+  // WebServer::on() appends rather than replaces, so that grew an unbounded
+  // handler list at 20-30 entries per second and eventually broke the server.
+  const CrowCamera::Frame *currentFrame_ = nullptr;
   bool sawFrame_ = false;
   const char *lastError_ = "not started";
 };

@@ -2,6 +2,7 @@
 #define CYPHER_BOY_ROM_STORE_H
 
 #include "../config/ProjectConfig.h"
+#include "EmuCore.h"
 #include <Arduino.h>
 
 // Owns the SD card and the /roms + /saves layout.
@@ -22,6 +23,12 @@ class GbRomStore {
   uint8_t count() const { return count_; }
   const String &name(uint8_t index) const;
 
+  // Which console a ROM belongs to, decided purely by extension. Pure and
+  // static so the selftest can verify the mapping with no card present.
+  EmuSystem systemOf(uint8_t index) const;
+  static EmuSystem systemForName(const String &fileName);
+  static const char *systemLabel(EmuSystem sys);
+
   // GB_ROM_DIR "/" name - the path handed to gnuboy_load_rom_file().
   String romPath(uint8_t index) const;
   // GB_SAVE_DIR "/" basename ".sav" - handed to gnuboy_load_sram/save_sram().
@@ -38,6 +45,7 @@ class GbRomStore {
   void seedPlaceholder();
 
   String names_[kMaxRoms];
+  EmuSystem sys_[kMaxRoms];
   String empty_;
   uint8_t count_ = 0;
   bool ready_ = false;

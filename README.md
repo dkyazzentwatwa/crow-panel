@@ -28,7 +28,7 @@ Key details:
 The first four builds are hardware-path teaching projects:
 
 1. `projects/01-fieldops-control-center` — AIoT dashboard for remote field sensors. Mock packets, alerts, event log, AI-style summaries; real SX1262 scaffold (RadioLib) behind `USE_LORA_DRIVER`, and an **ESP-NOW** transport behind `USE_ESPNOW` (fed by a plain-ESP32 bridge — see `espnow/README.md`).
-2. `projects/02-cypher-vision-cam` — portable touch camera. Live **MIPI-CSI viewfinder** from the SC2336 sensor rendered 1:1 on the panel, stills and MJPEG clips to SD, and a Wi-Fi live feed (soft-AP + MJPEG) served off the onboard C6. The P4 drives the camera and the panel; the C6 drives the radio. No third-party camera library — core 3.3.8 already links the ESP-IDF camera stack for the P4.
+2. `projects/02-cypher-vision-cam` — portable touch camera. Live **MIPI-CSI viewfinder** from the SC2336 sensor, PPA-blitted 1:1 to the panel; hardware-JPEG stills and Motion-JPEG/AVI clips to SD; and a password-protected soft-AP serving an MJPEG live feed off the onboard C6. The P4 drives the camera and the panel; the C6 drives the radio. **No third-party camera library** — core 3.3.8 already ships and links the ESP-IDF camera stack (`esp_driver_cam` / `isp` / `jpeg` / `ppa`) for the P4, so the only hand-written piece is the SC2336 register table. This replaces the former Vision Guard kiosk, whose camera stub rested on a mistaken "verified impossibility" claim.
 3. `projects/03-badgeops-nfc-rfid-system` — badge enrollment, attendance, and lightweight access control. Mock badge taps and policy decisions; real PN532 (I2C) and MFRC522 (SPI) scaffolds behind flags.
 4. `projects/04-relayops-wifi-control-hub` — Wi-Fi control hub reusing the FieldOps dashboard, no radio module. The panel **runs a web server** so remote ESP32 nodes POST sensor data in, and **sends HTTP GPIO commands out** to toggle their lights/relays. Mock source + `set`/`feed` serial commands drive it fully offline; the real server + controller live behind `USE_WIFI`.
 
@@ -140,7 +140,8 @@ Each flag gates a compile-verified scaffold. Flip ONE at a time following `docs/
 | `USE_ESPNOW` | FieldOps reads sensor/presence frames over UART from an ESP-NOW↔UART bridge (the P4 can't be an ESP-NOW peer; a plain ESP32 runs the radio). See `espnow/README.md` | compile-verified |
 | `USE_PN532_DRIVER` | PN532 over I2C (shares the touch bus; refuses to start until pins are set in `config/Pins.h`) | compile-verified |
 | `USE_MFRC522_DRIVER` | MFRC522 over SPI (wireless-socket pins — remove socket modules first) | compile-verified |
-| `USE_CAMERA_DRIVER` | Real SC2336 MIPI-CSI camera (2-lane, 288 Mbps, RAW8 1024x600@30) through the ESP-IDF CSI + ISP drivers that core 3.3.8 already links. `esp32-camera` is neither used nor needed. Off = synthetic frames | in progress |
+| `USE_CAMERA_DRIVER` | Real SC2336 MIPI-CSI camera (2-lane, 288 Mbps, RAW8 1024x600@30) through the ESP-IDF CSI + ISP drivers core 3.3.8 already links. `esp32-camera` is neither used nor needed | compile- + linkage-verified; needs hardware |
+| `USE_CAM_SD` | Vision Cam stills and Motion-JPEG/AVI clips to SD_MMC | compile-verified |
 | `USE_AUDIO` | Cypher Tune MPC I2S/audio path, with silent mock fallback | hardware-gated |
 | `USE_WIFI_SCAN` | Passive Wi-Fi scan rows for CypherDrive and SurveyOps | C6 pin/firmware path applied; scan rows still need field proof |
 | `USE_BLE_UART_BRIDGE` | CypherDrive BLE sidecar feed over UART | hardware-gated |

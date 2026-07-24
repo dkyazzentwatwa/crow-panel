@@ -1,6 +1,15 @@
 // SC2336 image sensor over SCCB. COMPILE-VERIFIED on esp32:esp32:esp32p4
-// (core 3.3.8). NOT HARDWARE-VERIFIED - no camera module has been probed on a
-// physical panel from this workspace.
+// (core 3.3.8).
+//
+// PARTIALLY HARDWARE-VERIFIED (V1.2 panel, 2026-07-24): the sensor is present
+// and answers on the bus - a scan of SDA=12/SCL=13 found exactly one device at
+// 0x30 and read chip id 0xCB3A from registers 0x3107/0x3108. So the bus pins,
+// the address, the 16-bit register read path and the part identity are all
+// proven on real hardware.
+//
+// NOT yet proven: the mode table below. Writing ~166 registers and getting a
+// valid RAW8 stream out of the CSI link is a different claim from reading two
+// ID bytes, and it has not been observed.
 //
 // The mode table below is ported from Espressif's esp-video-components, file
 // esp_cam_sensor/sensors/sc2336/private_include/
@@ -152,6 +161,25 @@ bool Sc2336Sensor::begin(const CameraPins &pins, uint8_t addr) {
   ready_ = false;
   streaming_ = false;
   chipId_ = 0;
+
+  // Release reset / enable the camera rail BEFORE the bus. On this board IO11
+  // carries the CSI_RESET net, which the V1.2 schematic places beside an LDO
+  // enable and the DOVDD_1V8 rail - so it may be gating the sensor's supply,
+  // not just its reset. Either way the sensor cannot answer until this is high.
+  // 20 ms is far longer than any sensor needs to come out of reset and costs
+  // nothing on a one-time bring-up path.
+  if (pins.resetPin >= 0) {
+    pinMode(pins.resetPin, OUTPUT);
+    digitalWrite(pins.resetPin, LOW);
+    delay(5);
+    digitalWrite(pins.resetPin, HIGH);
+    delay(20);
+  }
+  if (pins.pwdnPin >= 0) {
+    pinMode(pins.pwdnPin, OUTPUT);
+    digitalWrite(pins.pwdnPin, LOW);  // active-high power-down: hold it awake
+    delay(5);
+  }
 
   if (!Wire1.begin(pins.sccbSda, pins.sccbScl, kSccbHz)) {
     lastError_ = "SCCB bus would not start";

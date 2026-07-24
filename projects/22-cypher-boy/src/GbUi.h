@@ -18,6 +18,17 @@ class GbUi {
   static const int16_t kRowTop = 110;   // first row's top edge
   static const int16_t kRowX = 40;
   static const int16_t kRowW = 620;
+  // The list is paged rather than scrolled: a drag would have to be told apart
+  // from a tap-to-launch, and getting that wrong means launching the wrong game.
+  // 6 rows fill 110..494 and leave room for the pager beneath.
+  static const uint8_t kRowsPerPage = 6;
+  static const int16_t kPagerY = kRowTop + kRowsPerPage * kRowH + 6;
+  static const int16_t kPagerH = 46, kPagerW = 130;
+  static uint8_t pageCount(uint8_t romCount) {
+    return romCount == 0 ? 1 : (uint8_t)((romCount + kRowsPerPage - 1) / kRowsPerPage);
+  }
+  // -1 = none, 0 = PREV, 1 = NEXT
+  static int8_t pagerHit(int16_t px, int16_t py);
 
   // In-game pause menu actions (Delta-style). MENU opens the overlay rather
   // than quitting outright, so a stray tap can't dump you out of a game.
@@ -59,10 +70,20 @@ class GbUi {
   // show the ROMs in card order.
   void drawPicker(const GbRomStore &roms, int8_t selectedRow,
                   const uint8_t *order = nullptr,
-                  const String *played = nullptr);
+                  const String *played = nullptr,
+                  uint8_t page = 0);
+  // True when this build actually has a core for that system, so the picker can
+  // show unplayable ROMs as dimmed rather than pretending they will launch.
+  static bool systemPlayable(EmuSystem sys);
   void drawSettings(uint8_t volume, uint8_t brightness, bool muted);
   void drawPlayChrome(const String &title, bool soundOn, bool fastForward);
   void drawButtonState(uint32_t heldBits);  // light up pressed controls
+
+  // On-screen diagnostics. Native USB-CDC stops enumerating once the app is
+  // running, so the panel has to be able to report on itself - anything only
+  // printed to Serial is invisible in practice.
+  void drawPlayStatus(const String &msg);    // small readout in the header
+  void drawNotice(const String &text);       // message bar on the picker
 
   void drawPauseOverlay(uint8_t slot, bool soundOn, bool fastForward,
                         uint8_t volume, uint8_t brightness);

@@ -80,10 +80,26 @@ hardware or sample files.
   flags per region + per-cell bitmasks for pads/steps; region flushes are
   row-band `esp_cache_msync` calls. No offscreen canvas — every animated
   element draws once in final state, keeping internal SRAM free for audio.
-- Layout: transport bar (y0-64: PLAY/STOP/REC, BPM, SWING, MET, patterns
-  A-D), 4x4 pad grid left (126x114 px cells, pad 1 bottom-left), right column:
-  step grid 2x8, always-visible pad-edit panel (VOL/PITCH sliders, choke
-  chips, kit selector), voice meters + THEME button, status strip.
+- Two full-screen views (`TuneUi::View`): the performance screen and a
+  settings screen, dispatched in both touch (`hitTest` vs `hitTestSettings`)
+  and render. Routing by view is what stops a stale pad rect from firing while
+  settings is up. SET (step-lane header) opens it, BACK returns.
+- Performance layout: transport bar (y0-64: PLAY/STOP/REC, BPM, SWING, MET,
+  patterns A-D), 4x4 pad grid left (126x114 px cells, pad 1 bottom-left), right
+  column: step grid 2x8, pad-edit panel (VOL/PITCH sliders + choke chips),
+  full-width scope/VU, status strip. Theme and kit selection moved to settings
+  so this screen only carries what you touch while playing.
+- Settings rows: brightness, master volume, theme, kit, idle-dim toggle, plus a
+  read-only engine/heap/render block. Brightness is floored at
+  `kMinBrightness` (40) — at 0 the panel still renders but shows nothing, which
+  looks exactly like a crash and hides the + button. The bar maps the usable
+  40..255 range, not 0..255, so full-left still matches the dimmest real state.
+- Idle dim (`CYPHER_TUNE_IDLE_DIM_MS`, default 120 s) only fires while the
+  transport is **stopped** — dimming mid-loop would punish exactly the case
+  where you are listening rather than touching. Touch or a serial byte wakes it.
+- Theme, brightness, and the idle-dim flag persist together in NVS
+  (`CYPHER_TUNE_NVS_NAMESPACE`); all three are settable headless, so the serial
+  path stays a complete control surface.
   Pad cells are wider than tall on purpose: the 4 rows have to fit between the
   transport bar and the full-width status strip (72..560), so `kPadCellH` is
   derived from that budget. Forcing them square overruns the status strip and
@@ -127,6 +143,9 @@ hardware or sample files.
 - `samples`, `voices`, `engine` (`audio` is an alias)
 - `select <pad>` (drive the step lane headless), `touch`, `perf`
 - `theme` (report + list) / `theme next` / `theme <name>` (prefix match)
+- `bright` / `bright <40-255>` / `bright +` / `bright -`
+- `vol` / `vol <0-255>` (master output)
+- `settings` / `settings open|close` / `settings idledim`
 
 ## Build Flags
 

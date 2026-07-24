@@ -27,12 +27,18 @@ void VisionCamUi::setRecording(bool on, uint32_t elapsedSec, uint32_t droppedFra
 }
 
 void VisionCamUi::setStreamState(bool up, const String &ssid, const String &url,
-                                 uint8_t clients) {
-  if (up != streamUp_ || clients != streamClients_) markDirty();
+                                 uint8_t clients, uint8_t stations,
+                                 const String &stationUrl) {
+  if (up != streamUp_ || clients != streamClients_ || stations != streamStations_ ||
+      stationUrl != stationUrl_) {
+    markDirty();
+  }
   streamUp_ = up;
   streamSsid_ = ssid;
   streamUrl_ = url;
   streamClients_ = clients;
+  streamStations_ = stations;
+  stationUrl_ = stationUrl;
 }
 
 void VisionCamUi::printTouchDiagnostics(Print &out) const {
@@ -293,6 +299,14 @@ void VisionCamUi::drawLiveHud_(const CrowCamera::Frame *frame) {
   text(g, infoX, kBtnY + 26, line, fontS(),
        CrowCamera::dropCount() > 0 ? kAmber : kTextMut, kRight);
 
+  // Loop rate and touch counter. These two exist because a stalled loop looks
+  // exactly like a broken touchscreen: a tap needs two touch samples to make a
+  // release edge, so below roughly 20 Hz taps start getting swallowed. Showing
+  // the rate turns "touch doesn't work" into a number.
+  snprintf(line, sizeof(line), "loop %lu Hz   taps %lu",
+           (unsigned long)loopHz_, (unsigned long)touch_.count());
+  text(g, infoX, kBtnY + 48, line, fontS(), loopHz_ < 20 ? kRed : kTextMut, kRight);
+
   if (recording_) {
     snprintf(line, sizeof(line), "REC %lu:%02lu", (unsigned long)(recElapsedSec_ / 60),
              (unsigned long)(recElapsedSec_ % 60));
@@ -407,16 +421,29 @@ void VisionCamUi::drawStream_() {
        streamSsid_.length() ? streamSsid_.c_str() : "-", fontM(), kTextMut, kRight);
 
   panel(g, kRowX, settingsRowY(2), kRowW, kRowH, 12, kSurface, 1, kLine);
-  text(g, kRowX + 20, settingsRowY(2) + 20, "Watch at", fontL(), kTextHi, kLeft);
+  text(g, kRowX + 20, settingsRowY(2) + 20, "Watch at (AP)", fontL(), kTextHi, kLeft);
   text(g, kRowX + kRowW - 20, settingsRowY(2) + 20,
        streamUrl_.length() ? streamUrl_.c_str() : "-", fontM(), kAccent, kRight);
 
+  // Station-mode address, shown separately because it is the path that is
+  // actually proven on this board. When present it is the one to use.
   panel(g, kRowX, settingsRowY(3), kRowW, kRowH, 12, kSurface, 1, kLine);
-  text(g, kRowX + 20, settingsRowY(3) + 20, "Viewers", fontL(), kTextHi, kLeft);
-  char buf[16];
-  snprintf(buf, sizeof(buf), "%u", streamClients_);
-  text(g, kRowX + kRowW - 20, settingsRowY(3) + 20, buf, fontL(),
-       streamClients_ ? kGreen : kTextMut, kRight);
+  text(g, kRowX + 20, settingsRowY(3) + 20, "Watch at (LAN)", fontL(), kTextHi, kLeft);
+  text(g, kRowX + kRowW - 20, settingsRowY(3) + 20,
+       stationUrl_.length() ? stationUrl_.c_str() : "no LAN credentials", fontM(),
+       stationUrl_.length() ? kGreen : kTextMut, kRight);
+
+  // Joined devices and active viewers are DIFFERENT numbers, and showing both
+  // is the point: a phone that associates but cannot load the page gives
+  // joined=1 viewers=0, which separates a radio problem from an HTTP one.
+  // Collapsing them into a single "clients" figure would hide exactly the
+  // distinction worth having.
+  panel(g, kRowX, settingsRowY(4), kRowW, kRowH, 12, kSurface, 1, kLine);
+  text(g, kRowX + 20, settingsRowY(4) + 20, "Joined / watching", fontL(), kTextHi, kLeft);
+  char buf[24];
+  snprintf(buf, sizeof(buf), "%u  /  %u", streamStations_, streamClients_);
+  text(g, kRowX + kRowW - 20, settingsRowY(4) + 20, buf, fontL(),
+       streamClients_ ? kGreen : (streamStations_ ? kAmber : kTextMut), kRight);
 
   // The privacy statement belongs on the screen that turns the radio on, not
   // only in the README - this is the control that starts broadcasting video.
@@ -467,16 +494,61 @@ void VisionCamUi::drawSettings_() {
          kTextMut, kRight);
   }
 
+  // Image-pipeline telemetry. This row exists because the serial port is dead
+  // once the app runs, so without it there is no way to tell "the AWB loop is
+  // correcting badly" from "the AWB loop never ran" - and those need opposite
+  // fixes. white=0 means no white patches were found and the gains are frozen
+  // at whatever they were.
   panel(g, kRowX, settingsRowY(3), kRowW, kRowH, 12, kSurface, 1, kLine);
-  text(g, kRowX + 20, settingsRowY(3) + 20, "Battery", fontL(), kTextHi, kLeft);
+  text(g, kRowX + 20, settingsRowY(3) + 20, "White balance", fontL(), kTextHi, kLeft);
+  {
+    float r = 1.0f, gg = 1.0f, b = 1.0f;
+    CrowCamera::colorGains(r, gg, b);
+    snprintf(buf, sizeof(buf), "white %lu   R%.2f B%.2f", (unsigned long)whitePatches_,
+             (double)r, (double)b);
+    text(g, kRowX + kRowW - 20, settingsRowY(3) + 20, buf, fontM(),
+         whitePatches_ == 0 ? kRed : kTextMut, kRight);
+  }
+
+  // Shutter button. Shows the live level of BOTH boot strapping pins so the
+  // right one can be identified by pressing the button and seeing which moves.
+  // Once confirmed, the alt reading is noise and this row can shrink.
+  panel(g, kRowX, settingsRowY(4), kRowW, kRowH, 12, kSurface, 1, kLine);
+  text(g, kRowX + 20, settingsRowY(4) + 20, "BOOT shutter", fontL(), kTextHi, kLeft);
+  // Per-pin press counts, not just levels: whichever counter moves is the pin
+  // the tactile switch actually reaches, which is the fact worth recording.
+  snprintf(buf, sizeof(buf), "io%d=%s/%lu  io%d=%s/%lu", VISIONCAM_SHUTTER_PIN,
+           shutterLevel_ ? "hi" : "LO", (unsigned long)shutterPresses_,
+           VISIONCAM_SHUTTER_ALT_PIN, shutterAltLevel_ ? "hi" : "LO",
+           (unsigned long)shutterAltPresses_);
+  text(g, kRowX + kRowW - 20, settingsRowY(4) + 20, buf, fontM(),
+       shutterPresses_ > 0 ? kGreen : kTextMut, kRight);
+
+  panel(g, kRowX, settingsRowY(5), kRowW, kRowH, 12, kSurface, 1, kLine);
+  text(g, kRowX + 20, settingsRowY(5) + 20, "Battery", fontL(), kTextHi, kLeft);
   // Deliberately not a percentage: this board documents no battery ADC, so any
   // number here would be invented. Saying "unmonitored" is the honest answer.
-  text(g, kRowX + kRowW - 20, settingsRowY(3) + 20, "unmonitored", fontM(), kTextMut, kRight);
+  text(g, kRowX + kRowW - 20, settingsRowY(4) + 20, "unmonitored", fontM(), kTextMut, kRight);
 }
 
 CamEvent VisionCamUi::tick(const CrowCamera::Frame *frame) {
   CamEvent event;
   touch_.tick();
+
+  // Loop-rate counter. tick() runs exactly once per loop(), so counting calls
+  // here measures the render loop directly.
+  {
+    const uint32_t nowMs = millis();
+    loopCount_++;
+    if (loopWindowMs_ == 0) loopWindowMs_ = nowMs;
+    const uint32_t span = nowMs - loopWindowMs_;
+    if (span >= 1000) {
+      loopHz_ = loopCount_ * 1000UL / span;
+      loopCount_ = 0;
+      loopWindowMs_ = nowMs;
+    }
+  }
+
   if (!ready_) {
     ready_ = CrowDisplay::canvas() != nullptr;
     if (!ready_) return event;

@@ -57,15 +57,26 @@ static const HostedSdioPins HOSTED_SDIO_V1_1 = { 18, 19, 17, 16, 15, 14, 32 };
 // address come from Espressif's esp-video-components SC2336 driver
 // (sc2336.c format table, sc2336.h SC2336_SCCB_ADDR).
 //
-// NOT HARDWARE-VERIFIED: no camera module has been probed on a physical panel
-// from this workspace. The Stage 0 probe sketch confirms the address before the
-// driver trusts it.
+// HARDWARE-VERIFIED (V1.2 panel, 2026-07-24): the SCCB probe found exactly one
+// device on SDA=12/SCL=13, at address 0x30, reporting chip id 0xCB3A - the
+// SC2336's documented PID. Pins, address and part are all confirmed.
+//
+// Still unproven: whether IO11 must be driven high first. The probe drove it,
+// so the successful read does not distinguish "required" from "harmless".
+// IMPORTANT, and NOT what Elecrow's own lesson implies: their Lesson13 passes
+// reset_pin = -1, but the V1.2 schematic carries a net named CSI_RESET tied to
+// the P4's IO11 (net label "IO11_CSI_RESET"), sitting next to an LDO's CE pin
+// and the DOVDD_1V8 rail. Whether IO11 is the sensor's own reset or the enable
+// for its 1.8 V supply, the correct action is identical: drive it HIGH and let
+// it settle before touching the SCCB bus. Getting this wrong produces a sensor
+// that is completely silent on I2C - indistinguishable from a badly seated
+// ribbon cable, and a genuinely miserable thing to debug.
 static const CameraPins CAMERA_SC2336 = {
   1,       // sccbPort  -> Wire1
   13,      // sccbScl
   12,      // sccbSda
-  -1,      // resetPin  (module has none)
-  -1,      // pwdnPin   (module has none)
+  11,      // resetPin  (IO11_CSI_RESET; active-high enable, see note above)
+  -1,      // pwdnPin   (none on this board)
   0x30,    // sccbAddr  (SC2336_SCCB_ADDR)
   2,       // csiLanes
   288,     // laneBitRateMbps

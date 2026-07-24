@@ -172,6 +172,11 @@ ROWS=(
   "$P22|display-gb-sd|-DUSE_DISPLAY=1 -DUSE_GB_SD=1|GFX Library for Arduino,SensorLib"
   "$P22|gb-audio|-DUSE_GB_AUDIO=1|"
   "$P22|full|-DUSE_DISPLAY=1 -DUSE_GB_SD=1 -DUSE_GB_AUDIO=1|GFX Library for Arduino,SensorLib"
+  # Genesis needs -Wno-incompatible-pointer-types for the vendored gwenesis core
+  # (upstream sets the same suppression in its own CMakeLists; GCC 14 promoted
+  # that warning to an error). EXTRA_C_FLAGS reaches only the C compiler.
+  "$P22|genesis|-DUSE_GENESIS_CORE=1|"
+  "$P22|genesis-full|-DUSE_DISPLAY=1 -DUSE_GB_SD=1 -DUSE_GB_AUDIO=1 -DUSE_GENESIS_CORE=1|GFX Library for Arduino,SensorLib"
 )
 
 echo "Flag matrix: ${#ROWS[@]} rows on $FQBN"
@@ -201,9 +206,24 @@ for ROW in "${ROWS[@]}"; do
     continue
   fi
 
+  # Rows whose vendored C needs upstream's own warning suppression. gwenesis
+  # carries both a host and an embedded framebuffer path with mismatched
+  # pointer types; upstream sets -Wno-incompatible-pointer-types in its
+  # CMakeLists, and GCC 14 promoted that warning to an error.
+  EXTRA_C_FLAGS=""
+  if [[ "$FLAGS" == *"USE_GENESIS_CORE=1"* ]]; then
+    EXTRA_C_FLAGS="-Wno-incompatible-pointer-types -Wno-error=incompatible-pointer-types"
+  fi
+
   FLAG_ARGS=()
   if [[ -n "$FLAGS" ]]; then
+    # Pass the same -D defines to BOTH the C++ and the C compiler.
+    # compiler.cpp.extra_flags does NOT reach .c files: a project with a
+    # flag-gated .c (project 22's vendored gwenesis core) would compile every
+    # such file to zero bytes and still report a green build - a silent no-op.
+    # Same failure family as the __has_include linkage trap.
     FLAG_ARGS+=(--build-property "compiler.cpp.extra_flags=$FLAGS")
+    FLAG_ARGS+=(--build-property "compiler.c.extra_flags=$FLAGS $EXTRA_C_FLAGS")
   fi
 
   echo "==> $LABEL"

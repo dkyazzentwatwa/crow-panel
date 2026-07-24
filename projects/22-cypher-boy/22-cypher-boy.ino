@@ -14,6 +14,7 @@ extern "C" {
 #include "src/GbTheme.h"
 #include "src/GbSplash.h"
 #include "src/GbStats.h"
+#include "src/GenesisCore.h"
 
 SerialCommandRouter router;
 EventLog eventLog;
@@ -24,9 +25,28 @@ GbInput input;
 GbUi ui;
 GbAudio audio;
 GbStats stats;
+#if USE_GENESIS_CORE
+GenesisCore genesis;
+#endif
+
+// The core driving the current game. Points at `host` until a ROM for another
+// system is launched, so every existing Game Boy path is unchanged.
+EmuCore *core = &host;
+
+EmuCore *coreFor(EmuSystem sys) {
+  switch (sys) {
+#if USE_GENESIS_CORE
+    case kSysGenesis: return &genesis;
+#endif
+    case kSysGameBoy: return &host;
+    default: return nullptr;
+  }
+}
 
 enum Screen : uint8_t { kScreenPicker = 0, kScreenPlay };
-Screen screen = kScreenPicker;
+// Named uiScreen, not screen: the vendored gwenesis core exports a global
+// `screen` and the two collide at link time.
+Screen uiScreen = kScreenPicker;
 int8_t selectedRom = 0;
 bool paused = false;         // pause overlay open (MENU)
 bool fastForward = false;    // run several emulated frames per drawn frame
@@ -58,7 +78,7 @@ void applyTheme(GbThemeId id);
 void handleOverlay(GbUi::OverlayAction a);
 void toPicker();
 
-const char *screenName() { return screen == kScreenPlay ? "play" : "picker"; }
+const char *screenName() { return uiScreen == kScreenPlay ? "play" : "picker"; }
 
 // CrowDisplay does not exist at all on USE_DISPLAY=0 builds (the shared header
 // has no stub branch for that case), so every backlight call funnels through
@@ -69,6 +89,7 @@ const char *screenName() { return screen == kScreenPlay ? "play" : "picker"; }
 uint8_t pickerOrder[GbRomStore::kMaxRoms];
 String pickerPlayed[GbRomStore::kMaxRoms];
 int8_t selectedRow = 0;
+uint8_t pickerPage = 0;
 
 void refreshPicker() {
   const uint8_t n = romStore.count();
@@ -89,7 +110,11 @@ void refreshPicker() {
     pickerPlayed[i] = GbStats::formatPlayed(stats.seconds(romStore.name(pickerOrder[i])));
     if (pickerOrder[i] == (uint8_t)selectedRom) selectedRow = (int8_t)i;
   }
-  ui.drawPicker(romStore, selectedRow, pickerOrder, pickerPlayed);
+  const uint8_t pages = GbUi::pageCount(romStore.count());
+  if (pickerPage >= pages) pickerPage = pages ? pages - 1 : 0;
+  // Keep the selected game on screen when the list is re-sorted by recency.
+  if (selectedRow >= 0) pickerPage = (uint8_t)selectedRow / GbUi::kRowsPerPage;
+  ui.drawPicker(romStore, selectedRow, pickerOrder, pickerPlayed, pickerPage);
   ui.drawSettings(audio.volume(), brightness, audio.muted());
 }
 
@@ -105,7 +130,7 @@ void applyBacklight(uint8_t level) {
 // a game always looks the way the game looks.
 void applyTheme(GbThemeId id) {
   GbUi::setTheme(id);
-  if (screen == kScreenPicker) {
+  if (uiScreen == kScreenPicker) {
     refreshPicker();
   } else if (paused) {
     // Repaint the play chrome under the overlay so the whole screen matches.
@@ -154,9 +179,9 @@ void applyVolume(int delta) {
 // picker. Both the MENU control and the `screen picker` command land here, so
 // touch and serial behave identically.
 void toPicker() {
-  if (host.sramDirty()) host.save();
+  if (core->sramDirty()) core->save();
   stats.endSession(millis());
-  screen = kScreenPicker;
+  uiScreen = kScreenPicker;
   paused = false;
   refreshPicker();
   eventLog.add("Returned to picker");
@@ -168,14 +193,33 @@ bool launchRom(int8_t index) {
     Serial.println(F("[play] placeholder list - no real ROM to load (need -DUSE_GB_SD=1 + card)"));
     return false;
   }
-  if (!host.loadRom(romStore.romPath(index), romStore.savePath(index))) {
-    Serial.print(F("[play] load failed: "));
-    Serial.println(host.status());
+  const EmuSystem sys = romStore.systemOf(index);
+  if (!GbUi::systemPlayable(sys)) {
+    Serial.print(F("[play] "));
+    Serial.print(romStore.name(index));
+    Serial.print(F(" is a "));
+    Serial.print(GbRomStore::systemLabel(sys));
+    Serial.println(F(" ROM - no core for it in this build"));
+    ui.drawNotice(String(GbRomStore::systemLabel(sys)) + " ROM: no core in this build");
     return false;
   }
+  EmuCore *sel = coreFor(sys);
+  if (!sel) return false;
+  if (sel != core && core->romLoaded()) core->stop();
+  core = sel;
+  if (!core->begin(&audio) ||
+      !core->start(romStore.romPath(index), romStore.savePath(index))) {
+    Serial.print(F("[play] load failed: "));
+    Serial.println(core->status());
+    ui.drawNotice(core->status());  // Serial is not reachable while running
+    return false;
+  }
+  // Video geometry and therefore the gamepad follow whichever core just started.
+  video.begin(core->frameW(), core->frameH(), core->scale(), core->stride());
+  GbInput::buildLayout(video.viewX(), video.viewY(), video.viewW(), video.viewH());
   selectedRom = index;
   stats.startSession(romStore.name(index), millis());
-  screen = kScreenPlay;
+  uiScreen = kScreenPlay;
   paused = false;
   ui.drawPlayChrome(romStore.name(index), !audio.muted(), fastForward);
   video.clearViewport();
@@ -272,14 +316,20 @@ void cmdSelfTest(const String &) {
             String(GB_SAVE_DIR) == String(GB_SD_ROOT) + GB_SAVE_DIR_FS);
 
   // 4) Video scaling maths (pure - verifiable with no panel attached).
-  check("viewport origin", GbVideo::viewX(0) == GB_VIEW_X && GbVideo::viewY(0) == GB_VIEW_Y);
+  check("viewport origin",
+        video.pixelX(0) == video.viewX() && video.pixelY(0) == video.viewY());
   check("viewport scales x3",
-        GbVideo::viewX(GB_W - 1) == GB_VIEW_X + (GB_W - 1) * GB_SCALE &&
-            GbVideo::viewY(GB_H - 1) == GB_VIEW_Y + (GB_H - 1) * GB_SCALE);
-  check("viewport size", GbVideo::viewW() == GB_W * GB_SCALE &&
-                             GbVideo::viewH() == GB_H * GB_SCALE);
-  check("viewport fits panel", GB_VIEW_X + GbVideo::viewW() <= 1024 &&
-                                  GB_VIEW_Y + GbVideo::viewH() <= 600);
+        video.pixelX(GB_W - 1) == video.viewX() + (GB_W - 1) * GB_SCALE &&
+            video.pixelY(GB_H - 1) == video.viewY() + (GB_H - 1) * GB_SCALE);
+  check("viewport size",
+        video.viewW() == GB_W * GB_SCALE && video.viewH() == GB_H * GB_SCALE);
+  check("viewport fits panel", video.viewX() + video.viewW() <= 1024 &&
+                                  video.viewY() + video.viewH() <= 600);
+  // Centring is pure maths, so every console can be checked here with only a
+  // Game Boy attached - this is what stops a future core landing off-screen.
+  check("GB centres at 272", GbVideo::centreX(160, 3) == 272);
+  check("Genesis centres at 192", GbVideo::centreX(320, 2) == 192);
+  check("NES centres at 256", GbVideo::centreX(256, 2) == 256);
 
   // 5) Every gamepad hitbox maps to its own button, and nothing else does.
   {
@@ -295,13 +345,14 @@ void cmdSelfTest(const String &) {
     }
     check("every control maps to its button", allMap);
     check("controls do not overlap", noOverlap);
-    check("empty space maps to nothing", input.mapPoint(GB_VIEW_X + 10, GB_VIEW_Y + 10) == 0);
+    check("empty space maps to nothing", input.mapPoint(video.viewX() + 10, video.viewY() + 10) == 0);
 
     // Controls must not sit on top of the game picture.
     bool clearOfViewport = true;
     for (uint8_t i = 0; i < n; i++) {
-      if (L[i].x < GB_VIEW_X + GbVideo::viewW() && L[i].y < GB_VIEW_Y + GbVideo::viewH() &&
-          L[i].x + L[i].w > GB_VIEW_X && L[i].y + L[i].h > GB_VIEW_Y) {
+      if (L[i].x < video.viewX() + video.viewW() &&
+          L[i].y < video.viewY() + video.viewH() &&
+          L[i].x + L[i].w > video.viewX() && L[i].y + L[i].h > video.viewY()) {
         clearOfViewport = false;
       }
     }
@@ -378,6 +429,18 @@ void cmdSelfTest(const String &) {
     brightness = before;
     applyBacklight(brightness);
   }
+
+  // 8b) ROM tagging by extension - pure, and the thing that decides which core
+  // a file is handed to.
+  check("tags .gb", GbRomStore::systemForName("Pokemon.GB") == kSysGameBoy);
+  check("tags .gbc", GbRomStore::systemForName("crystal.gbc") == kSysGameBoy);
+  check("tags .md", GbRomStore::systemForName("sonic.md") == kSysGenesis);
+  check("tags .gen", GbRomStore::systemForName("sonic.gen") == kSysGenesis);
+  check("tags .nes", GbRomStore::systemForName("smb.nes") == kSysNes);
+  check("rejects non-ROMs", GbRomStore::systemForName("playtime.csv") == kSysCount);
+  check("Game Boy is playable", GbUi::systemPlayable(kSysGameBoy));
+  check("uncored systems are not playable",
+        GbUi::systemPlayable(kSysGenesis) == (USE_GENESIS_CORE != 0));
 
   // 9) Themes: cycling wraps, names resolve, and every palette is populated.
   {
@@ -507,7 +570,7 @@ void cmdAudio(const String &args) {
   Serial.print(audio.muted() ? F("yes") : F("no"));
   Serial.print(F(" underruns="));
   Serial.println(audio.underruns());
-  if (screen == kScreenPicker) ui.drawSettings(audio.volume(), brightness, audio.muted());
+  if (uiScreen == kScreenPicker) ui.drawSettings(audio.volume(), brightness, audio.muted());
   else if (paused) redrawOverlay();
 }
 
@@ -530,6 +593,21 @@ void cmdTheme(const String &args) {
   }
   Serial.print(F("[theme] "));
   Serial.println(gbTheme(GbUi::theme()).name);
+}
+
+void cmdPage(const String &args) {
+  String a = args; a.trim(); a.toLowerCase();
+  const uint8_t pages = GbUi::pageCount(romStore.count());
+  if (a == "next") pickerPage = (uint8_t)min<int>(pickerPage + 1, pages - 1);
+  else if (a == "prev") pickerPage = pickerPage ? pickerPage - 1 : 0;
+  else if (a.length()) pickerPage = (uint8_t)constrain(a.toInt() - 1, 0, (int)pages - 1);
+  selectedRow = (int8_t)(pickerPage * GbUi::kRowsPerPage);
+  if (selectedRow < (int8_t)romStore.count()) selectedRom = (int8_t)pickerOrder[selectedRow];
+  Serial.printf("[page] %u/%u\n", (unsigned)(pickerPage + 1), (unsigned)pages);
+  if (uiScreen == kScreenPicker) {
+    ui.drawPicker(romStore, selectedRow, pickerOrder, pickerPlayed, pickerPage);
+    ui.drawSettings(audio.volume(), brightness, audio.muted());
+  }
 }
 
 void cmdStats(const String &) {
@@ -558,7 +636,7 @@ void cmdBright(const String &args) {
   Serial.print(F(" ("));
   Serial.print((brightness * 100 + 127) / 255);
   Serial.println(F("%)"));
-  if (screen == kScreenPicker) ui.drawSettings(audio.volume(), brightness, audio.muted());
+  if (uiScreen == kScreenPicker) ui.drawSettings(audio.volume(), brightness, audio.muted());
   else if (paused) redrawOverlay();
 }
 
@@ -643,14 +721,14 @@ void cmdFF(const String &) {
   fastForward = !fastForward;
   Serial.print(F("[ff] fast-forward "));
   Serial.println(fastForward ? F("ON") : F("OFF"));
-  if (screen == kScreenPlay && !paused) {
+  if (uiScreen == kScreenPlay && !paused) {
     ui.drawPlayChrome(romStore.name(selectedRom), !audio.muted(), fastForward);
     video.clearViewport();
   }
 }
 
 void cmdPause(const String &) {
-  if (screen != kScreenPlay) { Serial.println(F("[pause] not in a game")); return; }
+  if (uiScreen != kScreenPlay) { Serial.println(F("[pause] not in a game")); return; }
   paused = !paused;
   if (paused) redrawOverlay();
   else { ui.drawPlayChrome(romStore.name(selectedRom), !audio.muted(), fastForward); video.clearViewport(); }
@@ -671,10 +749,13 @@ void setup() {
   Logger::info("romstore", romStore.status());
 
   ui.begin();
-  GbInput::buildLayout(GB_VIEW_X, GB_VIEW_Y, GbVideo::viewW(), GbVideo::viewH());
+
   ui.setStateSource(&romStore, &selectedRom);
   stats.begin();
-  video.begin();
+  // Video geometry comes from the core, and the gamepad is then derived from
+  // the resulting viewport - so a different console reshapes both for free.
+  video.begin(host.frameW(), host.frameH(), host.scale());
+  GbInput::buildLayout(video.viewX(), video.viewY(), video.viewW(), video.viewH());
   applyBacklight(brightness);
   GbSplash::run(&audio, &input);
   noteActivity();
@@ -692,6 +773,7 @@ void setup() {
   router.on("audio", "audio status | vol <0-255> | mute | unmute", cmdAudio);
   router.on("bright", "backlight: bright <40-255>", cmdBright);
   router.on("theme", "theme next|prev|list|<name>", cmdTheme);
+  router.on("page", "ROM list page: page next|prev|<n>", cmdPage);
   router.on("stats", "play time and recency per ROM", cmdStats);
   router.on("state", "state save|load [slot] - save-state slots", cmdState);
   router.on("ff", "toggle fast-forward", cmdFF);
@@ -706,7 +788,7 @@ void loop() {
   if (input.releasedEdge() || input.pressedEdge()) noteActivity();
   tickIdle();
 
-  if (screen == kScreenPlay) {
+  if (uiScreen == kScreenPlay) {
     if (paused) {
       // Overlay is modal: gameplay is frozen and only overlay taps count.
       if (input.releasedEdge()) {
@@ -735,23 +817,55 @@ void loop() {
       // MENU opens the pause menu rather than quitting outright, so a stray
       // tap can never dump you out of a game.
       paused = true;
-      if (host.sramDirty()) host.save();
+      if (core->sramDirty()) core->save();
       redrawOverlay();
       delay(5);
       return;
     }
 
     const uint32_t pad = input.buttons();
-    host.setPad(pad);
+    core->setPad(pad);
     // Fast-forward runs extra frames without drawing them - the emulation is
     // cheap, the blit is what costs.
     const uint8_t frames = fastForward ? kFastForwardFrames : 1;
     for (uint8_t i = 0; i < frames; i++) {
-      host.runFrame(i == (uint8_t)(frames - 1));
+      core->runFrame(i == (uint8_t)(frames - 1));
     }
-    video.blit(host.framebuffer());
+    // A Genesis game can switch resolution at runtime (H40 320 vs H32 256, and
+    // NTSC 224 vs PAL 240 lines). The viewport is set at launch from the core's
+    // defaults, so re-configure - and rebuild the pad around the new screen -
+    // whenever it actually changes. Without this the blit reads rows at the
+    // wrong stride and the picture skews.
+    if (core->frameW() != video.srcW() || core->frameH() != video.srcH()) {
+      video.begin(core->frameW(), core->frameH(), core->scale(), core->stride());
+      GbInput::buildLayout(video.viewX(), video.viewY(), video.viewW(), video.viewH());
+      ui.drawPlayChrome(romStore.name(selectedRom), !audio.muted(), fastForward);
+      video.clearViewport();
+    }
+
+    // Paletted cores (Genesis) hand over 8-bit indices plus a LUT; direct
+    // RGB565 cores (Game Boy) hand over the frame itself.
+    if (core->palette() && core->framebuffer8()) {
+      video.blitPaletted(core->framebuffer8(), core->palette());
+    } else {
+      video.blit(core->framebuffer());
+    }
     ui.drawButtonState(pad);
-    host.tickSave(millis());
+    core->tickSave(millis());
+
+    // Live readout in the header. With no serial available on a running app,
+    // this is the only way to tell "emulation wedged" from "emulation fine,
+    // display wrong" - which are completely different bugs.
+    static uint32_t lastFpsMs = 0, lastFpsFrames = 0;
+    const uint32_t nowMs = millis();
+    if ((uint32_t)(nowMs - lastFpsMs) >= 1000) {
+      const uint32_t f = core->frameCount();
+      const uint32_t fps = f - lastFpsFrames;
+      lastFpsFrames = f;
+      lastFpsMs = nowMs;
+      ui.drawPlayStatus(String(core->name()) + "  " + fps + " fps  " + f + " frames  " +
+                        core->frameW() + "x" + core->frameH());
+    }
     // No delay: the emulator paces itself on the GB frame loop (and on audio
     // when sound is enabled), and touch/serial are polled once per frame.
     return;
@@ -787,8 +901,28 @@ void loop() {
       return;
     }
 
-    const int8_t row = GbUi::pickerHit(tx, ty, romStore.count());
-    if (row >= 0) {
+    // Pager first: it sits below the rows, so check it before row hit-testing.
+    const int8_t pg = GbUi::pagerHit(tx, ty);
+    if (pg >= 0) {
+      const uint8_t pages = GbUi::pageCount(romStore.count());
+      const uint8_t want = (pg == 0) ? (pickerPage ? pickerPage - 1 : 0)
+                                     : (uint8_t)min<int>(pickerPage + 1, pages - 1);
+      if (want != pickerPage) {
+        audio.playClick();
+        pickerPage = want;
+        selectedRow = (int8_t)(pickerPage * GbUi::kRowsPerPage);
+        selectedRom = (int8_t)pickerOrder[selectedRow];
+        ui.drawPicker(romStore, selectedRow, pickerOrder, pickerPlayed, pickerPage);
+        ui.drawSettings(audio.volume(), brightness, audio.muted());
+      }
+      delay(5);
+      return;
+    }
+
+    const int8_t vis = GbUi::pickerHit(tx, ty, romStore.count());
+    const int8_t row = (vis < 0) ? -1
+                                 : (int8_t)(pickerPage * GbUi::kRowsPerPage + vis);
+    if (row >= 0 && row < (int8_t)romStore.count()) {
       audio.playClick();
       selectedRow = row;
       const uint8_t romIdx = pickerOrder[row];

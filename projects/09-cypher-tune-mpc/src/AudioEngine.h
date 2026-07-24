@@ -75,6 +75,11 @@ class AudioEngine {
   // torn read costs at most one visually-odd frame and never a crash. Both
   // return 0 in silent builds, which is how the UI knows to fall back to the
   // simulated voice meters.
+  // Master volume 0-255, live. Only read when a voice starts, so a byte write
+  // from the loop context needs no handshake with the render task.
+  uint8_t masterVolume() const { return masterVolume_; }
+  void setMasterVolume(uint8_t v) { masterVolume_ = v; }
+
   static const uint16_t kScopeSize = 256;
   uint8_t outputPeak() const { return outPeak_; }
   // Copies up to `max` samples oldest-to-newest ending at the newest write.
@@ -138,6 +143,7 @@ class AudioEngine {
   volatile uint32_t underruns_ = 0;
   volatile uint32_t framesRendered_ = 0;
   volatile uint8_t activeVoiceCount_ = 0;
+  volatile uint8_t masterVolume_ = CYPHER_TUNE_MASTER_VOLUME;
 
   // Scope ring (render task writes, UI reads). Power-of-two size.
   volatile int16_t scope_[kScopeSize];

@@ -45,6 +45,33 @@
 #define VISIONCAM_REC_FPS 10
 #endif
 
+// --- Physical shutter ------------------------------------------------------
+
+// The BOOT button doubles as a shutter release. Safe to reuse: BOOT is a
+// strapping pin sampled by the ROM bootloader at reset, long before this sketch
+// runs, so reading it as an ordinary input afterwards does not interfere with
+// entering download mode (hold BOOT, tap RESET - still works).
+//
+// GPIO36 per the V1.2 schematic (net DOWNLOAD_BOOT, driven by a KEY-4.5X4.5
+// tactile switch marked "LOW: Download Boot") and the core's own esp32p4
+// variant header ("BOOT_MODE2 36 pullup"). Active LOW.
+#ifndef VISIONCAM_SHUTTER_PIN
+#define VISIONCAM_SHUTTER_PIN 36
+#endif
+
+// The other boot strap (GPIO35, net SPI_BOOT). Not used as an input; its level
+// is displayed alongside the shutter pin purely so the correct button pin can
+// be confirmed by observation rather than inferred from a schematic PDF.
+#ifndef VISIONCAM_SHUTTER_ALT_PIN
+#define VISIONCAM_SHUTTER_ALT_PIN 35
+#endif
+
+// Milliseconds a press must be stable before it counts. Tactile switches bounce
+// for a few ms; 40 is comfortably past that without feeling laggy.
+#ifndef VISIONCAM_SHUTTER_DEBOUNCE_MS
+#define VISIONCAM_SHUTTER_DEBOUNCE_MS 40
+#endif
+
 // --- Streaming -------------------------------------------------------------
 
 // HTTP ports. The MJPEG stream gets its own socket on purpose: WebServer's

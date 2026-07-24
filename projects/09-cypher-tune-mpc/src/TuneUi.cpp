@@ -37,22 +37,15 @@ const char *chokeLabel(uint8_t group) {
 }  // namespace
 
 void TuneUi::begin(SampleBank *bank, Sequencer *seq, VisualVoices *voices,
-                   TriggerFn trigger, TransportFn transport,
-                   AudioStatusFn audioStatus, KitStepFn kitStep, PeakFn peak,
-                   ScopeFn scope, void *ctx) {
+                   const Callbacks &callbacks) {
   bank_ = bank;
   seq_ = seq;
   voices_ = voices;
-  trigger_ = trigger;
-  transport_ = transport;
-  audioStatus_ = audioStatus;
-  kitStep_ = kitStep;
-  peak_ = peak;
-  scope_ = scope;
-  ctx_ = ctx;
-  loadTheme_();
+  cb_ = callbacks;
+  loadSettings_();
   displayReady_ = CrowDisplay::begin(activeHardwareProfile(), "CYPHER TUNE",
                                      /*manualFlush=*/true);
+  applyBrightness_();
   dirtyAll_ = true;
 }
 
@@ -63,7 +56,10 @@ void TuneUi::tick() {
   uint32_t now = millis();
   CrowDisplay::tick();
   handleTouch_(now);
-  syncState_(now);
+  tickIdle_(now);
+  if (view_ == kViewMain) {
+    syncState_(now);
+  }
   render_(now);
 }
 
@@ -104,12 +100,90 @@ void TuneUi::handleTouch_(uint32_t now) {
   for (uint8_t i = 0; i < TouchTracker::kMaxContacts; i++) {
     TouchTracker::Contact &c = touch_.contact(i);
     if (c.pressedEdge) {
-      c.owner = hitTest(c.downX, c.downY);
-      pressControl_(c, now);
+      noteActivity();
+      // Dispatch by view: the two screens share no controls, so routing here
+      // means a stale pad rect can never fire while settings is up.
+      if (view_ == kViewSettings) {
+        c.owner = hitTestSettings(c.downX, c.downY);
+        pressSettingsControl_(c, now);
+      } else {
+        c.owner = hitTest(c.downX, c.downY);
+        pressControl_(c, now);
+      }
     } else if (c.active && c.owner != kControlNone) {
+      if (view_ == kViewSettings) {
+        // Only the steppers repeat, and they are cheap enough to re-press.
+        continue;
+      }
       holdControl_(c, now);
     }
   }
+}
+
+void TuneUi::pressSettingsControl_(TouchTracker::Contact &c, uint32_t now) {
+  (void)now;
+  switch (c.owner) {
+    case kControlBack:
+      setView(kViewMain);
+      break;
+    case kControlBrightMinus:
+      bumpBrightness(-(int16_t)kBrightnessStep);
+      dirtySettingsRows_ |= bit16(kSetRowBrightness);
+      break;
+    case kControlBrightPlus:
+      bumpBrightness(kBrightnessStep);
+      dirtySettingsRows_ |= bit16(kSetRowBrightness);
+      break;
+    case kControlVolumeMinus:
+    case kControlVolumePlus:
+      if (cb_.volumeGet != nullptr && cb_.volumeSet != nullptr) {
+        int16_t v = (int16_t)cb_.volumeGet(cb_.ctx) +
+                    (c.owner == kControlVolumePlus ? 16 : -16);
+        if (v < 0) v = 0;
+        if (v > 255) v = 255;
+        cb_.volumeSet(cb_.ctx, (uint8_t)v);
+      }
+      dirtySettingsRows_ |= bit16(kSetRowVolume);
+      break;
+    case kControlThemePrev:
+    case kControlThemeNext: {
+      uint8_t count = tuneThemeCount();
+      uint8_t next = (uint8_t)((themeIndex_ + count +
+                                (c.owner == kControlThemeNext ? 1 : -1)) % count);
+      setThemeByName(tuneTheme(next).name);  // persists + forces a full repaint
+      break;
+    }
+    case kControlKitPrev:
+    case kControlKitNext:
+      if (cb_.kitStep != nullptr) {
+        cb_.kitStep(cb_.ctx, c.owner == kControlKitNext ? 1 : -1);
+      }
+      dirtySettingsRows_ |= bit16(kSetRowKit);
+      break;
+    case kControlIdleDim:
+      setIdleDim(!idleDimEnabled_);
+      dirtySettingsRows_ |= bit16(kSetRowIdleDim);
+      break;
+    default:
+      break;
+  }
+}
+
+void TuneUi::tickIdle_(uint32_t now) {
+  if (!idleDimEnabled_ || dimmed_) {
+    return;
+  }
+  // Never dim while the transport runs: that is exactly when you are listening
+  // to a loop rather than touching the panel.
+  if (seq_ != nullptr && seq_->playing()) {
+    lastActivityMs_ = now;
+    return;
+  }
+  if ((uint32_t)(now - lastActivityMs_) < CYPHER_TUNE_IDLE_DIM_MS) {
+    return;
+  }
+  dimmed_ = true;
+  applyBrightness_();
 }
 
 void TuneUi::pressControl_(TouchTracker::Contact &c, uint32_t now) {
@@ -121,10 +195,10 @@ void TuneUi::pressControl_(TouchTracker::Contact &c, uint32_t now) {
     if (rel < 0) rel = 0;
     if (rel > kPadCellH - 1) rel = kPadCellH - 1;
     uint8_t velocity = 40 + (uint8_t)((int32_t)rel * 87 / (kPadCellH - 1));
-    if (trigger_ != nullptr) {
-      trigger_(ctx_, pad, velocity);
+    if (cb_.trigger != nullptr) {
+      cb_.trigger(cb_.ctx, pad, velocity);
     }
-    notePadFlash(pad);
+    notePadFlash(pad, velocity);
     selectPad(pad);
     return;
   }
@@ -136,15 +210,15 @@ void TuneUi::pressControl_(TouchTracker::Contact &c, uint32_t now) {
   }
   switch (owner) {
     case kControlPlay:
-      if (transport_ != nullptr) transport_(ctx_, kOpPlay);
+      if (cb_.transport != nullptr) cb_.transport(cb_.ctx, kOpPlay);
       dirtyTransport_ = true;
       break;
     case kControlStop:
-      if (transport_ != nullptr) transport_(ctx_, kOpStop);
+      if (cb_.transport != nullptr) cb_.transport(cb_.ctx, kOpStop);
       dirtyTransport_ = true;
       break;
     case kControlRec:
-      if (transport_ != nullptr) transport_(ctx_, kOpRecordToggle);
+      if (cb_.transport != nullptr) cb_.transport(cb_.ctx, kOpRecordToggle);
       dirtyTransport_ = true;
       break;
     case kControlBpmMinus:
@@ -186,8 +260,8 @@ void TuneUi::pressControl_(TouchTracker::Contact &c, uint32_t now) {
       break;
     case kControlKitPrev:
     case kControlKitNext:
-      if (kitStep_ != nullptr) {
-        kitStep_(ctx_, owner == kControlKitNext ? 1 : -1);
+      if (cb_.kitStep != nullptr) {
+        cb_.kitStep(cb_.ctx, owner == kControlKitNext ? 1 : -1);
       }
       break;
     case kControlTheme:
@@ -315,7 +389,7 @@ void TuneUi::syncState_(uint32_t now) {
   // Scope: a live trace has to repaint on a clock, not on a change signal.
   // ~25 fps costs one 108-row band flush and keeps the waveform fluid. Silent
   // builds keep the old change-driven meter refresh instead.
-  if (scope_ != nullptr) {
+  if (cb_.scope != nullptr) {
     if (now - lastScopeDrawMs_ >= 40) {
       dirtyScope_ = true;
       lastScopeDrawMs_ = now;
@@ -352,6 +426,31 @@ void TuneUi::syncState_(uint32_t now) {
 // --- Rendering ---
 
 void TuneUi::render_(uint32_t now) {
+  if (view_ == kViewSettings) {
+    if (!dirtyAll_ && dirtySettingsRows_ == 0) {
+      return;
+    }
+    uint32_t tS = micros();
+    if (dirtyAll_) {
+      drawSettings_();
+      CrowDisplay::flush();
+    } else {
+      Arduino_GFX *g = CrowDisplay::canvas();
+      const TuneTheme &t = theme();
+      for (uint8_t row = 0; row < kSetRowCount; row++) {
+        if (dirtySettingsRows_ & bit16(row)) {
+          drawSettingsRow_(g, t, row);
+          CrowDisplay::flush(0, setRowY(row), kScreenW, kSetRowH);
+        }
+      }
+    }
+    dirtyAll_ = false;
+    dirtySettingsRows_ = 0;
+    lastRenderUs_ = micros() - tS;
+    renderCount_++;
+    return;
+  }
+
   bool any = dirtyAll_ || dirtyTransport_ || dirtyHeader_ || dirtyEdit_ ||
              dirtyScope_ || dirtyStatus_ || dirtyPads_ != 0 || dirtySteps_ != 0;
   if (!any) {
@@ -454,6 +553,117 @@ void TuneUi::drawAll_() {
   drawStatus_();
 }
 
+void TuneUi::drawSettingsRow_(Arduino_GFX *g, const TuneTheme &t, uint8_t row) {
+  int16_t y = setRowY(row);
+  g->fillRect(0, y, kScreenW, kSetRowH, t.bg);
+
+  const char *label = "";
+  switch (row) {
+    case kSetRowBrightness: label = "BRIGHTNESS"; break;
+    case kSetRowVolume:     label = "MASTER VOL"; break;
+    case kSetRowTheme:      label = "THEME"; break;
+    case kSetRowKit:        label = "KIT"; break;
+    case kSetRowIdleDim:    label = "IDLE DIM"; break;
+    default: break;
+  }
+  Widgets::text(g, kSetLabelX, y + 18, label, Widgets::fontM(), t.ink);
+
+  bool stepper = row != kSetRowIdleDim;
+  bool arrows = row == kSetRowTheme || row == kSetRowKit;
+  if (stepper) {
+    Widgets::panel(g, kSetMinusX, y, kSetStepW, kSetRowH, 8, t.surface, 1, t.line);
+    Widgets::text(g, kSetMinusX + kSetStepW / 2, y + 12, arrows ? "<" : "-",
+                  Widgets::fontL(), t.ink, Widgets::kCenter);
+    Widgets::panel(g, kSetPlusX, y, kSetStepW, kSetRowH, 8, t.surface, 1, t.line);
+    Widgets::text(g, kSetPlusX + kSetStepW / 2, y + 12, arrows ? ">" : "+",
+                  Widgets::fontL(), t.ink, Widgets::kCenter);
+  }
+
+  switch (row) {
+    case kSetRowBrightness: {
+      // The bar spans the usable range (kMinBrightness..255), not 0..255, so a
+      // full-left bar still matches the dimmest the panel actually goes.
+      float frac = (float)(brightness_ - kMinBrightness) / (255 - kMinBrightness);
+      Widgets::hBar(g, kSetBarX, y + 12, kSetBarW, 28, frac, t.accent, t.surface);
+      Widgets::text(g, kSetValueX, y + 18, String(brightness_).c_str(),
+                    Widgets::fontM(), t.ink, Widgets::kRight);
+      break;
+    }
+    case kSetRowVolume: {
+      uint8_t vol = cb_.volumeGet != nullptr ? cb_.volumeGet(cb_.ctx) : 0;
+      Widgets::hBar(g, kSetBarX, y + 12, kSetBarW, 28, vol / 255.0f, t.accent,
+                    t.surface);
+      Widgets::text(g, kSetValueX, y + 18,
+                    cb_.volumeGet != nullptr ? String(vol).c_str() : "n/a",
+                    Widgets::fontM(), t.ink, Widgets::kRight);
+      break;
+    }
+    case kSetRowTheme:
+      Widgets::panel(g, kSetBarX, y, kSetBarW, kSetRowH, 8, t.surface, 1, t.line);
+      Widgets::text(g, kSetBarX + kSetBarW / 2, y + 16, theme().name,
+                    Widgets::fontM(), t.accent, Widgets::kCenter);
+      Widgets::text(g, kSetValueX, y + 18,
+                    (String(themeIndex_ + 1) + "/" + String(tuneThemeCount())).c_str(),
+                    Widgets::fontS(), t.muted, Widgets::kRight);
+      break;
+    case kSetRowKit:
+      Widgets::panel(g, kSetBarX, y, kSetBarW, kSetRowH, 8, t.surface, 1, t.line);
+      Widgets::text(g, kSetBarX + kSetBarW / 2, y + 16,
+                    bank_ != nullptr ? bank_->kitName() : "-", Widgets::fontM(),
+                    t.accent, Widgets::kCenter);
+      break;
+    case kSetRowIdleDim: {
+      uint16_t fill = idleDimEnabled_ ? t.good : t.surface;
+      Widgets::panel(g, kSetBarX, y, kSetBarW, kSetRowH, 8, fill, 1, t.line);
+      Widgets::text(g, kSetBarX + kSetBarW / 2, y + 16,
+                    idleDimEnabled_ ? "ON - dims when stopped" : "OFF",
+                    Widgets::fontM(), idleDimEnabled_ ? t.onAccent : t.muted,
+                    Widgets::kCenter);
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+void TuneUi::drawSettings_() {
+  Arduino_GFX *g = CrowDisplay::canvas();
+  if (g == nullptr) {
+    return;
+  }
+  const TuneTheme &t = theme();
+  g->fillScreen(t.bg);
+
+  Widgets::panel(g, kSetBackX, kSetBackY, kSetBackW, kSetBackH, 8, t.surface, 1,
+                 t.line);
+  Widgets::text(g, kSetBackX + kSetBackW / 2, kSetBackY + 11, "< BACK",
+                Widgets::fontS(), t.ink, Widgets::kCenter);
+  Widgets::text(g, kScreenW / 2, kSetBackY + 6, "SETTINGS", Widgets::fontL(),
+                t.ink, Widgets::kCenter);
+  g->drawFastHLine(0, kSetHeaderH, kScreenW, t.line);
+
+  for (uint8_t row = 0; row < kSetRowCount; row++) {
+    drawSettingsRow_(g, t, row);
+  }
+
+  // Read-only engine/system block: the numbers worth seeing when something
+  // sounds wrong, in one place instead of squeezed into the status strip.
+  g->drawFastHLine(0, kSetInfoY - 16, kScreenW, t.line);
+  Widgets::text(g, kSetLabelX, kSetInfoY, "ENGINE", Widgets::fontS(), t.muted);
+  String engine = cb_.audioStatus != nullptr ? cb_.audioStatus(cb_.ctx)
+                                             : String("audio n/a");
+  Widgets::text(g, kSetLabelX, kSetInfoY + 26, engine.c_str(), Widgets::fontM(),
+                t.ink);
+  String mem = String("heap ") + String(ESP.getFreeHeap() / 1024) + "K   psram " +
+               String(ESP.getFreePsram() / 1024 / 1024) + "M   ui " +
+               String(lastRenderUs_ / 1000.0f, 1) + "ms";
+  Widgets::text(g, kSetLabelX, kSetInfoY + 58, mem.c_str(), Widgets::fontS(),
+                t.muted);
+  Widgets::text(g, kScreenW - kSetLabelX, kSetInfoY + 58,
+                "pads / steps / transport are on the main screen",
+                Widgets::fontS(), t.muted, Widgets::kRight);
+}
+
 void TuneUi::drawTransport_() {
   Arduino_GFX *g = CrowDisplay::canvas();
   const TuneTheme &t = theme();
@@ -521,9 +731,14 @@ void TuneUi::drawSeqHeader_() {
                  String(selectedPad_ + 1) + " " + sound.label;
   Widgets::text(g, kRightX + 4, kSeqHeaderY + 10, title.c_str(), Widgets::fontS(),
                 t.ink);
-  Widgets::text(g, kRightX + kRightW - 4, kSeqHeaderY + 10,
+  // Kit is read-only here now (it is changed on the settings screen), so the
+  // header just reports it and hands the corner to the SET button.
+  Widgets::text(g, kSetBtnX - 12, kSeqHeaderY + 10,
                 (String("KIT ") + bank_->kitName()).c_str(), Widgets::fontS(),
                 t.muted, Widgets::kRight);
+  Widgets::panel(g, kSetBtnX, kSetBtnY, kSetBtnW, kSetBtnH, 6, t.surface, 1, t.line);
+  Widgets::text(g, kSetBtnX + kSetBtnW / 2, kSetBtnY + 9, "SET", Widgets::fontS(),
+                t.ink, Widgets::kCenter);
 }
 
 void TuneUi::drawPad_(uint8_t padIdx, uint32_t now) {
@@ -667,16 +882,8 @@ void TuneUi::drawEditPanel_() {
                   selected ? t.onAccent : t.muted, Widgets::kCenter);
   }
 
-  // Kit selector.
-  Widgets::text(g, kEditLabelX, kKitY + 12, "KIT", Widgets::fontS(), t.muted);
-  Widgets::panel(g, kKitPrevX, kKitY, kKitArrowW, kKitH, 8, t.surface, 1, t.line);
-  Widgets::text(g, kKitPrevX + kKitArrowW / 2, kKitY + 9, "<", Widgets::fontL(),
-                kitStep_ ? t.ink : t.line, Widgets::kCenter);
-  Widgets::text(g, (kKitPrevX + kKitArrowW + kKitNextX) / 2, kKitY + 10,
-                bank_->kitName(), Widgets::fontM(), t.ink, Widgets::kCenter);
-  Widgets::panel(g, kKitNextX, kKitY, kKitArrowW, kKitH, 8, t.surface, 1, t.line);
-  Widgets::text(g, kKitNextX + kKitArrowW / 2, kKitY + 9, ">", Widgets::fontL(),
-                kitStep_ ? t.ink : t.line, Widgets::kCenter);
+  // Kit selection lives on the settings screen now; this panel stays focused
+  // on the three things you reach for while playing a pad.
 }
 
 void TuneUi::drawScope_() {
@@ -685,7 +892,7 @@ void TuneUi::drawScope_() {
   g->fillRect(kRightX, kVoicesY, kRightW, kVoicesH, t.bg);
 
   static int16_t samples[kScopeSamples];
-  uint16_t count = scope_ != nullptr ? scope_(ctx_, samples, kScopeSamples) : 0;
+  uint16_t count = cb_.scope != nullptr ? cb_.scope(cb_.ctx, samples, kScopeSamples) : 0;
 
   if (count == 0) {
     // Silent build: no mix to show, so fall back to the simulated voice meters
@@ -705,7 +912,6 @@ void TuneUi::drawScope_() {
       Widgets::text(g, kRightX + 8, kVoicesY + kVoicesH - 26,
                     voices_->primaryLabel(), Widgets::fontS(), t.ink);
     }
-    drawThemeButton_(g, t);
     return;
   }
 
@@ -737,7 +943,7 @@ void TuneUi::drawScope_() {
   }
 
   // Peak VU with a slow-falling hold marker.
-  uint8_t peak = peak_ != nullptr ? peak_(ctx_) : 0;
+  uint8_t peak = cb_.peak != nullptr ? cb_.peak(cb_.ctx) : 0;
   if (peak >= vuHold_) {
     vuHold_ = peak;
   } else if (vuHold_ > 3) {
@@ -756,18 +962,6 @@ void TuneUi::drawScope_() {
   if (vuHold_ > 0) {
     g->drawFastVLine(holdX, kVuY, kVuH, t.ink);
   }
-  drawThemeButton_(g, t);
-}
-
-// Lives in the voices panel's free right edge; drawn here (rather than as its
-// own dirty region) because drawScope_ repaints that whole rect.
-void TuneUi::drawThemeButton_(Arduino_GFX *g, const TuneTheme &t) {
-  Widgets::panel(g, kThemeX, kThemeY, kThemeW, kThemeH, 8, t.surface, 1, t.line);
-  Widgets::text(g, kThemeX + kThemeW / 2, kThemeY + 6, "THEME", Widgets::fontS(),
-                t.muted, Widgets::kCenter);
-  Widgets::text(g, kThemeX + kThemeW / 2, kThemeY + 24,
-                (String(themeIndex_ + 1) + "/" + String(tuneThemeCount())).c_str(),
-                Widgets::fontS(), t.accent, Widgets::kCenter);
 }
 
 void TuneUi::drawStatus_() {
@@ -775,7 +969,7 @@ void TuneUi::drawStatus_() {
   const TuneTheme &t = theme();
   g->fillRect(0, kStatusY, kScreenW, kStatusH, t.bg);
   g->drawFastHLine(0, kStatusY, kScreenW, t.line);
-  String engine = audioStatus_ != nullptr ? audioStatus_(ctx_) : String("audio n/a");
+  String engine = cb_.audioStatus != nullptr ? cb_.audioStatus(cb_.ctx) : String("audio n/a");
   Widgets::text(g, 8, kStatusY + 12, engine.c_str(), Widgets::fontS(), t.muted);
   String mem = String("heap ") + String(ESP.getFreeHeap() / 1024) + "K psram " +
                String(ESP.getFreePsram() / 1024 / 1024) + "M";
@@ -789,20 +983,12 @@ void TuneUi::drawStatus_() {
 #else  // headless / non-P4: keep the class alive with no-op behavior
 
 void TuneUi::begin(SampleBank *bank, Sequencer *seq, VisualVoices *voices,
-                   TriggerFn trigger, TransportFn transport,
-                   AudioStatusFn audioStatus, KitStepFn kitStep, PeakFn peak,
-                   ScopeFn scope, void *ctx) {
+                   const Callbacks &callbacks) {
   bank_ = bank;
   seq_ = seq;
   voices_ = voices;
-  trigger_ = trigger;
-  transport_ = transport;
-  audioStatus_ = audioStatus;
-  kitStep_ = kitStep;
-  peak_ = peak;
-  scope_ = scope;
-  ctx_ = ctx;
-  loadTheme_();
+  cb_ = callbacks;
+  loadSettings_();
   displayReady_ = false;
 }
 
@@ -831,30 +1017,91 @@ String TuneUi::touchLine() const { return String("touch off (USE_DISPLAY=0)"); }
 // `theme` serial command are useful headless too (and keep the .ino free of
 // display #ifdefs), so these live outside the guard above.
 
+#if USE_DISPLAY
+#include <CrowPanelShared.h>  // CrowDisplay::setBacklight
+#endif
 #include <Preferences.h>
 
-void TuneUi::loadTheme_() {
+void TuneUi::loadSettings_() {
   Preferences prefs;
   if (prefs.begin(CYPHER_TUNE_NVS_NAMESPACE, true)) {
-    uint32_t stored = prefs.getUInt("theme", 0);
+    uint32_t storedTheme = prefs.getUInt("theme", 0);
+    uint32_t storedBright = prefs.getUInt("bright", 255);
+    idleDimEnabled_ = prefs.getBool("idledim", true);
     prefs.end();
-    if (stored < tuneThemeCount()) {
-      themeIndex_ = (uint8_t)stored;
+    if (storedTheme < tuneThemeCount()) {
+      themeIndex_ = (uint8_t)storedTheme;
     }
+    brightness_ = storedBright < kMinBrightness
+                      ? kMinBrightness
+                      : (storedBright > 255 ? 255 : (uint8_t)storedBright);
   }
+  lastActivityMs_ = millis();
 }
 
-void TuneUi::persistTheme_() const {
+void TuneUi::persistSettings_() const {
   Preferences prefs;
   if (prefs.begin(CYPHER_TUNE_NVS_NAMESPACE, false)) {
     prefs.putUInt("theme", themeIndex_);
+    prefs.putUInt("bright", brightness_);
+    prefs.putBool("idledim", idleDimEnabled_);
     prefs.end();
   }
+}
+
+void TuneUi::applyBrightness_() {
+  // CrowDisplay only exists in USE_DISPLAY builds by design, so the call is
+  // guarded here rather than relying on a stub (matches project 22's
+  // applyBacklight). The level itself is still tracked headless so `bright`
+  // and the NVS value stay meaningful.
+#if USE_DISPLAY
+  CrowDisplay::setBacklight(dimmed_ ? kMinBrightness : brightness_);
+#endif
+}
+
+void TuneUi::setBrightness(uint8_t level) {
+  brightness_ = level < kMinBrightness ? kMinBrightness : level;
+  dimmed_ = false;
+  applyBrightness_();
+  persistSettings_();
+}
+
+void TuneUi::bumpBrightness(int16_t delta) {
+  int16_t v = (int16_t)brightness_ + delta;
+  if (v > 255) v = 255;
+  if (v < (int16_t)kMinBrightness) v = kMinBrightness;
+  setBrightness((uint8_t)v);
+}
+
+void TuneUi::setIdleDim(bool on) {
+  idleDimEnabled_ = on;
+  if (!on && dimmed_) {
+    dimmed_ = false;
+    applyBrightness_();
+  }
+  persistSettings_();
+}
+
+void TuneUi::noteActivity() {
+  lastActivityMs_ = millis();
+  if (dimmed_) {
+    dimmed_ = false;
+    applyBrightness_();
+  }
+}
+
+void TuneUi::setView(View v) {
+#if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
+  if (view_ != v) {
+    dirtyAll_ = true;  // different screen entirely
+  }
+#endif
+  view_ = v;
 }
 
 void TuneUi::cycleTheme() {
   themeIndex_ = (themeIndex_ + 1) % tuneThemeCount();
-  persistTheme_();
+  persistSettings_();
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
   dirtyAll_ = true;  // every color changed; nothing partial would be coherent
 #endif
@@ -866,11 +1113,18 @@ bool TuneUi::setThemeByName(const String &name) {
     return false;
   }
   themeIndex_ = (uint8_t)idx;
-  persistTheme_();
+  persistSettings_();
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
   dirtyAll_ = true;
 #endif
   return true;
+}
+
+String TuneUi::settingsLine() const {
+  return String("brightness ") + String(brightness_) + "/255 (min " +
+         String(kMinBrightness) + ")  idle-dim " +
+         (idleDimEnabled_ ? "on" : "off") + "  theme " + theme().name +
+         "  view " + (view_ == kViewSettings ? "settings" : "main");
 }
 
 String TuneUi::themeLine() const {

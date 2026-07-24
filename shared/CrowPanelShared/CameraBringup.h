@@ -101,12 +101,18 @@ Sc2336Sensor *sensor();
 // The units are not documented in the public headers - treat the value as a
 // relative signal, which is all a feedback loop needs. `blocks` optionally
 // receives the raw 25-block grid for diagnostics.
-bool meanLuminance(uint32_t &mean, int *blocks = nullptr, size_t blockCount = 0);
+// `timeoutMs` bounds how long this may block. These calls wait on the ISP's
+// statistics interrupt, so a generous timeout stalls whatever loop calls them -
+// keep it near one frame period and treat a miss as "try again later", which is
+// all a control loop running at a few Hz needs.
+bool meanLuminance(uint32_t &mean, uint32_t timeoutMs = 40, int *blocks = nullptr,
+                   size_t blockCount = 0);
 
 // Gray-world white-balance estimate from the AWB engine's white-patch sums.
 // Returns false when too few white patches were found to be meaningful, which
 // is the honest answer for a scene with no neutral reference in it.
-bool whiteBalanceEstimate(float &redGain, float &blueGain, uint32_t &patchCount);
+bool whiteBalanceEstimate(float &redGain, float &blueGain, uint32_t &patchCount,
+                          uint32_t timeoutMs = 40);
 
 // Applies per-channel gain through the Color Correction Matrix diagonal.
 //
@@ -140,8 +146,12 @@ inline const char *lastError() { return "built without USE_CAMERA_DRIVER"; }
 inline uint32_t frameCount() { return 0; }
 inline uint32_t dropCount() { return 0; }
 inline Sc2336Sensor *sensor() { return nullptr; }
-inline bool meanLuminance(uint32_t &, int * = nullptr, size_t = 0) { return false; }
-inline bool whiteBalanceEstimate(float &, float &, uint32_t &) { return false; }
+inline bool meanLuminance(uint32_t &, uint32_t = 40, int * = nullptr, size_t = 0) {
+  return false;
+}
+inline bool whiteBalanceEstimate(float &, float &, uint32_t &, uint32_t = 40) {
+  return false;
+}
 inline bool setColorGains(float, float, float) { return false; }
 inline void colorGains(float &r, float &g, float &b) { r = g = b = 1.0f; }
 inline void printStatus(Print &out) {

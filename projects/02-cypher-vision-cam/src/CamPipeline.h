@@ -105,6 +105,9 @@ class CamPipeline {
   uint32_t lastPatches_ = 0;
   uint8_t gainIndex_ = 0;
   uint8_t settleCount_ = 0;
+  // Alternates AE and AWB so only one blocking statistics read happens per
+  // update - see the comment in tick().
+  bool alternateStats_ = false;
   uint32_t lastUpdateMs_ = 0;
   // White-balance gains are smoothed across updates; a single frame's estimate
   // is too jumpy to apply directly.

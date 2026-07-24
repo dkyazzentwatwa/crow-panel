@@ -272,7 +272,7 @@ void AudioEngine::startVoice_(uint8_t pad, uint8_t velocity, bool fromSequencer)
   }
 
   float pitchMul = powf(2.0f, sound.pitchSemis / 12.0f);
-  uint64_t gain = (uint64_t)velocity * sound.gain * CYPHER_TUNE_MASTER_VOLUME;
+  uint64_t gain = (uint64_t)velocity * sound.gain * masterVolume_;
   voice->pcm = sound.pcm;
   voice->frames = sound.frames;
   voice->posFP = 0;
@@ -295,7 +295,7 @@ void AudioEngine::startMetro_(bool accent) {
   }
   voice.posFP = 0;
   voice.incFP = 1 << 16;
-  voice.gainQ12 = (int32_t)((uint32_t)CYPHER_TUNE_MASTER_VOLUME << 12) / 255;
+  voice.gainQ12 = (int32_t)((uint32_t)masterVolume_ << 12) / 255;
   voice.fadeDecQ12 = 0;
   voice.attack = 4;
   voice.pad = 0xFF;

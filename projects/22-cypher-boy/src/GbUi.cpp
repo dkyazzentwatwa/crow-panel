@@ -16,6 +16,19 @@ namespace {
 GbThemeId gActiveTheme = kGbThemeOpsTeal;
 }  // namespace
 
+bool GbUi::systemPlayable(EmuSystem sys) {
+  switch (sys) {
+    case kSysGameBoy: return true;
+#if USE_GENESIS_CORE
+    case kSysGenesis: return true;
+#endif
+#if USE_NES_CORE
+    case kSysNes: return true;
+#endif
+    default: return false;
+  }
+}
+
 void GbUi::setStateSource(const GbRomStore *roms, const int8_t *activeRom) {
   stateRoms_ = roms;
   stateRomIdx_ = activeRom;
@@ -41,9 +54,10 @@ int8_t GbUi::pickerHit(int16_t px, int16_t py, uint8_t romCount) {
   if (romCount == 0) return -1;
   if (px < kRowX || px >= (int16_t)(kRowX + kRowW)) return -1;
   if (py < kRowTop) return -1;
-  const int16_t row = (py - kRowTop) / kRowH;
-  if (row < 0 || row >= (int16_t)romCount) return -1;
-  return (int8_t)row;
+  const int16_t vis = (py - kRowTop) / kRowH;
+  // Visible row within the current page; the caller adds page * kRowsPerPage.
+  if (vis < 0 || vis >= (int16_t)kRowsPerPage) return -1;
+  return (int8_t)vis;
 }
 
 bool GbUi::begin() {
@@ -63,9 +77,9 @@ namespace {
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
 // Tiny cartridge glyph for a ROM row - the clipped corner reads as a Game Boy
 // cart even at 18x22. Tinted differently for .gbc so colour titles stand out.
-void drawCartIcon(Arduino_GFX *g, int16_t x, int16_t y, bool color,
-                  const GbPalette &P) {
-  const uint16_t body = color ? P.accent : P.muted;
+void drawCartIcon(Arduino_GFX *g, int16_t x, int16_t y, EmuSystem sys,
+                  bool playable, const GbPalette &P) {
+  const uint16_t body = !playable ? P.line : (sys == kSysGameBoy ? P.accent : P.success);
   g->fillRoundRect(x, y, 18, 22, 3, body);
   g->fillTriangle(x + 12, y, x + 18, y, x + 18, y + 6, P.surface);
   g->fillRect(x + 4, y + 5, 10, 8, P.surface);
@@ -73,8 +87,17 @@ void drawCartIcon(Arduino_GFX *g, int16_t x, int16_t y, bool color,
 #endif
 }  // namespace
 
+int8_t GbUi::pagerHit(int16_t px, int16_t py) {
+  if (py < kPagerY || py >= kPagerY + kPagerH) return -1;
+  if (px >= kRowX && px < kRowX + kPagerW) return 0;
+  const int16_t nx = kRowX + kRowW - kPagerW;
+  if (px >= nx && px < nx + kPagerW) return 1;
+  return -1;
+}
+
 void GbUi::drawPicker(const GbRomStore &roms, int8_t selectedRow,
-                      const uint8_t *order, const String *played) {
+                      const uint8_t *order, const String *played,
+                      uint8_t page) {
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
   Arduino_GFX *g = CrowDisplay::canvas();
   if (!g || !ready_) return;
@@ -90,25 +113,46 @@ void GbUi::drawPicker(const GbRomStore &roms, int8_t selectedRow,
     text(g, kRowX, kRowTop + 44, (String("Put .gb / .gbc files in ") + GB_ROM_DIR).c_str(),
          fontS(), P.muted, kLeft);
   } else {
-    for (uint8_t row = 0; row < roms.count(); row++) {
+    const uint8_t first = page * kRowsPerPage;
+    for (uint8_t vis = 0; vis < kRowsPerPage; vis++) {
+      const uint8_t row = first + vis;
+      if (row >= roms.count()) break;
       const uint8_t idx = order ? order[row] : row;
-      const int16_t y = kRowTop + row * kRowH;
+      const int16_t y = kRowTop + vis * kRowH;
       const bool on = (int8_t)row == selectedRow;
       panel(g, kRowX, y, kRowW, kRowH - 8, 10, on ? P.surfaceHi : P.surface, 1,
             on ? P.accent : P.line);
 
       String n = roms.name(idx);
-      String lower = n;
-      lower.toLowerCase();
-      drawCartIcon(g, kRowX + 14, y + 16, lower.endsWith(".gbc"), P);
+      const EmuSystem sys = roms.systemOf(idx);
+      const bool playable = systemPlayable(sys);
+      drawCartIcon(g, kRowX + 14, y + 16, sys, playable, P);
 
       text(g, kRowX + 44, y + 10, prettyTitle(n).c_str(), fontM(),
-           on ? P.ink : P.muted, kLeft);
+           !playable ? P.line : (on ? P.ink : P.muted), kLeft);
+      // System badge, so a mixed library reads at a glance.
+      text(g, kRowX + kRowW - 92, y + 18, GbRomStore::systemLabel(sys), fontS(),
+           playable ? P.accent : P.line, kLeft);
       if (played) {
-        text(g, kRowX + kRowW - 16, y + 16, played[row].c_str(), fontS(),
+        text(g, kRowX + kRowW - 108, y + 18, played[row].c_str(), fontS(),
              on ? P.accent : P.muted, kRight);
       }
     }
+  }
+
+  // Pager. Always drawn so the control does not appear and vanish as the
+  // library grows past one screenful.
+  {
+    const uint8_t pages = pageCount(roms.count());
+    const bool canPrev = page > 0, canNext = (uint8_t)(page + 1) < pages;
+    touchButton(g, kRowX, kPagerY, kPagerW, kPagerH, "< PREV", false,
+                canPrev ? P.accent : P.line);
+    touchButton(g, kRowX + kRowW - kPagerW, kPagerY, kPagerW, kPagerH, "NEXT >", false,
+                canNext ? P.accent : P.line);
+    char buf[32];
+    snprintf(buf, sizeof(buf), "page %u/%u  -  %u ROMs", (unsigned)(page + 1),
+             (unsigned)pages, (unsigned)roms.count());
+    text(g, kRowX + kRowW / 2, kPagerY + 14, buf, fontS(), P.muted, kCenter);
   }
 
   // Right column: a short hint, then the live settings block. drawSettings()
@@ -127,6 +171,7 @@ void GbUi::drawPicker(const GbRomStore &roms, int8_t selectedRow,
   (void)selectedRow;
   (void)order;
   (void)played;
+  (void)page;
 #endif
 }
 
@@ -418,6 +463,39 @@ uint8_t GbUi::overlaySlotHit(int16_t px, int16_t py) {
     if (px >= x && px < x + kSlotCardW) return i;
   }
   return 0xFF;
+}
+
+void GbUi::drawPlayStatus(const String &msg) {
+#if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
+  Arduino_GFX *g = CrowDisplay::canvas();
+  if (!g || !ready_) return;
+  using namespace Widgets;
+  const GbPalette &P = GbUi::palette();
+  // Right side of the header, clear of the title.
+  // Parameter is `msg`, not `text`: Widgets::text() is the draw call and a
+  // parameter of that name shadows it.
+  const int16_t x = 560, y = 40, w = 1024 - 560 - 150, h = 26;
+  g->fillRect(x, y, w, h, P.surface);
+  text(g, x + w, y + 4, msg.c_str(), fontS(), P.muted, kRight);
+  CrowDisplay::flush(x, y, w, h);
+#else
+  (void)msg;
+#endif
+}
+
+void GbUi::drawNotice(const String &msg) {
+#if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
+  Arduino_GFX *g = CrowDisplay::canvas();
+  if (!g || !ready_) return;
+  using namespace Widgets;
+  const GbPalette &P = GbUi::palette();
+  const int16_t y = kPagerY + kPagerH + 8, h = 40;
+  panel(g, kRowX, y, kRowW, h, 8, P.surfaceHi, 1, P.warning);
+  text(g, kRowX + 14, y + 11, msg.c_str(), fontS(), P.warning, kLeft);
+  CrowDisplay::flush(kRowX, y, kRowW, h);
+#else
+  (void)msg;
+#endif
 }
 
 void GbUi::drawButtonState(uint32_t heldBits) {

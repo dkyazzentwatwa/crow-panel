@@ -26,11 +26,7 @@
 
 namespace {
 
-bool hasRomSuffix(const String &name) {
-  String lower = name;
-  lower.toLowerCase();
-  return lower.endsWith(".gb") || lower.endsWith(".gbc");
-}
+
 
 // "/sdcard/roms/Pokemon.gb" or "Pokemon.gb" -> "Pokemon"
 String baseName(const String &path) {
@@ -42,8 +38,31 @@ String baseName(const String &path) {
 
 }  // namespace
 
+EmuSystem GbRomStore::systemForName(const String &fileName) {
+  String l = fileName;
+  l.toLowerCase();
+  if (l.endsWith(".gb") || l.endsWith(".gbc")) return kSysGameBoy;
+  if (l.endsWith(".md") || l.endsWith(".gen") || l.endsWith(".bin")) return kSysGenesis;
+  if (l.endsWith(".nes")) return kSysNes;
+  return kSysCount;  // unrecognised - not listed
+}
+
+const char *GbRomStore::systemLabel(EmuSystem sys) {
+  switch (sys) {
+    case kSysGameBoy: return "GB";
+    case kSysGenesis: return "MD";
+    case kSysNes: return "NES";
+    default: return "?";
+  }
+}
+
+EmuSystem GbRomStore::systemOf(uint8_t index) const {
+  return index < count_ ? sys_[index] : kSysCount;
+}
+
 void GbRomStore::seedPlaceholder() {
   names_[0] = "no-sd-placeholder.gb";
+  sys_[0] = kSysGameBoy;
   count_ = 1;
   ready_ = false;
 }
@@ -95,13 +114,21 @@ bool GbRomStore::begin() {
     String full = String(entry.name());
     int slash = full.lastIndexOf('/');
     String justFile = (slash >= 0) ? full.substring(slash + 1) : full;
-    if (!hasRomSuffix(justFile)) {
+    // macOS writes an AppleDouble sidecar named "._<original>" next to every
+    // file it copies to a FAT card. They carry the right extension but are a
+    // few KB of metadata, so loading one as a ROM feeds the emulator garbage.
+    if (justFile.startsWith("._")) {
       continue;
+    }
+    const EmuSystem sys = systemForName(justFile);
+    if (sys == kSysCount) {
+      continue;  // not a ROM we recognise
     }
     if (count_ >= kMaxRoms) {
       Logger::error("romstore", String("more than ") + kMaxRoms + " ROMs; extras ignored");
       break;
     }
+    sys_[count_] = sys;
     names_[count_++] = justFile;
   }
   dir.close();
@@ -112,7 +139,7 @@ bool GbRomStore::begin() {
   status_ = String("SD ready, ") + count_ + " ROM(s) in " + GB_ROM_DIR_FS;
   Logger::info("romstore", status_);
   if (count_ == 0) {
-    status_ = String("SD ready but no .gb/.gbc found in ") + GB_ROM_DIR_FS;
+    status_ = String("SD ready but no ROMs found in ") + GB_ROM_DIR_FS;
   }
   return true;
 #else

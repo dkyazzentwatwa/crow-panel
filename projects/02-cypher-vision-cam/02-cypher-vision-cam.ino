@@ -45,15 +45,72 @@ static float measuredFps = 0.0f;
 static uint32_t fpsWindowStartMs = 0;
 static uint32_t fpsWindowFrames = 0;
 
-// Set by the shutter control (touch or serial) and consumed in loop(), which is
-// the one place holding a live frame. Capturing anywhere else would mean a
-// second code path owning a camera buffer.
+// Set by the shutter control (touch, serial, or the BOOT button) and consumed
+// in loop(), which is the one place holding a live frame. Capturing anywhere
+// else would mean a second code path owning a camera buffer.
 static bool shutterRequested = false;
 
+// --- BOOT button as a physical shutter release -----------------------------
+//
+// A real button beats a touch target for this: you can press it without looking
+// at the screen, and without your finger covering the viewfinder.
+//
+// Debounced on the falling edge, and latched so holding the button takes one
+// picture rather than a burst. Reusing BOOT is safe - it is a strapping pin
+// only at reset, so hold-BOOT-tap-RESET still enters download mode.
+// Both boot strapping pins are watched, and either one firing takes a picture.
+//
+// This is not indecision - the two candidates are GPIO35 (SPI_BOOT) and GPIO36
+// (DOWNLOAD_BOOT), the schematic PDF does not resolve which the tactile switch
+// actually reaches, and watching both costs two digitalReads per loop. Neither
+// pin has another job while the app runs, so there is no downside to accepting
+// either. The per-pin press counters on the Settings screen record which one is
+// real, and the answer can then be written down instead of guessed.
+struct ShutterPin {
+  uint8_t gpio;
+  bool wasDown;
+  uint32_t changedMs;
+  uint32_t presses;
+};
+
+static ShutterPin shutterPins[] = {
+    {VISIONCAM_SHUTTER_PIN, false, 0, 0},
+    {VISIONCAM_SHUTTER_ALT_PIN, false, 0, 0},
+};
+static uint32_t shutterPresses = 0;
+
+static void pollShutterButton() {
+  const uint32_t now = millis();
+  for (ShutterPin &pin : shutterPins) {
+    // Active LOW: the switch pulls the pin to ground against its pull-up.
+    const bool down = digitalRead(pin.gpio) == LOW;
+
+    if (down == pin.wasDown) {
+      pin.changedMs = 0;  // bounce settled back; cancel the window
+      continue;
+    }
+    // Level changed - start the debounce window and wait for it to hold.
+    if (pin.changedMs == 0) {
+      pin.changedMs = now;
+      continue;
+    }
+    if (now - pin.changedMs < VISIONCAM_SHUTTER_DEBOUNCE_MS) continue;
+
+    pin.wasDown = down;
+    pin.changedMs = 0;
+    // Fire on press, not release, so the shutter feels immediate.
+    if (down) {
+      shutterRequested = true;
+      pin.presses++;
+      shutterPresses++;
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
-// Stage 1 scaffold. The camera pipeline, renderer, recorder, stream server and
-// touch console land in later stages; every command below already exists so the
-// serial surface and the touch surface stay 1:1 as they are filled in.
+// Serial surface. Every touch action has a 1:1 command here, so the whole device
+// is drivable headlessly - which matters on a board whose USB serial port drops
+// the moment the app starts running.
 
 static void cmdStatus(const String &) {
   printSystemStatus(Serial, "cypher-vision-cam", storage.eventCount());
@@ -74,16 +131,6 @@ static void cmdStatus(const String &) {
   // reported rather than estimated. Fabricating a percentage here would be
   // worse than saying nothing.
   Serial.println(F("[cam] battery=unmonitored (no documented ADC on this board)"));
-}
-
-// Every stage-gated command answers honestly rather than silently doing
-// nothing, so an unfinished build never looks like a broken one.
-static void notYet(const char *what, const char *stage) {
-  Serial.print(F("[cam] "));
-  Serial.print(what);
-  Serial.print(F(" is not implemented yet (lands in "));
-  Serial.print(stage);
-  Serial.println(F(")"));
 }
 
 // `cam` drives the whole pipeline from Serial so the camera can be brought up
@@ -426,6 +473,12 @@ void setup() {
   delay(300);
 
   Logger::info("boot", "Cypher Vision Cam starting");
+
+  // Physical shutter. INPUT_PULLUP because the switch shorts to ground; the alt
+  // pin is configured only so its level can be displayed for confirmation.
+  pinMode(VISIONCAM_SHUTTER_PIN, INPUT_PULLUP);
+  pinMode(VISIONCAM_SHUTTER_ALT_PIN, INPUT_PULLUP);
+
   storage.begin("vision-cam");
   eventLog.add("boot: cypher-vision-cam");
 
@@ -440,7 +493,9 @@ void setup() {
   // which a per-frame video blit cannot afford. The renderer flushes only the
   // viewfinder rect once per frame from Stage 3 onward.
   CrowDisplay::begin(activeHardwareProfile(), "CYPHER VISION CAM", /*manualFlush=*/true);
-  CrowDisplay::setLine(0, "stage 2 scaffold");
+  // Boot status goes on the panel because USBMode=hwcdc drops the serial port
+  // the moment the app runs - the screen is the only diagnostic that survives.
+  CrowDisplay::setLine(0, "booting...");
   CrowDisplay::flush();
 #endif
 
@@ -596,6 +651,7 @@ static void applyUiEvent(const CamEvent &event) {
 
 void loop() {
   router.poll();
+  pollShutterButton();
 
   // Drain one frame per iteration and hand it to the UI, which blits it and
   // releases nothing - ownership stays here, so the release below always runs
@@ -643,12 +699,17 @@ void loop() {
   ui.setRecording(recorder.recording(), recorder.clipElapsedSec(),
                   recorder.droppedFrames());
   ui.setStreamState(streamServer.running(), streamServer.ssid(), streamServer.url(),
-                    streamServer.viewerCount());
+                    streamServer.viewerCount(), streamServer.stationCount(),
+                    streamServer.stationUrl());
 
   // After release(), never before: the statistics reads block for up to a
   // frame time, and holding a buffer across that would starve the receiver.
   pipeline.tick();
   ui.setAutoExposure(pipeline.autoExposure(), pipeline.converged());
+  ui.setWhitePatches(pipeline.lastWhitePatches());
+  ui.setShutterButton(digitalRead(VISIONCAM_SHUTTER_PIN) == HIGH,
+                      digitalRead(VISIONCAM_SHUTTER_ALT_PIN) == HIGH,
+                      shutterPins[0].presses, shutterPins[1].presses);
 
   applyUiEvent(event);
 

@@ -10,21 +10,27 @@ with no router, because the panel hosts its own Wi-Fi.
 
 ## Status
 
-**All seven build stages are written. Nothing has run on a physical panel.**
+**Working on real hardware** — CrowPanel Advanced 7" V1.2, 2026-07-24.
 
-Every flag combination compiles green for the real ESP32-P4 target, and the link
-map confirms the camera, ISP, JPEG and scaler drivers are genuinely pulled in
-rather than merely referenced. That is the whole of the evidence.
+| What | Measured |
+|---|---|
+| Sensor | SC2336 at SCCB `0x30`, chip id `0xCB3A` |
+| Viewfinder | ~21 fps, 1024x600, correct colour |
+| Stills / clips | Written to SD; JPEG opens on a computer, AVI plays **and seeks** |
+| Physical shutter | BOOT button |
+| Wi-Fi stream | **15–20 fps** to a LAN browser at 640x480 q60 |
 
-What has **not** happened: no camera module has been probed, no frame has been
-captured, no fps measured, no file written to a card, no clip played back, no
-client connected. The auto-exposure loop has never met a real image and its
-tuning constants are reasoned guesses. Read everything below as a description of
-what the code does, not of what has been observed.
+Two things are **not** verified, and are called out rather than glossed:
 
-The first thing to run on real hardware is the
-[SCCB probe](tools/camprobe/) — it identifies what is actually on the camera
-header before any driver trusts an address.
+- **Soft-AP association.** The panel advertises its AP and `softAP()` reports
+  success, but no client has ever associated. **Station mode is the proven
+  path** — put your network in `config/WiFiSecrets.h` and browse to the panel
+  on your own LAN.
+- **Auto-exposure across a wide brightness range.** It converges nicely indoors;
+  walking from a dim room to a bright window is untested.
+
+On new hardware, run the [SCCB probe](tools/camprobe/) first — it identifies
+what is actually on the camera header before any driver trusts an address.
 
 ## What replaced what
 
@@ -95,15 +101,29 @@ lower the resolution, the quality or the frame rate.
 
 ## Wi-Fi
 
-The panel hosts its own password-protected access point and serves:
+Put your network's credentials in `config/WiFiSecrets.h` (copy the `.example.h`
+next to it) and the panel joins your LAN. The STREAM tab then shows a
+`Watch at (LAN)` address — open it from any device already on that network. This
+is the path that works.
+
+It serves:
 
 - `/` — a viewer page (self-contained; no internet needed to render it)
 - `/stream` on port 81 — Motion-JPEG, one viewer at a time
 - `/snapshot` — a single still
 - `/health` — JSON status
 
-If station credentials are configured it also joins that network, so the feed is
-reachable from either side.
+The panel also hosts its own password-protected access point, but **no client
+has ever successfully associated with it on this board.** The AP appears and the
+API reports success; association simply does not complete. The code is correct
+as far as can be told and is left in place in case a future C6 firmware fixes
+it, but do not rely on it.
+
+**Frame rate is limited by bandwidth, not processing.** Point the camera at a
+bright, detailed scene and the rate drops — a high-contrast image compresses
+worse, so each frame costs more bytes over the link to the C6. If you need it
+steadier, lower the stream quality or resolution; a faster processor would
+change nothing.
 
 ## Responsible use
 

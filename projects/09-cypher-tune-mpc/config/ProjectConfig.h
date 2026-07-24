@@ -9,7 +9,13 @@
 #define CYPHER_TUNE_ENGINE_RATE 22050
 #endif
 // Back-compat alias (older docs/scripts referenced the original name).
-// NVS namespace for persisted UI state (theme selection).
+// Idle backlight dimming. Only applies while the transport is stopped, so a
+// playing loop never dims mid-bar. Generous by default.
+#ifndef CYPHER_TUNE_IDLE_DIM_MS
+#define CYPHER_TUNE_IDLE_DIM_MS 120000
+#endif
+
+// NVS namespace for persisted UI state (theme, brightness, idle dim).
 #ifndef CYPHER_TUNE_NVS_NAMESPACE
 #define CYPHER_TUNE_NVS_NAMESPACE "cyphertune"
 #endif

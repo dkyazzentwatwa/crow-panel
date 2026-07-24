@@ -12,7 +12,7 @@ This suite is designed as a three-part creator/developer tutorial.
 ## Episode Ideas
 
 - FieldOps: "Build an AIoT field sensor dashboard before wiring the LoRa radio."
-- Vision Guard: "Prototype an inspection kiosk with camera and QR workflows stubbed cleanly."
+- Vision Cam: "Build a portable touch camera on the ESP32-P4 — and find out the camera was reachable from Arduino all along."
 - BadgeOps: "Build an RFID/NFC check-in terminal and explain why UID-only access is not security."
 
 ## What To Film

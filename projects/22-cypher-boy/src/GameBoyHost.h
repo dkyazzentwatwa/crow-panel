@@ -7,19 +7,9 @@
 
 class GbAudio;
 
-// Game Boy button bits. These intentionally mirror gnuboy's gb_padbtn_t
-// values one-for-one; GameBoyHost.cpp static_asserts that they still match the
-// vendored core, so a future gnuboy bump cannot silently rewire the gamepad.
-enum GbButton : uint32_t {
-  GB_BTN_RIGHT  = 0x01,
-  GB_BTN_LEFT   = 0x02,
-  GB_BTN_UP     = 0x04,
-  GB_BTN_DOWN   = 0x08,
-  GB_BTN_A      = 0x10,
-  GB_BTN_B      = 0x20,
-  GB_BTN_SELECT = 0x40,
-  GB_BTN_START  = 0x80,
-};
+// GbButton now lives in EmuCore.h - it is the shared pad vocabulary, not a
+// Game Boy detail. GameBoyHost.cpp still static_asserts it against gnuboy's
+// gb_padbtn_t so a core bump cannot silently rewire the gamepad.
 
 // Owns the vendored gnuboy core. This is the ONLY translation unit that
 // includes gnuboy.h, so the emulator stays behind a small C++ surface that the

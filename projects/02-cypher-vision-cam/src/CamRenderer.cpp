@@ -1,5 +1,8 @@
-// Camera-frame renderer. COMPILE-VERIFIED on esp32:esp32:esp32p4 (core 3.3.8).
-// NOT HARDWARE-VERIFIED - no frame has been observed on a physical panel.
+// Camera-frame renderer.
+//
+// HARDWARE-VERIFIED (V1.2 panel, 2026-07-24): live video renders at 20-30 fps
+// with the dirty-rect flush, and touch chrome stays responsive alongside it -
+// which is the whole point of only flushing the viewfinder rectangle.
 //
 // Uses the P4's PPA (Pixel-Processing Accelerator), which ships in the Arduino
 // core as libesp_driver_ppa.a. The PPA reads the camera's RGB565 frame out of

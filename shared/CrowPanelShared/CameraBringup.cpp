@@ -1,6 +1,12 @@
-// MIPI-CSI camera bring-up. COMPILE-VERIFIED on esp32:esp32:esp32p4 (core
-// 3.3.8). NOT HARDWARE-VERIFIED - no camera module has been observed on a
-// physical panel from this workspace.
+// MIPI-CSI camera bring-up.
+//
+// HARDWARE-VERIFIED (V1.2 panel, 2026-07-24): live video on the panel at
+// 20-30 fps with correct colour. That exercises the whole chain - sensor mode
+// table, CSI receiver, ISP demosaic/gamma/CCM, and the PSRAM buffer rotation.
+//
+// Settled by that run: byte_swap_en = false is CORRECT for this panel. The
+// colour came out right first try, which was a genuine coin-flip beforehand
+// (the RGB565 byte order is not documented in any header).
 //
 // Pipeline: SC2336 -> CSI receiver -> ISP -> RGB565 frames in PSRAM.
 //
@@ -226,6 +232,39 @@ bool applyColorMatrix() {
 // not take the camera down, because a slightly noisy picture is far better than
 // no picture. Failures are logged, not propagated.
 void configureImagePipeline(uint16_t width, uint16_t height) {
+  // Black level correction, FIRST in the pipeline and first here for a reason.
+  //
+  // A CMOS sensor does not read zero for black - it sits on a pedestal offset,
+  // so without BLC the darkest pixel lands somewhere around 16/255 instead of
+  // 0. Every downstream stage then works on a raised floor, and the result is
+  // exactly what the first hardware capture showed: hazy, washed-out frames
+  // with grey instead of black and visibly collapsed contrast.
+  //
+  // Omitting this was a real gap in the original pipeline. The offsets below
+  // are the conventional 8-bit pedestal for this class of sensor, not a
+  // measured value for this part - if blacks still look lifted (or, worse, get
+  // crushed), this is the number to trim.
+  esp_isp_blc_config_t blc = {};
+  blc.window.top_left.x = 0;
+  blc.window.top_left.y = 0;
+  blc.window.btm_right.x = width;
+  blc.window.btm_right.y = height;
+  blc.filter_enable = false;
+  // Bayer order here is BGGR, so the quad reads B / G / G / R.
+  constexpr uint32_t kPedestal = 16;
+  esp_isp_blc_offset_t blcOffset = {};
+  blcOffset.top_left_chan_offset = kPedestal;      // B
+  blcOffset.top_right_chan_offset = kPedestal;     // G
+  blcOffset.bottom_left_chan_offset = kPedestal;   // G
+  blcOffset.bottom_right_chan_offset = kPedestal;  // R
+  if (esp_isp_blc_configure(gIsp, &blc) == ESP_OK &&
+      esp_isp_blc_set_correction_offset(gIsp, &blcOffset) == ESP_OK &&
+      esp_isp_blc_enable(gIsp) == ESP_OK) {
+    Logger::info("camera", "black level correction on (pedestal " + String(kPedestal) + ")");
+  } else {
+    Logger::warn("camera", "BLC setup failed - expect washed-out, low-contrast frames");
+  }
+
   // Demosaic: RAW Bayer -> RGB. Without this there is no colour image at all,
   // so it is the one stage whose failure is worth shouting about.
   esp_isp_demosaic_config_t demosaic = {};
@@ -307,12 +346,25 @@ void configureImagePipeline(uint16_t width, uint16_t height) {
   awb.window.btm_right.y = height - height / 8;
   awb.subwindow = awb.window;
   // Luminance range excludes the very darkest and the blown-out top end.
-  awb.white_patch.luminance.min = 40;
-  awb.white_patch.luminance.max = 220 * 3;
-  awb.white_patch.red_green_ratio.min = 0.6f;
-  awb.white_patch.red_green_ratio.max = 2.0f;
-  awb.white_patch.blue_green_ratio.min = 0.6f;
-  awb.white_patch.blue_green_ratio.max = 2.0f;
+  awb.white_patch.luminance.min = 24;
+  awb.white_patch.luminance.max = 230 * 3;
+
+  // The R/G and B/G bounds are DELIBERATELY WIDE, and the first hardware
+  // capture is why. They were originally 0.6-2.0, which sounds reasonable and
+  // is a chicken-and-egg trap: raw Bayer output is green-heavy (two green
+  // photosites per quad), so an uncorrected frame has R/G and B/G well below
+  // 0.6. No pixel qualified as a white patch, the loop got zero samples, it
+  // returned "no estimate", the gains stayed at unity - and the green cast it
+  // existed to remove was precisely what stopped it from ever seeing anything.
+  //
+  // Espressif's own header says as much: "The ratio could be as wider as
+  // possible, so that all the distorted pixels will be counted for the
+  // reference of white balance." Taking that literally is correct - the whole
+  // point is to measure a distorted image and undo the distortion.
+  awb.white_patch.red_green_ratio.min = 0.1f;
+  awb.white_patch.red_green_ratio.max = 3.9f;
+  awb.white_patch.blue_green_ratio.min = 0.1f;
+  awb.white_patch.blue_green_ratio.max = 3.9f;
   awb.intr_priority = 0;
   if (esp_isp_new_awb_controller(gIsp, &awb, &gAwb) == ESP_OK) {
     esp_isp_awb_controller_enable(gAwb);
@@ -411,9 +463,9 @@ bool begin(const HardwareProfile &profile) {
   csiConfig.input_data_color_type = CAM_CTLR_COLOR_RAW8;
   csiConfig.output_data_color_type = CAM_CTLR_COLOR_RGB565;
   csiConfig.queue_items = kBufferCount;
-  // byte_swap_en is THE bring-up knob for colour. If the first live frame comes
-  // out with the red and blue channels transposed into noise, flip this. See
-  // the risk register entry on RGB565 byte order.
+  // byte_swap_en: HARDWARE-VERIFIED false on the V1.2 panel (2026-07-24) -
+  // colour renders correctly with no swap. This was the one bring-up unknown
+  // that could not be resolved from headers; do not change it speculatively.
   csiConfig.byte_swap_en = false;
   csiConfig.bk_buffer_dis = true;  // we supply our own buffers; skip the driver's
   if (esp_cam_new_csi_ctlr(&csiConfig, &gCam) != ESP_OK) {
@@ -556,12 +608,18 @@ void release(const Frame &frame) {
   xQueueSend(gFreeQueue, &slot, 0);
 }
 
-bool meanLuminance(uint32_t &mean, int *blocks, size_t blockCount) {
+bool meanLuminance(uint32_t &mean, uint32_t timeoutMs, int *blocks, size_t blockCount) {
   if (!gReady || gAe == nullptr) return false;
   isp_ae_result_t result = {};
   // One-shot rather than continuous: the control loop runs at a few Hz, so
   // there is no reason to keep an interrupt firing every frame.
-  if (esp_isp_ae_controller_get_oneshot_statistics(gAe, 120, &result) != ESP_OK) {
+  //
+  // The timeout is deliberately short. This blocks the calling task until the
+  // ISP raises its statistics interrupt, so a long timeout here stalls the
+  // render loop and - because a tap needs two touch samples to register - makes
+  // the touchscreen feel dead. Missing a statistics window is harmless; the
+  // loop simply tries again on the next update.
+  if (esp_isp_ae_controller_get_oneshot_statistics(gAe, (int)timeoutMs, &result) != ESP_OK) {
     return false;
   }
   uint64_t sum = 0;
@@ -576,14 +634,16 @@ bool meanLuminance(uint32_t &mean, int *blocks, size_t blockCount) {
   return true;
 }
 
-bool whiteBalanceEstimate(float &redGain, float &blueGain, uint32_t &patchCount) {
+bool whiteBalanceEstimate(float &redGain, float &blueGain, uint32_t &patchCount,
+                          uint32_t timeoutMs) {
   redGain = 1.0f;
   blueGain = 1.0f;
   patchCount = 0;
   if (!gReady || gAwb == nullptr) return false;
 
   isp_awb_stat_result_t result = {};
-  if (esp_isp_awb_controller_get_oneshot_statistics(gAwb, 120, &result) != ESP_OK) {
+  // Short timeout, same reasoning as meanLuminance: this blocks the caller.
+  if (esp_isp_awb_controller_get_oneshot_statistics(gAwb, (int)timeoutMs, &result) != ESP_OK) {
     return false;
   }
   patchCount = result.white_patch_num;
@@ -591,7 +651,11 @@ bool whiteBalanceEstimate(float &redGain, float &blueGain, uint32_t &patchCount)
   // Too few white patches means the scene has no neutral reference. Gray-world
   // on a handful of pixels produces a wild, confident, wrong answer - report
   // failure and let the caller keep its previous gains.
-  if (result.white_patch_num < 64) return false;
+  //
+  // The threshold is low on purpose. Paired with the wide ratio bounds above,
+  // the goal is for the loop to get SOME signal from an uncorrected frame; a
+  // high bar here would recreate the same deadlock from the other direction.
+  if (result.white_patch_num < 16) return false;
   if (result.sum_r == 0 || result.sum_b == 0 || result.sum_g == 0) return false;
 
   const float avgR = (float)result.sum_r / (float)result.white_patch_num;

@@ -273,6 +273,9 @@ uint16_t uiScope(void *, int16_t *out, uint16_t max) {
   return audioEngine().copyScope(out, max);
 }
 
+uint8_t uiVolumeGet(void *) { return audioEngine().masterVolume(); }
+void uiVolumeSet(void *, uint8_t v) { audioEngine().setMasterVolume(v); }
+
 // --- Serial commands ---
 
 void cmdStatus(const String &) { printSystemStatus(Serial, "cypher-tune-mpc", storage.eventCount()); }
@@ -444,6 +447,46 @@ void cmdPerf(const String &) {
   Serial.println(String("[perf] ") + ui.perfLine());
 }
 
+void cmdBright(const String &args) {
+  String arg = args;
+  arg.trim();
+  if (arg.length()) {
+    if (arg == "+" || arg == "up") {
+      ui.bumpBrightness(TuneUi::kBrightnessStep);
+    } else if (arg == "-" || arg == "down") {
+      ui.bumpBrightness(-(int16_t)TuneUi::kBrightnessStep);
+    } else {
+      ui.setBrightness((uint8_t)constrain(arg.toInt(), 0, 255));
+    }
+  }
+  Serial.println(String("[bright] ") + String(ui.brightness()) + "/255 (min " +
+                 String(TuneUi::kMinBrightness) + ")");
+}
+
+void cmdVolume(const String &args) {
+  String arg = args;
+  arg.trim();
+  if (arg.length()) {
+    audioEngine().setMasterVolume((uint8_t)constrain(arg.toInt(), 0, 255));
+  }
+  Serial.println(String("[vol] master ") + String(audioEngine().masterVolume()) +
+                 "/255");
+}
+
+void cmdSettings(const String &args) {
+  String arg = args;
+  arg.trim();
+  arg.toLowerCase();
+  if (arg == "on" || arg == "open") {
+    ui.setView(TuneUi::kViewSettings);
+  } else if (arg == "off" || arg == "close" || arg == "main") {
+    ui.setView(TuneUi::kViewMain);
+  } else if (arg == "idledim") {
+    ui.setIdleDim(!ui.idleDim());
+  }
+  Serial.println(String("[settings] ") + ui.settingsLine());
+}
+
 void cmdTheme(const String &args) {
   String arg = args;
   arg.trim();
@@ -488,8 +531,16 @@ void setup() {
                    String(loaded) + "/16 pads, " +
                    String(bank.totalBytes() / 1024) + "KB PSRAM");
   }
-  ui.begin(&bank, &seq, &voices, uiTrigger, uiTransport, uiAudioStatus,
-           uiKitStep, uiPeak, uiScope, nullptr);
+  TuneUi::Callbacks uiCallbacks;
+  uiCallbacks.trigger = uiTrigger;
+  uiCallbacks.transport = uiTransport;
+  uiCallbacks.audioStatus = uiAudioStatus;
+  uiCallbacks.kitStep = uiKitStep;
+  uiCallbacks.peak = uiPeak;
+  uiCallbacks.scope = uiScope;
+  uiCallbacks.volumeGet = uiVolumeGet;
+  uiCallbacks.volumeSet = uiVolumeSet;
+  ui.begin(&bank, &seq, &voices, uiCallbacks);
   // Splash runs after the engine so its subtitle reports the real audio state
   // (and after ui.begin(), which owns display bring-up and the saved theme).
   TuneSplash::run(ui.theme(), uiAudioStatus(nullptr).c_str());
@@ -520,9 +571,15 @@ void setup() {
   router.on("touch", "touch tracker diagnostics", cmdTouch);
   router.on("perf", "UI render timing", cmdPerf);
   router.on("theme", "switch UI theme: theme | next | <name>", cmdTheme);
+  router.on("bright", "backlight: bright | <40-255> | + | -", cmdBright);
+  router.on("vol", "master volume: vol | <0-255>", cmdVolume);
+  router.on("settings", "settings view: settings | open | close | idledim", cmdSettings);
 }
 
 void loop() {
+  if (Serial.available()) {
+    ui.noteActivity();  // a serial command counts as use; wake a dimmed panel
+  }
   router.poll();
   drainEngineEvents();
   if (!audioEngine().running()) {

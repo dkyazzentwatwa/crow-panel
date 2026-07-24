@@ -22,21 +22,67 @@ the display; the onboard ESP32-C6 owns the radio.
 
 ## Current state
 
-**Stage 1 of 7 — scaffold.** Renamed from the former Vision Guard inspection
-kiosk, kiosk sources deleted, flags and serial surface in place, flag matrix
-green. No camera, renderer, recorder, stream server, or touch console yet; each
-stage-gated command says which stage it lands in rather than failing silently.
+**Field-proven on a V1.2 panel, 2026-07-24.** Measured, not estimated:
+
+| Path | Result |
+|---|---|
+| SC2336 identification | address `0x30`, chip id `0xCB3A` |
+| Viewfinder | ~21 fps, 1024x600, correct colour, `byte_swap_en = false` |
+| Stills / clips to SD | JPEG opens on a computer; AVI plays **and seeks** in VLC |
+| BOOT button shutter | works |
+| MJPEG stream (station mode) | **15–20 fps** at 640x480 q60, panel held ~21 fps concurrently |
+
+**Not verified:** soft-AP association (advertises, never associates — station
+mode is the proven path), and AE convergence across a wide brightness range.
+
+### What bring-up actually cost
+
+Five real bugs surfaced only against hardware. They are worth reading as a set,
+because four of the five looked like something other than what they were:
+
+1. **Missing black-level correction** — hazy frames with grey blacks. BLC was
+   simply never configured; it is the first stage of the pipeline for a reason.
+2. **AWB window too narrow to see its own distortion** — the R/G and B/G
+   acceptance bounds were a "sensible" 0.6–2.0, but raw Bayer is green-heavy, so
+   an uncorrected frame fell outside them. Zero white patches, gains frozen at
+   unity, and the green cast the loop existed to remove was exactly what blinded
+   it. *A corrective loop must be able to observe the distortion it corrects.*
+3. **Blocking ISP statistics reads** — two 120 ms-timeout reads per 200 ms
+   window. Average frame rate looked healthy at 20–30 fps, so nothing seemed
+   wrong; but taps landing inside a stall were swallowed and the **touchscreen
+   appeared dead**. *Averages hide worst cases, and interactive latency lives in
+   the worst case.*
+4. **Per-loop HTTP handler registration** — `WebServer::on()` appends rather
+   than replaces, so re-registering a route each loop grew an unbounded handler
+   list at 20–30 entries per second.
+5. **Stream URL hardcoded to the AP address** — the panel is reachable at two
+   addresses at once, so a LAN viewer loaded the page fine and was then pointed
+   at an AP address it had no route to. Video blank, `/snapshot` fine.
+
+Plus one that was not a bug at all: the **soft-AP SSID had been set to the same
+name as the home network**, so clients "joined" it and silently associated with
+the stronger router instead. The panel reported zero stations and looked broken
+while working perfectly.
+
+### Original stage breakdown
 
 | Stage | Scope | State |
 |---|---|---|
-| 0 | Probe the SCCB bus, confirm sensor address + chip ID | sketch written and compiling; **needs hardware** |
-| 1 | Rename, strip, flags, serial scaffold | **done, compile-verified** |
-| 2 | `Sc2336Sensor` + `CameraBringup` (CSI + ISP) | **done, compile-verified + linkage-verified** |
-| 3 | `CamRenderer` + `VisionCamUi` — PPA blit, live viewfinder | **done, compile-verified + linkage-verified** |
-| 4 | ISP tuning + AE/AWB loops + manual exposure | **done, compile-verified + linkage-verified; constants are untuned guesses** |
-| 5 | `CamRecorder` — JPEG, SD stills, MJPEG/AVI clips | not started |
-| 6 | `CamStreamServer` — soft-AP + MJPEG | not started |
-| 7 | Full docs rewrite | not started |
+| 0 | Probe the SCCB bus, confirm sensor address + chip ID | written, compiles; **needs hardware** |
+| 1 | Rename, strip, flags, serial scaffold | compile-verified |
+| 2 | `Sc2336Sensor` + `CameraBringup` (CSI + ISP) | compile- + linkage-verified |
+| 3 | `CamRenderer` + `VisionCamUi` — PPA blit, live viewfinder | compile- + linkage-verified |
+| 4 | ISP tuning + AE/AWB loops + manual exposure | compile- + linkage-verified; **constants untuned** |
+| 5 | `JpegEncoder` + `CamRecorder` — stills, MJPEG/AVI clips | compile- + linkage-verified |
+| 6 | `CamStreamServer` — soft-AP + MJPEG | compile- + linkage-verified |
+| 7 | Docs | done |
+
+**What "verified" means here, precisely.** Every flag combination builds green,
+and the link map shows the ESP-IDF camera, ISP, JPEG and PPA archives genuinely
+pulled in (and absent when the flags are off). That is the entire body of
+evidence. No sensor has been probed, no frame captured, no file written, no clip
+played, no client connected. Treat every performance figure in this document as
+a target or an estimate, never a measurement.
 
 ## Why this project exists
 
@@ -123,13 +169,20 @@ encode twice.
 | File | Responsibility |
 |---|---|
 | `shared/CrowPanelShared/Sc2336Sensor.{h,cpp}` | I2C sensor: ID probe, register table, exposure/gain/flip |
-| `shared/CrowPanelShared/CameraBringup.{h,cpp}` | LDO, ISP processor, CSI controller, frame buffers |
-| `src/CamPipeline.{h,cpp}` | Frame ownership, AE/AWB control loop |
+| `shared/CrowPanelShared/CameraBringup.{h,cpp}` | LDO, ISP processor + tuning, CSI controller, frame buffers, AE/AWB statistics |
+| `src/CamPipeline.{h,cpp}` | AE/AWB control policy |
 | `src/CamRenderer.{h,cpp}` | PPA blit into the DSI framebuffer, dirty-rect flush |
-| `src/CamRecorder.{h,cpp}` | JPEG encode, SD stills, MJPEG/AVI clips |
+| `src/JpegEncoder.{h,cpp}` | Hardware JPEG + PPA down-scale, shared by recorder and stream |
+| `src/CamRecorder.{h,cpp}` | SD stills, MJPEG/AVI clips with index |
 | `src/CamStreamServer.{h,cpp}` | Soft-AP, HTTP pages, MJPEG stream |
 | `src/VisionCamUi.{h,cpp}` | Four-tab touch console |
-| `src/MockCamera.{h,cpp}` | Synthetic frames when `USE_CAMERA_DRIVER=0` |
+| `tools/camprobe/` | Standalone SCCB probe — run this first on new hardware |
+
+`JpegEncoder` exists because the recorder and the stream server need exactly the
+same operation and the JPEG peripheral is a single hardware block with large
+working buffers. One instance is owned by the sketch and passed to both; a second
+would be pure waste. Neither is reentrant, and both run from `loop()`, so single
+ownership is the whole synchronisation story.
 
 ## Feature flags
 
@@ -166,11 +219,31 @@ Soft-AP credentials go in a gitignored `config/CamSecrets.h` (copy
   a bad automatic result gets ruled out during bring-up
 - `screen [live|gallery|stream|settings]` — show or switch a screen (the tab bar)
 - `touch` — raw + mapped touch coordinates, tap count, current screen
-- `shot` — capture a still to SD *(stage 5)*
-- `rec` — start/stop a clip *(stage 5)*
-- `gallery` — list captured media *(stage 5)*
-- `stream` — soft-AP and stream state *(stage 6)*
+- `shot` — capture a still to SD (queued for the next frame, same path as the
+  touch shutter)
+- `rec [start|stop]` — record a clip; no argument toggles
+- `gallery` — list `/DCIM` with sizes and free space
+- `stream [on|off]` — soft-AP and MJPEG server state
 - `selftest` — drive the flow headlessly with explicit `PASS`/`FAIL` lines
+
+### Serial smoke (no panel, no card, no camera)
+
+Every one of these works in the baseline build and reports honestly when the
+hardware it needs is absent:
+
+```text
+status
+cam status
+cam begin
+cam grab
+screen live
+shot
+rec start
+rec stop
+gallery
+stream
+selftest
+```
 
 ## Rendering, and why it is not a normal dashboard
 
@@ -290,6 +363,80 @@ an invented one would look worse than none.
 > committed fallback**: touching the −/+ control drops out of auto, so a
 > misbehaving loop can never leave the camera unusable.
 
+## Capture, and the constraint that shapes it
+
+**SD write speed is the binding constraint, not the encoder.** 1-bit SD_MMC
+sustains roughly 700 KB/s. A full-resolution 1024x600 frame at q75 is about
+70 KB, so recording natively at 10 fps would consume the entire budget with
+nothing left for filesystem overhead. Frames are therefore hardware-scaled to
+the record size (640x480 by default) before encoding.
+
+Stills are different and go at full sensor resolution, quality 90 — the budget
+that shapes video does not apply to one file.
+
+Clips are **Motion-JPEG in an AVI container**: a RIFF header, one `00dc` chunk
+per JPEG frame, and an `idx1` index appended at close. That is the format every
+player already understands, and hand-writing it is far less work than fitting a
+container library into an Arduino sketch. Without the index a player can show
+the clip but cannot seek in it, and some refuse to open it at all.
+
+Two details in the AVI writer are worth knowing because both were bugs first:
+
+- **Byte offsets are tracked by hand, not read from `File::size()`.** For a file
+  open for writing, `size()` reflects what has been flushed, not what has been
+  buffered — using it to compute chunk offsets silently corrupts the index.
+- **The header is patched in a second pass, reopened as `"r+"`.** The clip is
+  written with `FILE_WRITE` (`"w"`), a truncating write-only mode; seeking
+  backwards in it to backfill sizes would be relying on undefined behaviour.
+
+The header layout is locked down with `static_assert`s on the RIFF LIST
+arithmetic. That is not decoration: the `hdrl` size was written four bytes short
+during development, which produces a file most players still open (they rescan
+on failure) but whose header is malformed. Compile-time checks make that class
+of error impossible to reintroduce.
+
+The REC display reports the fps **actually achieved** and counts frames the card
+was too slow to accept. Frames arriving faster than the record rate are skipped
+and deliberately *not* counted as drops — conflating "not wanted" with "could
+not keep up" would make a healthy recording look like a failing one.
+
+## Streaming
+
+Two sockets, and the split is not arbitrary:
+
+| Port | Server | Serves |
+|---|---|---|
+| 80 | `WebServer` | `/` viewer page, `/snapshot`, `/health` |
+| 81 | `WiFiServer` | `/stream` — `multipart/x-mixed-replace` |
+
+`WebServer::handleClient()` runs a request to completion before returning, and
+an MJPEG response never completes. Serving the stream from port 80 would stall
+the render loop permanently. The raw socket on 81 lets the pusher hand over one
+frame per `loop()` iteration and return immediately.
+
+**One viewer at a time**, by design: a second client would multiply both the
+encode cost and the SDIO traffic to the C6, and silently halving the first
+viewer's frame rate is worse than being told the seat is taken. A short socket
+write drops the viewer rather than sending a truncated frame, which would
+desynchronise the multipart stream permanently.
+
+Stream frames are 640x480 at q60, rate-limited to 10 fps independently of the
+camera — the viewfinder can run faster than the link, and pushing every frame
+would only build a backlog in the C6.
+
+`configureCrowPanelHostedWiFiPins()` **must** be called before any `WiFi.*` call:
+this panel wires the P4↔C6 SDIO data lines differently from the core's default
+map, and without the remap `esp_hosted` hangs during handshake and the board
+watchdog-reboots. See `docs/c6-wifi-handoff.md`.
+
+### The AP always has a password
+
+There is no open-AP path and no fallback to one. If the configured password is
+shorter than WPA2's 8-character minimum, `begin()` refuses to start the radio and
+says why. If the placeholder from `CamSecrets.example.h` is still in use, both
+the Stream screen and `stream` report it. This device broadcasts a live camera
+feed; an open AP would put it in range of anyone.
+
 ## Known risks
 
 Tracked as entries 20-24 in `docs/hardware-risk-register.md`:
@@ -314,10 +461,18 @@ Tracked as entries 20-24 in `docs/hardware-risk-register.md`:
 
 ## Proof states
 
-- `compile-ready` — **current state, Stage 1 only.** All flag-matrix rows build
-  green under the suite FQBN.
+- `compile-ready` — **current state.** All seven flag-matrix rows build green
+  under the suite FQBN, and the camera/ISP/JPEG/PPA archives are confirmed in
+  the link map.
 - `panel-observed` — **not done.** No CrowPanel is attached to this workspace.
-- `field-proven` — **not done.** Requires, in order: sensor ID reads back → live
-  viewfinder with measured fps on screen → correct exposure in a bright *and* a
-  dim room → a still that opens on a computer → a clip that plays in VLC → a
-  phone joining the soft-AP and watching `/stream`.
+- `field-proven` — **not done.** Requires, in order:
+  1. `tools/camprobe` reports `SC2336 present` and its address
+  2. `cam grab` returns plausible dimensions and a non-zero mean luma
+  3. Live viewfinder renders, HUD shows `PPA` (not `CPU`), fps recorded
+  4. Correct exposure in a bright room **and** a dim one
+  5. A still that opens on a computer
+  6. A clip that plays in VLC and seeks correctly
+  7. A phone joins the soft-AP and watches `/stream`; stream fps recorded
+
+Steps 3, 6 and 7 each produce a number this document currently only estimates.
+Record them.

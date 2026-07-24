@@ -1,7 +1,24 @@
 // Auto-exposure / auto-white-balance control loops.
-// COMPILE-VERIFIED on esp32:esp32:esp32p4 (core 3.3.8).
-// NOT HARDWARE-VERIFIED - these loops have never run against a real image, and
-// their constants are first guesses, not measurements. See kDefaultTarget.
+//
+// HARDWARE-VERIFIED (V1.2 panel, 2026-07-24): the loops converge and the image
+// auto-colours correctly on a live indoor scene.
+//
+// Still untested: behaviour across a wide brightness range. "Looks right
+// indoors" is not "converges properly walking from a dim room to a window",
+// and kDefaultTarget has not been tuned against a measured reference.
+//
+// Getting here took fixing two bugs that only a real image could reveal - a
+// missing black level correction (hazy, grey blacks) and an AWB acceptance
+// window too narrow to ever see an uncorrected frame. See risk register #26
+// and #27; the second is the more instructive of the two.
+//
+// A REAL BUG FOUND ON HARDWARE, worth remembering: these statistics reads block
+// the calling task until the ISP raises its interrupt. Originally both ran every
+// update with a 120 ms timeout, i.e. up to 240 ms of stall per 200 ms window.
+// Average frame rate still looked fine (20-30 fps) because the loop ran fast
+// between stalls - but taps landing inside a stall were swallowed, and the
+// touchscreen appeared broken. Averages hid it; only the worst case mattered.
+// Hence the short timeout and the one-read-per-update alternation in tick().
 
 #include "CamPipeline.h"
 
@@ -132,8 +149,21 @@ void CamPipeline::tick() {
   if (now - lastUpdateMs_ < kUpdateIntervalMs) return;
   lastUpdateMs_ = now;
 
-  if (autoExposure_) updateExposure_();
-  if (autoWhiteBalance_) updateWhiteBalance_();
+  // AT MOST ONE statistics read per update, alternating between the two loops.
+  //
+  // Both reads block the calling task until the ISP raises its statistics
+  // interrupt. Running them back to back doubles the worst-case stall, and this
+  // runs inside the render loop - where the cost is not just frame rate but
+  // TOUCH: a tap needs at least two touch samples to produce a release edge, so
+  // a loop that stalls long enough will silently swallow taps and look like a
+  // dead touchscreen. Alternating halves the worst case and costs nothing but a
+  // slower convergence that no one can perceive at 2.5 Hz per loop.
+  alternateStats_ = !alternateStats_;
+  if (alternateStats_) {
+    if (autoExposure_) updateExposure_();
+  } else {
+    if (autoWhiteBalance_) updateWhiteBalance_();
+  }
 }
 
 void CamPipeline::printStatus(Print &out) const {

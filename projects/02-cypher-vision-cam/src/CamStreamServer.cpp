@@ -1,7 +1,17 @@
 // Soft-AP + MJPEG live feed served from the onboard ESP32-C6.
-// COMPILE-VERIFIED on esp32:esp32:esp32p4 (core 3.3.8). NOT HARDWARE-VERIFIED -
-// no client has ever connected and the SDIO link's throughput under video load
-// is unmeasured. Treat every fps figure here as unproven until it is observed.
+//
+// HARDWARE-VERIFIED (V1.2 panel, 2026-07-24) in STATION mode: a browser on the
+// LAN watched the live feed at 15-20 fps (640x480 q60) while the panel's own
+// viewfinder held ~21 fps.
+//
+// THE LINK IS BANDWIDTH-BOUND, NOT CPU-BOUND. Frame rate drops in bright
+// scenes: a high-contrast image compresses worse, so each frame costs more
+// bytes over the SDIO link to the C6. To raise the rate, lower kStreamQuality
+// or kStreamWidth/Height - throwing CPU at it would change nothing.
+//
+// Soft-AP mode is still NOT verified. It advertises correctly and softAP()
+// reports success, but no association has been observed on this board. Station
+// mode is the proven path and the one to prefer.
 
 #include "CamStreamServer.h"
 
@@ -78,14 +88,33 @@ bool CamStreamServer::startAccessPoint_() {
     return false;
   }
 
-  // AP_STA rather than AP: the panel can host its own network AND join an
-  // existing one, so the feed is reachable from either side.
-  WiFi.mode(WIFI_AP_STA);
-  if (!WiFi.softAP(ssid.c_str(), password.c_str())) {
+  // Pure AP unless station credentials actually exist.
+  //
+  // The first hardware attempt used WIFI_AP_STA unconditionally, and no client
+  // could associate (softAP() returned success, the SSID was advertised, but
+  // softAPgetStationNum() stayed at 0). AP_STA makes the radio time-share
+  // between hosting and scanning for its station network, and over the hosted
+  // C6's SDIO link that is a far less travelled path than plain AP. With no
+  // station SSID configured there is nothing to gain from it anyway.
+  const bool wantStation = String(WIFI_SSID).length() > 0;
+  WiFi.mode(wantStation ? WIFI_AP_STA : WIFI_AP);
+
+  // Explicit channel and connection limit rather than the defaults. Channel 1
+  // is the safest single choice; leaving it implicit lets the stack pick,
+  // which on a hosted radio can land somewhere a client will not follow.
+  constexpr int kApChannel = 1;
+  constexpr int kApHidden = 0;
+  constexpr int kApMaxClients = 4;
+  if (!WiFi.softAP(ssid.c_str(), password.c_str(), kApChannel, kApHidden,
+                   kApMaxClients)) {
     lastError_ = "soft-AP would not start";
     Logger::warn("stream", lastError_);
     return false;
   }
+
+  // Give the C6 a moment to actually bring the interface up before reading its
+  // address. softAP() returning true only means the request was accepted.
+  delay(300);
 
   ssid_ = ssid;
   const IPAddress ip = WiFi.softAPIP();
@@ -123,12 +152,10 @@ bool CamStreamServer::begin(JpegEncoder *encoder) {
                   ",\"stream_fps\":" + String(streamFps_, 1) + "}";
     gPages->send(200, "application/json", body);
   });
-  // /snapshot is registered here but answered from handle(), because only
-  // handle() has a live frame. Registering a stub that says so beats a 404 that
-  // looks like a broken server.
-  gPages->on("/snapshot", HTTP_GET, [this]() {
-    gPages->send(503, "text/plain", "no frame available yet");
-  });
+  // Registered ONCE. WebServer::on() appends to a handler list rather than
+  // replacing, so registering per-loop to capture a fresh frame pointer grows
+  // that list without bound - the route reads currentFrame_ instead.
+  gPages->on("/snapshot", HTTP_GET, [this]() { serveSnapshot_(currentFrame_); });
   gPages->onNotFound([this]() { gPages->send(404, "text/plain", "not found"); });
   gPages->begin();
 
@@ -167,11 +194,27 @@ void CamStreamServer::end() {
 }
 
 void CamStreamServer::serveViewerPage_() {
-  // The <img> must point at :81 by absolute URL, because the page is served
-  // from :80 and a relative path would hit the wrong socket.
+  // The <img> needs an absolute URL because the stream lives on a different
+  // port, and a relative path would hit :80.
+  //
+  // The host MUST come from the request, not from softAPIP(). The panel can be
+  // reachable at two addresses at once - 192.168.4.1 on its own AP and a LAN
+  // address as a station - and baking in the AP address breaks every LAN
+  // viewer: the page loads fine over the LAN, then points the browser at an AP
+  // address it has no route to, so the frame never appears while /snapshot
+  // (a relative path) works perfectly. Echoing back the Host header keeps the
+  // stream on whichever interface the client actually used.
+  String host = gPages->hostHeader();
+  const int colon = host.indexOf(':');
+  if (colon >= 0) host = host.substring(0, colon);  // drop any :port
+  if (host.length() == 0) {
+    // No Host header (HTTP/1.0). Prefer the station address, since that is the
+    // interface a client is most likely to have reached us on.
+    host = stationConnected() ? WiFi.localIP().toString() : WiFi.softAPIP().toString();
+  }
+
   String page = FPSTR(kViewerPage);
-  page.replace("%STREAM_HOST%",
-               WiFi.softAPIP().toString() + ":" + String(VISIONCAM_STREAM_PORT));
+  page.replace("%STREAM_HOST%", host + ":" + String(VISIONCAM_STREAM_PORT));
   gPages->send(200, "text/html", page);
 }
 
@@ -196,11 +239,16 @@ void CamStreamServer::serviceStreamSocket_(const CrowCamera::Frame *frame) {
   if (!viewerConnected_) {
     WiFiClient incoming = gStreamSocket->accept();
     if (incoming) {
-      // Drain the request line; the socket only serves one thing, so its
-      // contents do not change what happens next.
+      // Drain the request headers; the socket only serves one thing, so their
+      // contents do not change what happens next. delay(1) rather than a bare
+      // spin - this runs inside the render loop, and busy-waiting here would
+      // stall video and touch for up to the full timeout.
       const uint32_t deadline = millis() + 200;
       while (incoming.connected() && millis() < deadline) {
-        if (!incoming.available()) continue;
+        if (!incoming.available()) {
+          delay(1);
+          continue;
+        }
         const String line = incoming.readStringUntil('\n');
         if (line.length() <= 1) break;  // blank line ends the headers
       }
@@ -262,13 +310,27 @@ void CamStreamServer::handle(const CrowCamera::Frame *frame) {
   if (!running_) return;
   if (frame != nullptr) sawFrame_ = true;
 
-  // /snapshot needs a live frame, and only this function has one. Rebinding the
-  // handler each call keeps the frame pointer current without a static.
-  if (gPages != nullptr) {
-    gPages->on("/snapshot", HTTP_GET, [this, frame]() { serveSnapshot_(frame); });
-    gPages->handleClient();
-  }
+  // Publish the frame for the /snapshot route, then clear it again below: the
+  // pointer is only valid while this call is on the stack, and handleClient()
+  // is the only thing that can invoke the route.
+  currentFrame_ = frame;
+  if (gPages != nullptr) gPages->handleClient();
   serviceStreamSocket_(frame);
+  currentFrame_ = nullptr;
+}
+
+uint8_t CamStreamServer::stationCount() const {
+  if (!running_) return 0;
+  return (uint8_t)WiFi.softAPgetStationNum();
+}
+
+bool CamStreamServer::stationConnected() const {
+  return running_ && WiFi.status() == WL_CONNECTED;
+}
+
+String CamStreamServer::stationUrl() const {
+  if (!stationConnected()) return String();
+  return String("http://") + WiFi.localIP().toString() + "/";
 }
 
 void CamStreamServer::printStatus(Print &out) const {
@@ -279,7 +341,9 @@ void CamStreamServer::printStatus(Print &out) const {
     out.println(')');
     return;
   }
-  out.print(F("ap='"));
+  out.print(F("stations="));
+  out.print(stationCount());
+  out.print(F(" ap='"));
   out.print(ssid_);
   out.print(F("' url="));
   out.print(url_);
@@ -306,6 +370,9 @@ bool CamStreamServer::begin(JpegEncoder *) {
 }
 void CamStreamServer::end() {}
 void CamStreamServer::handle(const CrowCamera::Frame *) {}
+uint8_t CamStreamServer::stationCount() const { return 0; }
+bool CamStreamServer::stationConnected() const { return false; }
+String CamStreamServer::stationUrl() const { return String(); }
 
 void CamStreamServer::printStatus(Print &out) const {
   out.println(F("[stream] disabled (build with -DUSE_WIFI=1)"));

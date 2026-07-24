@@ -24,6 +24,14 @@
 constexpr int kSccbSda = 12;
 constexpr int kSccbScl = 13;
 
+// CSI_RESET, from the V1.2 schematic (net "IO11_CSI_RESET"). Elecrow's own
+// lesson passes reset_pin = -1, but the net exists and sits beside an LDO CE
+// pin and the DOVDD_1V8 rail - so it may be enabling the camera's supply rather
+// than only releasing its reset. Driving it high first costs nothing and rules
+// out the single most confusing failure: a completely silent sensor that looks
+// exactly like a badly seated ribbon.
+constexpr int kCsiReset = 11;
+
 // SC2336 sensor ID registers and chip ID, from esp-video-components
 // (sc2336_regs.h SC2336_REG_SENSOR_ID_H/L, sc2336.h SC2336_PID = 0xcb3a).
 constexpr uint16_t kRegSensorIdHigh = 0x3107;
@@ -108,7 +116,14 @@ void setup() {
   delay(400);
 
   CrowDisplay::begin(activeHardwareProfile(), "CAM PROBE");
-  report(0, "SCCB scan: SDA=12 SCL=13 (Wire1)");
+  report(0, "SCCB scan: SDA=12 SCL=13 rst=IO11");
+
+  // Power/reset before the bus, and give it far longer than any sensor needs.
+  pinMode(kCsiReset, OUTPUT);
+  digitalWrite(kCsiReset, LOW);
+  delay(10);
+  digitalWrite(kCsiReset, HIGH);
+  delay(50);
 
   Wire1.begin(kSccbSda, kSccbScl, 100000);
   delay(50);

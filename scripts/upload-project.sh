@@ -43,6 +43,11 @@ BUILD_ARGS=()
 if [[ -n "${EXTRA_FLAGS:-}" ]]; then
   echo "Extra compiler flags: $EXTRA_FLAGS"
   BUILD_ARGS+=(--build-property "compiler.cpp.extra_flags=$EXTRA_FLAGS")
+  # The same defines must also reach .c files: compiler.cpp.extra_flags does
+  # NOT, so a project with a flag-gated C core (project 22's vendored gwenesis)
+  # would flash a binary where that core compiled to nothing, with no error.
+  # EXTRA_C_FLAGS appends C-only options such as warning suppressions.
+  BUILD_ARGS+=(--build-property "compiler.c.extra_flags=$EXTRA_FLAGS ${EXTRA_C_FLAGS:-}")
 fi
 if [[ "${CTAGS_WORKAROUND:-0}" == "1" ]]; then
   BUILD_ARGS+=(--build-property "tools.ctags.cmd.path=/usr/bin/true")

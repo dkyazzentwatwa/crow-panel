@@ -137,7 +137,14 @@ void stop() override { if (pendingSave_) save(); gnuboy_free_rom(); romLoaded_ =
 
 ---
 
-## Task 2: Generalise video to any source size
+## Task 2: Generalise video to any source size *(DONE)*
+
+**Result:** `GbVideo::begin(srcW, srcH, scale)` replaces the `GB_*` macros with
+runtime state; `centreX()` / `topY()` are pure and selftest-verified for all
+three consoles. Re-allocates the strip on a geometry change, so switching cores
+is safe. `GB_VIEW_X/Y` are no longer referenced outside `ProjectConfig.h`.
++568 bytes. The pad is now derived from `video.view*()` at boot, so screen and
+controls move together by construction.
 
 **Files:** Modify `src/GbVideo.h` / `.cpp`, `22-cypher-boy.ino`
 
@@ -185,7 +192,14 @@ check("NES centres at 256", GbVideo::centreX(256, 2) == 256);
 
 ---
 
-## Task 3: System-tagged ROM store
+## Task 3: System-tagged ROM store *(DONE)*
+
+**Result:** `GbRomStore::systemForName()` maps extensions to `EmuSystem`
+(`.gb/.gbc` -> GB, `.md/.gen/.bin` -> Genesis, `.nes` -> NES, anything else
+rejected); entries carry the tag and the picker badges each row. `USE_GENESIS_CORE`
+/ `USE_NES_CORE` flags added (both 0) so `GbUi::systemPlayable()` can dim ROMs
+this build has no core for, and `launchRom()` refuses them with a clear reason
+rather than failing silently. +1266 bytes.
 
 **Files:** Modify `src/GbRomStore.h` / `.cpp`, `src/GbUi.cpp` (row badge), `22-cypher-boy.ino`
 
@@ -275,7 +289,38 @@ grep -o 'Sketch uses [0-9]*' /tmp/genesis-on.log
 
 ---
 
-## Task 5: `GenesisCore` — silent, video + input only
+## Task 5: `GenesisCore` — silent, video + input only *(CODE DONE, UNPROVEN)*
+
+**Result:** `GenesisCore : EmuCore` implemented with the scanline loop adapted
+from retro-go's `main.c`. Compiles and links: **genesis 982 KB / 168 KB RAM**,
+**genesis-full 1.19 MB / 176 KB RAM** — comfortably inside the 3 MB partition,
+with 152 KB internal RAM left for stack and locals. All six Game Boy combos
+unchanged.
+
+Things the integration surfaced that the plan had not predicted:
+
+- **gwenesis renders 8-bit palette indices, not RGB565.** The display applies
+  `CRAM565` (byte-swapped) separately. Rather than convert into a second 143 KB
+  buffer every frame, `EmuCore` gained optional `framebuffer8()` + `palette()`
+  and `GbVideo::blitPaletted()` does the lookup while it is already expanding
+  each scanline - so the palette costs nothing extra. The framebuffer is
+  therefore 75 KB (PSRAM), not 143 KB.
+- **gwenesis expects the application to define host globals** (`system_clock`,
+  `scan_line`, the two audio buffers and their clocks/indices) plus a
+  `gwenesis_io_get_buttons()` hook. The audio buffers must exist even in the
+  silent build because `ym2612.c` and `gwenesis_sn76489.c` reference them at
+  file scope.
+- **Its pad enum is an index (0-7), not a bitmask, and orders the face buttons
+  B, C, A.** Mapped explicitly in one table rather than by arithmetic.
+- **`GbButton` moved to `EmuCore.h`** - it is the shared pad vocabulary, not a
+  Game Boy detail.
+- **`scripts/check-flag-matrix.sh` now passes flags to the C compiler too.**
+  It only set `compiler.cpp.extra_flags`, which does not reach `.c` files, so a
+  flag-gated C core would have compiled to nothing and still gone green.
+
+**Not proven:** nothing has been run on hardware. No Genesis ROM has been
+loaded, no frame rendered, no frame rate measured. Cartridge SRAM and save
+states are stubbed for this core (they return false and say so).
 
 **Files:** Create `src/GenesisCore.h` / `.cpp`; modify `22-cypher-boy.ino`
 

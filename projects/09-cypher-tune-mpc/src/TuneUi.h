@@ -43,10 +43,27 @@ class TuneUi {
   // makes the panel fall back to the simulated voice meters.
   typedef uint8_t (*PeakFn)(void *ctx);
   typedef uint16_t (*ScopeFn)(void *ctx, int16_t *out, uint16_t max);
+  // Master output volume 0-255, owned by the engine.
+  typedef uint8_t (*VolumeGetFn)(void *ctx);
+  typedef void (*VolumeSetFn)(void *ctx, uint8_t volume);
+
+  // Everything the UI needs from the sketch, in one bag. This started as a
+  // parameter list and outgrew being readable; the struct also means adding a
+  // hook later doesn't touch every call site.
+  struct Callbacks {
+    TriggerFn trigger = nullptr;
+    TransportFn transport = nullptr;
+    AudioStatusFn audioStatus = nullptr;
+    KitStepFn kitStep = nullptr;
+    PeakFn peak = nullptr;
+    ScopeFn scope = nullptr;
+    VolumeGetFn volumeGet = nullptr;
+    VolumeSetFn volumeSet = nullptr;
+    void *ctx = nullptr;
+  };
 
   void begin(SampleBank *bank, Sequencer *seq, VisualVoices *voices,
-             TriggerFn trigger, TransportFn transport, AudioStatusFn audioStatus,
-             KitStepFn kitStep, PeakFn peak, ScopeFn scope, void *ctx);
+             const Callbacks &callbacks);
   void tick();  // touch -> actions -> state diff -> dirty-region render
 
   // Light a pad from the sequencer/audio side (step fires, serial pads).
@@ -69,26 +86,48 @@ class TuneUi {
   bool setThemeByName(const String &name);  // prefix match; false if no match
   String themeLine() const;                 // serial `theme` report
 
+  // Panel backlight, persisted alongside the theme. Floored at kMinBrightness
+  // rather than 0: at 0 the panel still renders but shows nothing, which looks
+  // exactly like a crash and leaves no visible way back to the + button.
+  static const uint8_t kMinBrightness = 40;
+  static const uint8_t kBrightnessStep = 24;
+  uint8_t brightness() const { return brightness_; }
+  void setBrightness(uint8_t level);   // clamped to kMinBrightness..255
+  void bumpBrightness(int16_t delta);
+  // Idle dimming drops the backlight after CYPHER_TUNE_IDLE_DIM_MS of no
+  // touch - but only while the transport is stopped. Dimming mid-loop would
+  // punish exactly the case where you are listening rather than touching.
+  bool idleDim() const { return idleDimEnabled_; }
+  void setIdleDim(bool on);
+  void noteActivity();                 // any touch or command wakes the panel
+
+  // Which full-screen view is up.
+  enum View : uint8_t { kViewMain = 0, kViewSettings };
+  View view() const { return view_; }
+  void setView(View v);
+
+  String settingsLine() const;  // serial `settings` report
+
  private:
   SampleBank *bank_ = nullptr;
   Sequencer *seq_ = nullptr;
   VisualVoices *voices_ = nullptr;
-  TriggerFn trigger_ = nullptr;
-  TransportFn transport_ = nullptr;
-  AudioStatusFn audioStatus_ = nullptr;
-  KitStepFn kitStep_ = nullptr;
-  PeakFn peak_ = nullptr;
-  ScopeFn scope_ = nullptr;
-  void *ctx_ = nullptr;
+  Callbacks cb_;
 
   bool displayReady_ = false;
   uint8_t selectedPad_ = 0;
   uint8_t themeIndex_ = 0;
+  uint8_t brightness_ = 255;
+  bool idleDimEnabled_ = true;
+  bool dimmed_ = false;
+  uint32_t lastActivityMs_ = 0;
+  View view_ = kViewMain;
   uint32_t padFlashUntil_[SampleBank::kPadCount] = {0};
   uint8_t padFlashVel_[SampleBank::kPadCount] = {0};
 
-  void loadTheme_();
-  void persistTheme_() const;
+  void loadSettings_();
+  void persistSettings_() const;
+  void applyBrightness_();  // pushes brightness_/dim state to the backlight
 
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
   void handleTouch_(uint32_t now);
@@ -100,13 +139,16 @@ class TuneUi {
   void render_(uint32_t now);
 
   void drawAll_();
+  void drawSettings_();
+  void drawSettingsRow_(Arduino_GFX *g, const TuneTheme &t, uint8_t row);
+  void pressSettingsControl_(TouchTracker::Contact &c, uint32_t now);
+  void tickIdle_(uint32_t now);
   void drawTransport_();
   void drawSeqHeader_();
   void drawPad_(uint8_t padIdx, uint32_t now);
   void drawStepCell_(uint8_t step);
   void drawEditPanel_();
   void drawScope_();
-  void drawThemeButton_(Arduino_GFX *g, const TuneTheme &t);
   void drawStatus_();
 
   TouchTracker touch_;
@@ -120,6 +162,7 @@ class TuneUi {
   bool dirtyStatus_ = false;
   uint16_t dirtyPads_ = 0;
   uint16_t dirtySteps_ = 0;
+  uint16_t dirtySettingsRows_ = 0;
 
   // Mirrors for change detection (serial edits reach the screen for free).
   uint16_t mirrorBpm_ = 0;
