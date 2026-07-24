@@ -23,6 +23,7 @@ projects/18-cypher-desk-panel
 projects/19-starbeam-console
 projects/20-pipboy-terminal
 projects/21-cypher-keys-hid-deck
+projects/22-cypher-boy
 PROJECTS
 }
 

@@ -136,6 +136,7 @@ uint16_t slotAccent(const MacroSlot &s, const DeckTheme &theme) {
     case kMacroCombo: return theme.accent2;
     case kMacroConsumer: return theme.warn;
     case kMacroText: return theme.good;
+    case kMacroApp: return theme.accent;
     default: return theme.line;
   }
 }

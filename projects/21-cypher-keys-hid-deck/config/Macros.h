@@ -79,6 +79,28 @@ static const MacroPreset kCypherKeysPresets[] = {
          MACRO_EMPTY,
          MACRO_EMPTY,
      }},
+
+    // -------- Preset 4: App launcher (Steam-Deck style) --------
+    // Each tile opens/focuses a macOS app by name via Spotlight. Add your own
+    // with MACRO_APP("Label", "Exact App Name") - the name must match what
+    // Spotlight shows for the app.
+    {"Apps",
+     {
+         MACRO_APP("Safari", "Safari"),
+         MACRO_APP("ChatGPT", "ChatGPT"),
+         MACRO_APP("Notes", "Notes"),
+         MACRO_APP("Reminders", "Reminders"),
+
+         MACRO_APP("Calendar", "Calendar"),
+         MACRO_APP("Mail", "Mail"),
+         MACRO_EMPTY,
+         MACRO_EMPTY,
+
+         MACRO_EMPTY,
+         MACRO_EMPTY,
+         MACRO_EMPTY,
+         MACRO_EMPTY,
+     }},
 };
 
 static const uint8_t kCypherKeysPresetCount =

@@ -49,6 +49,7 @@ P18="projects/18-cypher-desk-panel"
 P19="projects/19-starbeam-console"
 P20="projects/20-pipboy-terminal"
 P21="projects/21-cypher-keys-hid-deck"
+P22="projects/22-cypher-boy"
 
 # Rows: "<project>|<tag>|<flags>|<required libs, comma-separated>"
 ROWS=(
@@ -71,6 +72,7 @@ ROWS=(
   "$P19|baseline||"
   "$P20|baseline||"
   "$P21|baseline||"
+  "$P22|baseline||"
   "$P1|display|-DUSE_DISPLAY=1|GFX Library for Arduino,SensorLib"
   "$P2|display|-DUSE_DISPLAY=1|GFX Library for Arduino,SensorLib"
   "$P3|display|-DUSE_DISPLAY=1|GFX Library for Arduino,SensorLib"
@@ -90,6 +92,7 @@ ROWS=(
   "$P19|display|-DUSE_DISPLAY=1|GFX Library for Arduino,SensorLib"
   "$P20|display|-DUSE_DISPLAY=1|GFX Library for Arduino,SensorLib"
   "$P21|display|-DUSE_DISPLAY=1|GFX Library for Arduino,SensorLib"
+  "$P22|display|-DUSE_DISPLAY=1|GFX Library for Arduino,SensorLib"
   "$P1|wifi|-DUSE_WIFI=1|"
   "$P2|wifi|-DUSE_WIFI=1|"
   "$P3|wifi|-DUSE_WIFI=1|"
@@ -155,6 +158,15 @@ ROWS=(
   # project's TECHNICAL.md - it needs USBMode=default and cannot run in this
   # single-FQBN matrix.
   "$P21|usb-hid-mock|-DUSE_DISPLAY=1 -DUSE_USB_HID=1|GFX Library for Arduino,SensorLib"
+  # The Bluetooth path compiles here too (BLE does not need USB-OTG). The BLE lib
+  # ships with the core (no install), so it is not listed as a required lib.
+  "$P21|ble-hid-mock|-DUSE_DISPLAY=1 -DUSE_BLE_HID=1|GFX Library for Arduino,SensorLib"
+  # Project 22 loads ROMs and writes battery saves through SD_MMC's FAT VFS
+  # (gnuboy does its own stdio file I/O). Verify SD_MMC actually appears under
+  # <build-path>/libraries/ for these rows - a green build alone does not prove
+  # the library linked. See src/gnuboy/VENDORED.md.
+  "$P22|gb-sd|-DUSE_GB_SD=1|"
+  "$P22|display-gb-sd|-DUSE_DISPLAY=1 -DUSE_GB_SD=1|GFX Library for Arduino,SensorLib"
 )
 
 echo "Flag matrix: ${#ROWS[@]} rows on $FQBN"

@@ -102,8 +102,8 @@ void TuneUi::pressControl_(TouchTracker::Contact &c, uint32_t now) {
     // Velocity from vertical position in the cell: top soft, bottom hard.
     int16_t rel = c.downY - padY(padRow(pad));
     if (rel < 0) rel = 0;
-    if (rel > kPadCell - 1) rel = kPadCell - 1;
-    uint8_t velocity = 40 + (uint8_t)((int32_t)rel * 87 / (kPadCell - 1));
+    if (rel > kPadCellH - 1) rel = kPadCellH - 1;
+    uint8_t velocity = 40 + (uint8_t)((int32_t)rel * 87 / (kPadCellH - 1));
     if (trigger_ != nullptr) {
       trigger_(ctx_, pad, velocity);
     }
@@ -350,7 +350,7 @@ void TuneUi::render_(uint32_t now) {
             drawPad_(pad, now);
           }
         }
-        CrowDisplay::flush(kPadX0, padY(row), kPadGridRight - kPadX0, kPadCell);
+        CrowDisplay::flush(kPadX0, padY(row), kPadGridRight - kPadX0, kPadCellH);
       }
     }
     if (dirtySteps_ != 0) {
@@ -496,20 +496,20 @@ void TuneUi::drawPad_(uint8_t padIdx, uint32_t now) {
 
   uint16_t fill = flashing ? kPadFlash : (selected ? Widgets::kSurfaceHi : Widgets::kSurface);
   uint16_t border = selected ? Widgets::kAccent : Widgets::kLine;
-  g->fillRoundRect(x, y, kPadCell, kPadCell, 10, fill);
-  g->drawRoundRect(x, y, kPadCell, kPadCell, 10, border);
+  g->fillRoundRect(x, y, kPadCellW, kPadCellH, 10, fill);
+  g->drawRoundRect(x, y, kPadCellW, kPadCellH, 10, border);
   if (selected && !flashing) {
-    g->drawRoundRect(x + 1, y + 1, kPadCell - 2, kPadCell - 2, 9, Widgets::kAccent);
+    g->drawRoundRect(x + 1, y + 1, kPadCellW - 2, kPadCellH - 2, 9, Widgets::kAccent);
   }
 
   uint16_t textMain = flashing ? Widgets::kBg : Widgets::kTextHi;
   uint16_t textMut = flashing ? Widgets::kBg : Widgets::kTextMut;
   Widgets::text(g, x + 10, y + 8, String(padIdx + 1).c_str(), Widgets::fontS(), textMut);
   const PadSound &sound = bank_->pad(padIdx);
-  Widgets::text(g, x + kPadCell / 2, y + kPadCell - 30, sound.label,
+  Widgets::text(g, x + kPadCellW / 2, y + kPadCellH - 26, sound.label,
                 Widgets::fontS(), textMain, Widgets::kCenter);
   if (sound.chokeGroup != 0) {
-    Widgets::text(g, x + kPadCell - 8, y + 8,
+    Widgets::text(g, x + kPadCellW - 8, y + 8,
                   (String("C") + String(sound.chokeGroup)).c_str(),
                   Widgets::fontS(), textMut, Widgets::kRight);
   }

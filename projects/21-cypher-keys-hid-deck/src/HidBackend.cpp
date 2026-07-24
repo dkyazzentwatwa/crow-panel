@@ -1,27 +1,7 @@
 #include "HidBackend.h"
 
+#include <Preferences.h>
 #include <CrowPanelShared.h>  // EventLog
-
-#if CYPHER_KEYS_HID_LIVE
-#include "USB.h"
-#include "USBHIDConsumerControl.h"
-#include "USBHIDKeyboard.h"
-#include "USBHIDMouse.h"
-namespace {
-USBHIDKeyboard gKeyboard;
-USBHIDMouse gMouse;
-USBHIDConsumerControl gConsumer;
-
-void pressMods(uint8_t mods) {
-  if (mods & kModCmd) gKeyboard.press(KEY_LEFT_GUI);
-  if (mods & kModShift) gKeyboard.press(KEY_LEFT_SHIFT);
-  if (mods & kModOpt) gKeyboard.press(KEY_LEFT_ALT);
-  if (mods & kModCtrl) gKeyboard.press(KEY_LEFT_CTRL);
-}
-}  // namespace
-#elif USE_USB_HID
-#warning "USE_USB_HID=1 but this is not a USB-OTG build (need USBMode=default / ARDUINO_USB_MODE==0). Building the MOCK backend."
-#endif
 
 namespace {
 int8_t clamp8(int16_t v) {
@@ -60,26 +40,74 @@ String hidKeyName(uint8_t key) {
 void HidBackend::begin(Print *log, EventLog *events) {
   log_ = log;
   events_ = events;
-#if CYPHER_KEYS_HID_LIVE
-  gKeyboard.begin();
-  gMouse.begin();
-  gConsumer.begin();
-  USB.begin();
-  if (log_) log_->println("[hid] USB-OTG HID started (keyboard + consumer + mouse)");
-#else
-  if (log_) log_->println("[hid] MOCK backend: reports are logged, not sent");
-#endif
+  usb_.begin();
+  ble_.begin();
+  loadOutput();
+  if (log_) {
+    log_->print("[hid] output=");
+    log_->print(modeLabel());
+    log_->println(usb_.ready() || ble_.ready() ? " (live)"
+                                               : " (mock: logging only)");
+  }
+}
+
+void HidBackend::loadOutput() {
+  Preferences prefs;
+  if (prefs.begin(CYPHER_KEYS_NVS_NAMESPACE, true)) {
+    uint32_t v = prefs.getUInt("output", 0);
+    prefs.end();
+    if (v == kOutputBle) output_ = kOutputBle;
+  }
+}
+
+void HidBackend::persistOutput() const {
+  Preferences prefs;
+  if (prefs.begin(CYPHER_KEYS_NVS_NAMESPACE, false)) {
+    prefs.putUInt("output", (uint32_t)output_);
+    prefs.end();
+  }
+}
+
+HidTransport *HidBackend::active() {
+  HidTransport *t =
+      (output_ == kOutputBle) ? (HidTransport *)&ble_ : (HidTransport *)&usb_;
+  return t;
+}
+
+void HidBackend::setOutput(HidOutput out) {
+  if (out == output_) return;
+  // Flush any pending release on the transport that owns it before switching.
+  if (keyHeld_ && keyHeldOn_) {
+    keyHeldOn_->keyUp();
+    keyHeld_ = false;
+    keyHeldOn_ = nullptr;
+  }
+  if (consumerHeld_ && consumerHeldOn_) {
+    consumerHeldOn_->consumerUp();
+    consumerHeld_ = false;
+    consumerHeldOn_ = nullptr;
+  }
+  output_ = out;
+  persistOutput();
+  record(String("output -> ") + modeLabel());
+}
+
+bool HidBackend::usbLive() const { return usb_.ready(); }
+bool HidBackend::bleReady() const { return ble_.ready(); }
+bool HidBackend::bleAdvertising() const { return ble_.advertising(); }
+void HidBackend::bleClearBonds() {
+  ble_.clearBonds();
+  record("ble bonds cleared");
 }
 
 bool HidBackend::live() const {
-#if CYPHER_KEYS_HID_LIVE
-  return true;
-#else
-  return false;
-#endif
+  return (output_ == kOutputBle) ? ble_.ready() : usb_.ready();
 }
 
-const char *HidBackend::modeLabel() const { return live() ? "LIVE" : "MOCK"; }
+const char *HidBackend::modeLabel() const {
+  if (output_ == kOutputBle) return ble_.ready() ? "BLE" : "BLE?";
+  return usb_.ready() ? "USB" : "MOCK";
+}
 
 void HidBackend::record(const String &action) {
   lastAction_ = action;
@@ -91,98 +119,136 @@ void HidBackend::record(const String &action) {
   if (events_) events_->add(action.c_str());
 }
 
+void HidBackend::service(uint32_t nowMs) {
+  if (keyHeld_ && (int32_t)(nowMs - keyReleaseDueMs_) >= 0) {
+    if (keyHeldOn_) keyHeldOn_->keyUp();
+    keyHeld_ = false;
+    keyHeldOn_ = nullptr;
+  }
+  if (consumerHeld_ && (int32_t)(nowMs - consumerReleaseDueMs_) >= 0) {
+    if (consumerHeldOn_) consumerHeldOn_->consumerUp();
+    consumerHeld_ = false;
+    consumerHeldOn_ = nullptr;
+  }
+  // Flush accumulated mouse movement/scroll at a capped rate (rate-limits BLE
+  // notifies so a fast trackpad drag can't flood the stack).
+  if ((pendingDx_ || pendingDy_ || pendingWheel_) &&
+      (int32_t)(nowMs - lastMouseSendMs_) >= (int32_t)kMouseIntervalMs) {
+    HidTransport *t = active();
+    if (t) {
+      if (pendingDx_ || pendingDy_) t->mouseMove(clamp8(pendingDx_), clamp8(pendingDy_));
+      if (pendingWheel_) t->mouseWheel(clamp8(pendingWheel_));
+    }
+    pendingDx_ = 0;
+    pendingDy_ = 0;
+    pendingWheel_ = 0;
+    lastMouseSendMs_ = nowMs;
+  }
+}
+
+void HidBackend::tapKey(uint8_t mods, uint8_t key) {
+  HidTransport *t = active();
+  if (t) {
+    if (keyHeld_ && keyHeldOn_) keyHeldOn_->keyUp();  // flush previous
+    t->keyDown(mods, key);
+    keyHeld_ = true;
+    keyHeldOn_ = t;
+    keyReleaseDueMs_ = millis() + kHoldMs;
+  }
+  record("key " + hidModPrefix(mods) + hidKeyName(key));
+}
+
 void HidBackend::typeText(const String &text) {
   if (text.length() == 0) return;
-#if CYPHER_KEYS_HID_LIVE
-  for (size_t i = 0; i < text.length(); ++i) gKeyboard.write((uint8_t)text[i]);
-#endif
+  HidTransport *t = active();
+  if (t) {
+    for (size_t i = 0; i < text.length(); ++i) {
+      t->keyDown(0, (uint8_t)text[i]);
+      t->keyUp();
+      delay(5);
+    }
+  }
   String preview = text;
   if (preview.length() > 40) preview = preview.substring(0, 40) + "...";
   record("type \"" + preview + "\"");
 }
 
-void HidBackend::releaseKeyNow() {
-#if CYPHER_KEYS_HID_LIVE
-  if (keyHeld_) {
-    gKeyboard.releaseAll();
-    keyHeld_ = false;
-  }
-#endif
-}
-
-void HidBackend::service(uint32_t nowMs) {
-#if CYPHER_KEYS_HID_LIVE
-  if (keyHeld_ && (int32_t)(nowMs - keyReleaseDueMs_) >= 0) {
-    gKeyboard.releaseAll();
-    keyHeld_ = false;
-  }
-  if (consumerHeld_ && (int32_t)(nowMs - consumerReleaseDueMs_) >= 0) {
-    gConsumer.release();
-    consumerHeld_ = false;
-  }
-#else
-  (void)nowMs;
-#endif
-}
-
-void HidBackend::tapKey(uint8_t mods, uint8_t key) {
-#if CYPHER_KEYS_HID_LIVE
-  // Release a still-held previous key first so fast typing never ghosts, then
-  // press and schedule a non-blocking release.
-  releaseKeyNow();
-  pressMods(mods);
-  if (key) gKeyboard.press(key);
-  keyHeld_ = true;
-  keyReleaseDueMs_ = millis() + kHoldMs;
-#endif
-  record("key " + hidModPrefix(mods) + hidKeyName(key));
-}
-
 void HidBackend::consumer(uint16_t usage) {
-#if CYPHER_KEYS_HID_LIVE
-  if (consumerHeld_) gConsumer.release();
-  gConsumer.press(usage);
-  consumerHeld_ = true;
-  consumerReleaseDueMs_ = millis() + kHoldMs;
-#endif
+  HidTransport *t = active();
+  if (t) {
+    if (consumerHeld_ && consumerHeldOn_) consumerHeldOn_->consumerUp();
+    t->consumerDown(usage);
+    consumerHeld_ = true;
+    consumerHeldOn_ = t;
+    consumerReleaseDueMs_ = millis() + kHoldMs;
+  }
   record("media 0x" + String(usage, HEX));
 }
 
 void HidBackend::mouseMove(int16_t dx, int16_t dy) {
   if (dx == 0 && dy == 0) return;
-#if CYPHER_KEYS_HID_LIVE
-  gMouse.move(clamp8(dx), clamp8(dy));
-#endif
-  // High-frequency: no heap churn, no event-log spam, and NOT counted in
-  // reports_ so the status bar does not repaint on every move.
+  // Accumulate; service() flushes at kMouseIntervalMs. Do not send per-call:
+  // over BLE that floods NimBLE and reboots the panel.
+  pendingDx_ += dx;
+  pendingDy_ += dy;
   ++moves_;
 }
 
 void HidBackend::mouseButton(uint8_t button, bool pressed) {
-#if CYPHER_KEYS_HID_LIVE
-  if (pressed) {
-    gMouse.press(button);
-  } else {
-    gMouse.release(button);
+  HidTransport *t = active();
+  if (t) {
+    if (pressed)
+      t->mouseDown(button);
+    else
+      t->mouseUp(button);
   }
-#endif
   record(String("mouse ") + (button == 2 ? "right " : "left ") +
          (pressed ? "down" : "up"));
 }
 
 void HidBackend::mouseClick(uint8_t button) {
-#if CYPHER_KEYS_HID_LIVE
-  gMouse.click(button);
-#endif
+  HidTransport *t = active();
+  if (t) {
+    t->mouseDown(button);
+    t->mouseUp(button);
+  }
   record(String("mouse ") + (button == 2 ? "right" : "left") + " click");
 }
 
 void HidBackend::mouseScroll(int8_t amount) {
   if (amount == 0) return;
-#if CYPHER_KEYS_HID_LIVE
-  gMouse.move(0, 0, amount);
-#endif
-  record("mouse scroll " + String(amount));
+  // Accumulate; flushed with movement in service() (same anti-flood reason).
+  pendingWheel_ += amount;
+}
+
+void HidBackend::launchApp(const char *appName) {
+  if (appName == nullptr || appName[0] == '\0') return;
+  HidTransport *t = active();
+  if (t) {
+    // Flush any pending key release so no modifier is stuck during the sequence.
+    if (keyHeld_ && keyHeldOn_) {
+      keyHeldOn_->keyUp();
+      keyHeld_ = false;
+      keyHeldOn_ = nullptr;
+    }
+    // Spotlight: Cmd+Space, wait for it to open, type the name, wait for it to
+    // resolve the match, then Return. Discrete/infrequent, so blocking delays
+    // are fine (and give Spotlight time to appear over USB or BLE).
+    t->keyDown(kModCmd, ' ');
+    delay(30);
+    t->keyUp();
+    delay(300);
+    for (const char *p = appName; *p; ++p) {
+      t->keyDown(0, (uint8_t)*p);
+      t->keyUp();
+      delay(12);
+    }
+    delay(500);  // let Spotlight resolve the top match before Enter opens it
+    t->keyDown(0, kKeyReturn);
+    delay(30);
+    t->keyUp();
+  }
+  record(String("open app \"") + appName + "\"");
 }
 
 void HidBackend::fireMacro(const MacroSlot &slot) {
@@ -195,6 +261,9 @@ void HidBackend::fireMacro(const MacroSlot &slot) {
       break;
     case kMacroText:
       if (slot.text) typeText(String(slot.text));
+      break;
+    case kMacroApp:
+      launchApp(slot.text);
       break;
     case kMacroNone:
     default:

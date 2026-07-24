@@ -58,6 +58,7 @@ enum MacroKind : uint8_t {
   kMacroCombo,      // modifiers + one key (e.g. Cmd+C)
   kMacroConsumer,   // a consumer-control usage (volume, play/pause, ...)
   kMacroText,       // types a canned string
+  kMacroApp,        // open/focus a macOS app by name via Spotlight (`text`)
 };
 
 struct MacroSlot {
@@ -83,5 +84,8 @@ struct MacroPreset {
   { label, kMacroConsumer, kModNone, 0, (usage), nullptr }
 #define MACRO_TEXT(label, str) \
   { label, kMacroText, kModNone, 0, 0, (str) }
+// Opens/focuses a macOS app by name (Spotlight: Cmd+Space, type name, Return).
+#define MACRO_APP(label, appName) \
+  { label, kMacroApp, kModNone, 0, 0, (appName) }
 
 #endif

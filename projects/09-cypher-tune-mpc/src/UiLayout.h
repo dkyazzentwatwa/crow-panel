@@ -34,12 +34,20 @@ constexpr int16_t kMetroX = 748, kMetroW = 64;
 constexpr int16_t kPatternX = 828, kPatternW = 44, kPatternPitch = 48;  // A-D chips
 
 // --- Pad grid (left) ---
+// Cells are wider than they are tall: the 4 rows have to fit between the
+// transport bar and the full-width status strip (72..560), so the vertical
+// pitch is derived from that budget rather than being square. Getting this
+// wrong clips the bottom row under the status bar.
+//   4*kPadCellH + 3*kPadGap = 552 - 72 = 480, leaving an 8px gap above kStatusY.
 constexpr int16_t kPadX0 = 8;
 constexpr int16_t kPadY0 = 72;
-constexpr int16_t kPadCell = 126;
+constexpr int16_t kPadCellW = 126;
+constexpr int16_t kPadCellH = 114;
 constexpr int16_t kPadGap = 8;
-constexpr int16_t kPadPitch = kPadCell + kPadGap;  // 134
-constexpr int16_t kPadGridRight = kPadX0 + 4 * kPadPitch - kPadGap;  // 536
+constexpr int16_t kPadPitchX = kPadCellW + kPadGap;  // 134
+constexpr int16_t kPadPitchY = kPadCellH + kPadGap;  // 122
+constexpr int16_t kPadGridRight = kPadX0 + 4 * kPadPitchX - kPadGap;   // 536
+constexpr int16_t kPadGridBottom = kPadY0 + 4 * kPadPitchY - kPadGap;  // 552
 
 // --- Right column ---
 constexpr int16_t kRightX = 552;
@@ -108,8 +116,8 @@ inline bool inRect(int16_t x, int16_t y, int16_t rx, int16_t ry, int16_t rw, int
   return x >= rx && x < rx + rw && y >= ry && y < ry + rh;
 }
 
-inline int16_t padX(uint8_t col) { return kPadX0 + col * kPadPitch; }
-inline int16_t padY(uint8_t row) { return kPadY0 + row * kPadPitch; }
+inline int16_t padX(uint8_t col) { return kPadX0 + col * kPadPitchX; }
+inline int16_t padY(uint8_t row) { return kPadY0 + row * kPadPitchY; }
 // MPC order: pad 1 is bottom-left, pad 13 top-left.
 inline uint8_t padIndexAt(uint8_t row, uint8_t col) { return (3 - row) * 4 + col; }
 inline uint8_t padRow(uint8_t padIdx) { return 3 - padIdx / 4; }
@@ -123,13 +131,13 @@ inline int8_t hitPad(int16_t x, int16_t y) {
   if (x < kPadX0 || y < kPadY0) {
     return -1;
   }
-  int16_t col = (x - kPadX0) / kPadPitch;
-  int16_t row = (y - kPadY0) / kPadPitch;
+  int16_t col = (x - kPadX0) / kPadPitchX;
+  int16_t row = (y - kPadY0) / kPadPitchY;
   if (col > 3 || row > 3) {
     return -1;
   }
   // Miss the gaps between cells.
-  if ((x - kPadX0) % kPadPitch >= kPadCell || (y - kPadY0) % kPadPitch >= kPadCell) {
+  if ((x - kPadX0) % kPadPitchX >= kPadCellW || (y - kPadY0) % kPadPitchY >= kPadCellH) {
     return -1;
   }
   return (int8_t)padIndexAt((uint8_t)row, (uint8_t)col);

@@ -29,6 +29,8 @@ void cmdScroll(const String &args) { deck.commandScroll(args); }
 void cmdMedia(const String &args) { deck.commandMedia(args); }
 void cmdDictate(const String &args) { (void)args; deck.commandDictate(); }
 void cmdTheme(const String &args) { deck.commandTheme(args); }
+void cmdOutput(const String &args) { deck.commandOutput(args); }
+void cmdBle(const String &args) { deck.commandBle(args); }
 void cmdTouch(const String &args) { (void)args; deck.printTouchDiagnostics(Serial); }
 
 void setup() {
@@ -53,6 +55,8 @@ void setup() {
   router.on("media", "media key: media volup|voldn|mute|play|brightup|brightdn", cmdMedia);
   router.on("dictate", "tap F5 (macOS dictation/mic key)", cmdDictate);
   router.on("theme", "switch UI theme: theme next | <name>", cmdTheme);
+  router.on("out", "output: out usb|ble|toggle", cmdOutput);
+  router.on("ble", "bluetooth: ble status|clear", cmdBle);
   router.on("touch", "print raw and mapped touch diagnostics", cmdTouch);
 }
 

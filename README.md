@@ -48,7 +48,7 @@ The newer ports are mock-first CrowPanel product surfaces inspired by sibling Gi
 18. `projects/18-cypher-desk-panel` — Cypher Desk OS creator workstation with a 3x4 app grid, reusable touch keyboard, the complete legacy Writer, local calendar/contacts/clock/calculator/files, hosted-C6 Wi-Fi setup, and honest hardware-gated media apps.
 19. `projects/19-starbeam-console` — full 1:1 port of project-starbeam: native 5x nRF24 + 2x CC1101 on one shared SPI bus (jammers, 2.4 GHz spectrum, 433 MHz scan/RSSI, raw record/replay) with a touch console UI, plus the Wi-Fi/BLE/attack half proxied over UART to an ESP32 running stock starbeam_v2. Transmit is arm-gated behind a local `LabProfile.h`.
 20. `projects/20-pipboy-terminal` — unofficial Pip-Boy 3000-style showpiece using only the panel's touch display, SD_MMC, hosted-C6 Wi-Fi, and onboard I2S speaker; no radio, enclosure, or sensors required.
-21. `projects/21-cypher-keys-hid-deck` — USB-HID showcase: the panel is a native USB keyboard, macro pad, and trackpad for a Mac. Reuses the Cypher Desk touch keyboard, adds switchable macro presets (a macOS set and a ChatGPT/Codex keypad), and drives the host over TinyUSB. Real HID is gated behind `USE_USB_HID` + a `USBMode=default` build; the default build is a Serial-logging mock.
+21. `projects/21-cypher-keys-hid-deck` — HID showcase: the panel is a native keyboard, macro pad, and trackpad for a Mac. Reuses the Cypher Desk touch keyboard, adds switchable macro presets (a macOS set and a ChatGPT/Codex keypad), and drives the host over **USB (TinyUSB) or Bluetooth-LE (via the onboard C6)** with an on-screen `OUT` toggle. Real output is gated behind `USE_USB_HID` (needs `USBMode=default`) and `USE_BLE_HID`; the default build is a Serial-logging mock.
 
 ## Toolchain
 
@@ -124,7 +124,7 @@ Every sketch runs an interactive command router on Serial (115200 baud, line end
 | 15 Pokedex | `browse`, `search`, `open`, `page`, `demo`, `source` | Offline Pokedex catalog browser and detail cards |
 | 16 Cypher Flock | `demo`, `inject`, `bridge`, `witness`, `screen`, `filter`, `source`, `save`, `session`, `stealth` | Detector feed, C6 nearby-Wi-Fi witness, UART controls, and sessions |
 | 18 Cypher Desk | `files`, `new`, `open`, `type`, `save`, `back`, `demo`, `touch`, `page`, `daily`, `scrap`, `focus`, `ritual`, `theme`, `sound`, `stats`, `time`, `storage` | Offline-first lofi notebook, scraps, focus sessions, prompt rituals, and SD-backed plain-text workspace |
-| 21 Cypher Keys | `hid`, `key`, `combo`, `tap`, `preset`, `mode`, `mouse`, `click`, `scroll`, `media` | USB-HID deck: type, fire macro-preset shortcuts, and drive the trackpad (mock logs the reports; `USE_USB_HID` + `USBMode=default` sends them for real) |
+| 21 Cypher Keys | `hid`, `key`, `combo`, `tap`, `preset`, `mode`, `mouse`, `click`, `scroll`, `media`, `out`, `ble` | HID deck: type, fire macro-preset shortcuts, drive the trackpad, and pick output (`out usb\|ble`); mock logs the reports, `USE_USB_HID`/`USE_BLE_HID` send them for real over USB or Bluetooth |
 
 Injected events run the exact same pipeline as mock (and future real) drivers — one code path per project (`processPacket` / `processScan` / `processTap` / `onSensor`).
 
@@ -160,7 +160,8 @@ Each flag gates a compile-verified scaffold. Flip ONE at a time following `docs/
 | `USE_STARBEAM_RADIOS` | Project 19 compiles the native 5x nRF24 + 2x CC1101 stack (RF24 + SmartRC-CC1101 libraries) on one shared SPI bus | compile-ready; per-radio register IDs and shared-SPI CS isolation need hardware proof |
 | `USE_STARBEAM_COPROC` | Project 19 enables the UART link to the ESP32 dev module running stock starbeam_v2 (Wi-Fi/BLE/attack half) | compile-ready; UART round-trip and telemetry parsing need hardware proof |
 | `STARBEAM_TX_CONFIRMED` | Project 19 arms all transmit (nRF24/CC1101 jammers, raw replay, forwarded attacks); must be set from a local gitignored `LabProfile.h` | disarmed by default; receive/analysis and the full UI still run without it |
-| `USE_USB_HID` | Project 21 makes the panel a native USB keyboard + consumer-control + mouse (TinyUSB). **Requires a `USBMode=default` FQBN** (USB-OTG); under the default `USBMode=hwcdc` it falls back to a Serial-logging mock with a `#warning` | compile-ready (mock and real USB-OTG builds both green); host enumeration on the CrowPanel USB-C not yet proven |
+| `USE_USB_HID` | Project 21 makes the panel a native USB keyboard + consumer-control + mouse (TinyUSB). **Requires a `USBMode=default` FQBN** (USB-OTG); under the default `USBMode=hwcdc` it falls back to a Serial-logging mock with a `#warning` | mock + real builds green; **host-enumerated** on a Mac (composite HID keyboard/mouse/consumer bound) |
+| `USE_BLE_HID` | Project 21 also drives the host over **Bluetooth-LE** via the onboard C6 (NimBLE-on-P4, C6 as controller). Works with or without USB-OTG; combine with `USE_USB_HID` for dual-mode + an on-screen `OUT` toggle. Pairing is passkey-free (Just Works) | compile-ready (dual build ~1.0 MB); **BLE spike-proven** (macOS paired, keystrokes received); integrated dual-mode on-device acceptance pending |
 
 Per-machine settings live in gitignored files copied from templates: `config/Pins.example.h` → `Pins.h` (radio params, reader pins) and `config/WiFiSecrets.example.h` → `WiFiSecrets.h` (credentials).
 

@@ -20,8 +20,14 @@ enumerated it as a composite HID device (`ESP32P4_DEV`, VID `0x303A`) with the
 keyboard, mouse, and consumer-control interfaces all bound by the system HID
 driver — so the panel's USB-C does carry the P4's USB-OTG lines. The last step to
 full `host-proven` is watching typed characters, macro shortcuts, media keys, and
-cursor moves actually land in a host app. See the
-[technical reference](TECHNICAL.md).
+cursor moves actually land in a host app.
+
+**Bluetooth (dual mode):** the wireless path (via the onboard C6) is
+compile-ready and was proven on this board by a standalone spike — macOS paired
+`Cypher Keys` with no passkey and received keystrokes. The integrated dual-mode
+build (USB + BLE with the `OUT` toggle) builds green; its on-device acceptance
+(toggle, pair, type/macros/media/cursor over BLE) is the last pending step. See
+the [technical reference](TECHNICAL.md).
 
 ## What you get
 
@@ -34,7 +40,10 @@ cursor moves actually land in a host app. See the
   prompt and slash-command snippets) — all editable in one header
 - A full-screen **trackpad**: drag to move, tap to click, dedicated left/right
   click buttons, and a scroll strip
-- Media and brightness keys via USB consumer control
+- Media and brightness keys via consumer control
+- **Dual output** — USB *or* Bluetooth, picked with an on-screen `OUT` toggle
+  (persisted across reboots). Over Bluetooth the panel is a wireless
+  keyboard/mouse via the onboard C6; pairing is passkey-free (Just Works)
 - A complete Serial command set that drives the exact same HID paths, so you can
   smoke-test everything with no host attached
 

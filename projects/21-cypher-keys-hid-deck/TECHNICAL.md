@@ -44,11 +44,33 @@ The backend never overrides the platform-owned `build.extra_flags.esp32p4` USB
 defines; it only reads `ARDUINO_USB_MODE`. `status` and the on-screen status bar
 report `MOCK` or `LIVE` at runtime.
 
+## Bluetooth (dual mode)
+
+The panel can also be a **wireless** keyboard/mouse over Bluetooth-LE, using the
+onboard ESP32-C6 as the radio (NimBLE host runs on the P4; HCI is tunneled to the
+C6 over esp_hosted). Proven on the tested board: macOS pairs `Cypher Keys` with
+**no passkey** (Just Works) and receives keystrokes.
+
+- `USE_BLE_HID=1` enables it. BLE does **not** need USB-OTG (it compiles under
+  `hwcdc` too), so the **dual-mode deliverable** is
+  `USBMode=default` + `USE_USB_HID=1` + `USE_BLE_HID=1` — USB and BLE both built,
+  and an on-screen **OUT** toggle (or `out usb|ble`) picks which one is active
+  (one at a time; the choice persists in NVS).
+- `BleTransport` sets the hosted SDIO pins with `WiFi.setPins(...)` **before**
+  `BLEDevice::init` — mandatory, or the hosted link hangs. It advertises a
+  combined keyboard(ID 1)+mouse(ID 2)+consumer(ID 3) HID device.
+- Serial: `out usb|ble|toggle`, `ble status`, `ble clear` (erase bonds so the
+  host can re-pair — uses NimBLE `ble_store_clear()`).
+- Requires the C6 esp_hosted slave firmware to include Bluetooth (v2.12.3 on the
+  tested board does). The BLE build is ~1.0 MB (fits the 3 MB app partition).
+
 ## Feature flags
 
 - `USE_DISPLAY=1` — the touch UI (keyboard, macro pad, trackpad, status bar).
   Without it the project is Serial-only and still drives every HID path.
 - `USE_USB_HID=1` — the real USB-OTG HID device (needs `USBMode=default`).
+- `USE_BLE_HID=1` — the Bluetooth-LE HID device via the C6 (works with or without
+  USB-OTG; see Bluetooth section).
 
 ## Build
 
@@ -68,9 +90,18 @@ EXTRA_FLAGS="-DUSE_DISPLAY=1 -DUSE_USB_HID=1" \
 ./scripts/compile-all.sh
 ```
 
+The full **dual-mode** device (USB + Bluetooth):
+
+```sh
+CTAGS_WORKAROUND=1 \
+FQBN="esp32:esp32:esp32p4:USBMode=default,PSRAM=enabled,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,UploadSpeed=921600" \
+EXTRA_FLAGS="-DUSE_DISPLAY=1 -DUSE_USB_HID=1 -DUSE_BLE_HID=1" \
+./scripts/compile-all.sh
+```
+
 The shared flag matrix runs a single FQBN, so it exercises Project 21's
-`usb-hid-mock` row (the flag under `hwcdc`, which compiles to the mock). The real
-device is the separate `USBMode=default` build above.
+`usb-hid-mock` and `ble-hid-mock` rows (both flags under `hwcdc`). The real USB
+device needs `USBMode=default`; the real BLE device works either way.
 
 ## Upload
 

@@ -9,6 +9,9 @@ static const TouchPins TOUCH_GT911 = {
   0x14
 };
 
+// Amp enable IO30 is ACTIVE-LOW: Elecrow's Lesson12 board_config.h defines
+// AUDIO_POWER_ENABLE (LOW) for V1.0/V1.1/V1.2 alike ("GPIO set low level to
+// enable audio power"). Driving it HIGH disables the speaker path entirely.
 static const AudioPins AUDIO_OUT = {
   21,
   22,
@@ -16,7 +19,7 @@ static const AudioPins AUDIO_OUT = {
   30,
   24,
   26,
-  true
+  false
 };
 
 // Display wiring and MIPI-DSI timings from Elecrow's official V1.0 Arduino

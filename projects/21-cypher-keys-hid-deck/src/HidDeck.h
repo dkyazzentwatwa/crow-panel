@@ -34,6 +34,8 @@ class HidDeck {
   void commandMedia(const String &arg);       // volup|voldn|mute|play|brightup|brightdn
   void commandDictate();                       // tap F5 (macOS dictation/mic key)
   void commandTheme(const String &arg);        // "next" | name
+  void commandOutput(const String &arg);       // "usb" | "ble" | "toggle"
+  void commandBle(const String &arg);          // "status" | "clear"
 
   void printStatus(Print &out);
   void printHid(Print &out);
@@ -55,6 +57,7 @@ class HidDeck {
   bool hitModeButton(int16_t x, int16_t y) const;
   bool hitDictButton(int16_t x, int16_t y) const;
   bool hitThemeButton(int16_t x, int16_t y) const;
+  bool hitOutputButton(int16_t x, int16_t y) const;
 #endif
 
   HidBackend backend_;
@@ -78,6 +81,10 @@ class HidDeck {
   // Status bar is repainted at most every kStatusMinMs to avoid thrash.
   uint32_t lastStatusDrawMs_ = 0;
   static const uint32_t kStatusMinMs = 200;
+
+  // Last chip-reset cause (panic / watchdog / brownout / ...), shown in the
+  // status bar until the first action so a crash-reboot is diagnosable on-panel.
+  String bootReason_;
 };
 
 #endif

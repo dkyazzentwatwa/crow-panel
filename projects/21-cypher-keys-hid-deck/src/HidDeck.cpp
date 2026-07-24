@@ -1,8 +1,26 @@
 #include "HidDeck.h"
 
 #include <Preferences.h>
+#include <esp_system.h>  // esp_reset_reason()
 
 #include <CrowPanelShared.h>  // EventLog, CrowDisplay, Widgets, HardwareProfile
+
+namespace {
+// Short label for the last chip-reset cause (diagnostic).
+const char *resetReasonLabel() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON: return "poweron";
+    case ESP_RST_SW: return "sw";
+    case ESP_RST_PANIC: return "PANIC";
+    case ESP_RST_INT_WDT: return "INT-WDT";
+    case ESP_RST_TASK_WDT: return "TASK-WDT";
+    case ESP_RST_WDT: return "WDT";
+    case ESP_RST_BROWNOUT: return "BROWNOUT";
+    case ESP_RST_DEEPSLEEP: return "deepsleep";
+    default: return "other";
+  }
+}
+}  // namespace
 
 namespace {
 uint8_t modBitFromName(const String &t) {
@@ -32,6 +50,9 @@ bool keyFromName(const String &t, uint8_t &key) {
 
 void HidDeck::begin(EventLog *events) {
   events_ = events;
+  bootReason_ = String("rst:") + resetReasonLabel();
+  Serial.print("[boot] reset reason: ");
+  Serial.println(resetReasonLabel());
   backend_.begin(&Serial, events);
   presets_.begin();
   loadTheme();
@@ -92,7 +113,9 @@ void HidDeck::tick() {
 
   int16_t rx = touch_.releaseX();
   int16_t ry = touch_.releaseY();
-  if (touch_.releasedEdge() && hitDictButton(rx, ry)) {
+  if (touch_.releasedEdge() && hitOutputButton(rx, ry)) {
+    commandOutput("toggle");
+  } else if (touch_.releasedEdge() && hitDictButton(rx, ry)) {
     commandDictate();
     dirtyStatus_ = true;
   } else if (touch_.releasedEdge() && hitThemeButton(rx, ry)) {
@@ -267,6 +290,32 @@ void HidDeck::commandTheme(const String &arg) {
   Serial.println("theme: " + String(theme().name));
 }
 
+void HidDeck::commandOutput(const String &arg) {
+  String a = arg;
+  a.trim();
+  a.toLowerCase();
+  if (a == "ble") backend_.setOutput(kOutputBle);
+  else if (a == "usb") backend_.setOutput(kOutputUsb);
+  else backend_.setOutput(backend_.output() == kOutputUsb ? kOutputBle : kOutputUsb);
+  dirtyAll_ = true;
+  Serial.println(String("output: ") + backend_.modeLabel());
+}
+
+void HidDeck::commandBle(const String &arg) {
+  String a = arg;
+  a.trim();
+  a.toLowerCase();
+  if (a == "clear") {
+    backend_.bleClearBonds();
+    Serial.println("ble bonds cleared");
+    return;
+  }
+  Serial.print("ble advertising=");
+  Serial.print(backend_.bleAdvertising() ? 1 : 0);
+  Serial.print(" connected=");
+  Serial.println(backend_.bleReady() ? 1 : 0);
+}
+
 void HidDeck::printStatus(Print &out) {
   out.println("== Cypher Keys HID Deck ==");
   out.print("mode: ");
@@ -275,7 +324,9 @@ void HidDeck::printStatus(Print &out) {
   out.print(backend_.modeLabel());
   out.print("  (USE_USB_HID=");
   out.print((int)USE_USB_HID);
-  out.println(backend_.live() ? ", USB-OTG active)" : ")");
+  out.print(", USE_BLE_HID=");
+  out.print((int)USE_BLE_HID);
+  out.println(backend_.live() ? ", live)" : ")");
   out.print("preset: ");
   out.print(presets_.activeName());
   out.print("  [");
@@ -290,6 +341,12 @@ void HidDeck::printStatus(Print &out) {
   out.print('/');
   out.print(deckThemeCount());
   out.println("]");
+  out.print("output: ");
+  out.println(backend_.modeLabel());
+  out.print("ble: advertising=");
+  out.print(backend_.bleAdvertising() ? 1 : 0);
+  out.print(" connected=");
+  out.println(backend_.bleReady() ? 1 : 0);
   out.print("sticky mods: ");
   out.print(keyboard_.stickyMods() ? hidModPrefix(keyboard_.stickyMods()) : "(none) ");
   out.print(" shift=");
@@ -304,12 +361,19 @@ void HidDeck::printHid(Print &out) {
   out.print("backend: ");
   out.println(backend_.modeLabel());
   out.println("interfaces: keyboard + consumer-control + mouse");
+  out.print("output: ");
+  out.print(backend_.output() == kOutputBle ? "BLE" : "USB");
+  out.print("  usb_live=");
+  out.print(backend_.usbLive() ? 1 : 0);
+  out.print(" ble_connected=");
+  out.println(backend_.bleReady() ? 1 : 0);
   if (backend_.live()) {
-    out.println("USB-OTG HID is active; reports are sent to the host.");
+    out.print(backend_.modeLabel());
+    out.println(" active; reports are sent to the host.");
   } else {
     out.println("MOCK: reports are logged, not sent.");
-    out.println("For a real device build with USB-OTG:");
-    out.println("  FQBN ...:USBMode=default...  EXTRA_FLAGS=\"-DUSE_DISPLAY=1 -DUSE_USB_HID=1\"");
+    out.println("Real device: USBMode=default with -DUSE_USB_HID=1 (USB) and/or");
+    out.println("-DUSE_BLE_HID=1 (Bluetooth); toggle with the OUT button or 'out'.");
   }
 }
 
@@ -369,14 +433,17 @@ void HidDeck::setMode(Mode mode) {
 }
 
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
+bool HidDeck::hitOutputButton(int16_t x, int16_t y) const {
+  return x >= 548 && x < 654 && y >= 4 && y < 36;
+}
 bool HidDeck::hitDictButton(int16_t x, int16_t y) const {
-  return x >= 628 && x < 722 && y >= 4 && y < 36;
+  return x >= 660 && x < 766 && y >= 4 && y < 36;
 }
 bool HidDeck::hitThemeButton(int16_t x, int16_t y) const {
-  return x >= 728 && x < 822 && y >= 4 && y < 36;
+  return x >= 772 && x < 878 && y >= 4 && y < 36;
 }
 bool HidDeck::hitModeButton(int16_t x, int16_t y) const {
-  return x >= 830 && x < 1002 && y >= 4 && y < 36;
+  return x >= 884 && x < 1002 && y >= 4 && y < 36;
 }
 
 void HidDeck::drawStatusBar(Arduino_GFX *g) {
@@ -390,22 +457,33 @@ void HidDeck::drawStatusBar(Arduino_GFX *g) {
                 live ? t.good : t.warn);
 
   String info = String(presets_.activeName()) + "  -  " + theme().name;
-  if (info.length() > 30) info = info.substring(0, 30);
+  if (info.length() > 22) info = info.substring(0, 22);
   Widgets::text(g, 236, 14, info.c_str(), Widgets::fontS(), t.muted,
                 Widgets::kLeft);
 
-  String last = backend_.lastAction();
-  if (last.length() > 20) last = last.substring(0, 20) + "...";
-  Widgets::text(g, 470, 14, last.c_str(), Widgets::fontS(), t.accent,
+  // Last action sits between the info text and the right-hand button cluster
+  // (which starts at x=548); keep it short so it never collides with OUT. Until
+  // the first action, show the last reset cause (diagnostic for crash-reboots).
+  String last = (backend_.reportsSent() == 0) ? bootReason_ : backend_.lastAction();
+  if (last.length() > 15) last = last.substring(0, 15) + "...";
+  Widgets::text(g, 400, 14, last.c_str(), Widgets::fontS(), t.accent,
                 Widgets::kLeft);
 
-  // Right-side buttons: Dictate, Theme, Mode toggle.
-  Widgets::panel(g, 628, 4, 94, 32, 8, t.surfaceHi, 1, t.warn);
-  Widgets::text(g, 675, 12, "DICTATE", Widgets::fontS(), t.ink, Widgets::kCenter);
-  Widgets::panel(g, 728, 4, 94, 32, 8, t.surfaceHi, 1, t.accent2);
-  Widgets::text(g, 775, 12, "THEME", Widgets::fontS(), t.ink, Widgets::kCenter);
-  Widgets::panel(g, 830, 4, 172, 32, 8, t.surfaceHi, 1, t.accent);
-  Widgets::text(g, 916, 12, mode_ == kModeDeck ? "TRACKPAD >" : "< DECK",
+  // Right-side buttons: Output toggle, Dictate, Theme, Mode toggle.
+  bool ble = (backend_.output() == kOutputBle);
+  Widgets::panel(g, 548, 4, 106, 32, 8, t.surfaceHi, 1, ble ? t.good : t.accent);
+  Widgets::text(g, 601, 12, ble ? "BLE" : "USB", Widgets::fontS(), t.ink,
+                Widgets::kCenter);
+  if (ble) {  // connection dot: green when a host is connected, else warn
+    uint16_t dot = backend_.bleReady() ? t.good : t.warn;
+    g->fillCircle(645, 12, 4, dot);
+  }
+  Widgets::panel(g, 660, 4, 106, 32, 8, t.surfaceHi, 1, t.warn);
+  Widgets::text(g, 713, 12, "DICTATE", Widgets::fontS(), t.ink, Widgets::kCenter);
+  Widgets::panel(g, 772, 4, 106, 32, 8, t.surfaceHi, 1, t.accent2);
+  Widgets::text(g, 825, 12, "THEME", Widgets::fontS(), t.ink, Widgets::kCenter);
+  Widgets::panel(g, 884, 4, 118, 32, 8, t.surfaceHi, 1, t.accent);
+  Widgets::text(g, 943, 12, mode_ == kModeDeck ? "TRACKPAD >" : "< DECK",
                 Widgets::fontS(), t.ink, Widgets::kCenter);
 }
 
@@ -422,6 +500,15 @@ void HidDeck::render(uint32_t nowMs) {
       keyboard_.draw(g, t);
     } else {
       trackpad_.draw(g, t);
+      // Mouse over Bluetooth is disabled (it panics the BLE stack); the trackpad
+      // is USB-only. Make that obvious in BLE output.
+      if (backend_.output() == kOutputBle) {
+        Widgets::panel(g, 262, 250, 500, 96, 16, t.surfaceHi, 2, t.warn);
+        Widgets::text(g, 512, 276, "TRACKPAD: USB ONLY", Widgets::fontL(), t.warn,
+                      Widgets::kCenter);
+        Widgets::text(g, 512, 306, "switch OUT to USB, or plug in the cable",
+                      Widgets::fontS(), t.muted, Widgets::kCenter);
+      }
     }
     drawStatusBar(g);
     lastStatusDrawMs_ = nowMs;

@@ -26,6 +26,19 @@
 #define USE_USB_HID 0
 #endif
 
+// Bluetooth-LE HID output via the onboard ESP32-C6 (NimBLE host on the P4,
+// esp_hosted VHCI to the C6 radio). Off by default: it adds ~425 KB and needs
+// the C6. Does NOT require USB-OTG (compiles under hwcdc too), but the full
+// dual-mode deliverable is USBMode=default + USE_USB_HID=1 + USE_BLE_HID=1.
+#ifndef USE_BLE_HID
+#define USE_BLE_HID 0
+#endif
+
+// Name shown in the host's Bluetooth device list.
+#ifndef CYPHER_KEYS_BLE_NAME
+#define CYPHER_KEYS_BLE_NAME "Cypher Keys"
+#endif
+
 // Number of macro tiles per preset (grid rows x cols) and the tab bar width.
 #ifndef CYPHER_KEYS_MACRO_SLOTS
 #define CYPHER_KEYS_MACRO_SLOTS 12  // 3 rows x 4 columns
