@@ -1,16 +1,13 @@
 #include "PokedexCatalog.h"
 
+// Include SD_MMC.h directly under the flag - do NOT wrap it in __has_include.
+// arduino-cli decides which libraries to link by preprocessing sources before
+// SD_MMC is on the include path, so a __has_include guard evaluates false
+// during discovery, the library never gets linked, and the feature silently
+// compiles out even with USE_SD_POKEDEX=1.
 #if USE_SD_POKEDEX
-#if defined(__has_include)
-#if __has_include(<SD_MMC.h>)
 #include <SD_MMC.h>
 #define POKEDEX_HAS_SD_MMC 1
-#else
-#define POKEDEX_HAS_SD_MMC 0
-#endif
-#else
-#define POKEDEX_HAS_SD_MMC 0
-#endif
 #include <ArduinoJson.h>
 #else
 #define POKEDEX_HAS_SD_MMC 0

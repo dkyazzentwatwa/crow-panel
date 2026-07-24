@@ -1,16 +1,14 @@
 #include "WiFiSurveyScanner.h"
 
+// Include WiFi.h directly under the flag - do NOT wrap it in __has_include.
+// arduino-cli decides which libraries to link by preprocessing sources before
+// the library is on the include path, so a __has_include guard evaluates false
+// during discovery. This one used to survive only because shared/HostedWiFi.cpp
+// includes <WiFi.h> behind a plain #if that also tests USE_WIFI_SCAN; relying
+// on a sibling translation unit to pull the library in is not a guarantee.
 #if USE_WIFI_SCAN
-#if defined(__has_include)
-#if __has_include(<WiFi.h>)
 #include <WiFi.h>
 #define SURVEYOPS_HAS_WIFI_SCAN_DRIVER 1
-#else
-#define SURVEYOPS_HAS_WIFI_SCAN_DRIVER 0
-#endif
-#else
-#define SURVEYOPS_HAS_WIFI_SCAN_DRIVER 0
-#endif
 #else
 #define SURVEYOPS_HAS_WIFI_SCAN_DRIVER 0
 #endif

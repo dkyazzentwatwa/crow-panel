@@ -4,17 +4,14 @@
 #include "SurveyTypes.h"
 #include <CrowPanelShared.h>
 
+// Include TinyGPSPlus.h directly under the flag - do NOT wrap it in
+// __has_include. arduino-cli decides which libraries to link by preprocessing
+// sources before the library is on the include path, so a __has_include guard
+// evaluates false during discovery, the library never gets linked, and the
+// driver silently compiles out even with USE_GPS_DRIVER=1.
 #if USE_GPS_DRIVER
-#if defined(__has_include)
-#if __has_include(<TinyGPSPlus.h>)
 #include <TinyGPSPlus.h>
 #define SURVEYOPS_HAS_TINYGPSPLUS 1
-#else
-#define SURVEYOPS_HAS_TINYGPSPLUS 0
-#endif
-#else
-#define SURVEYOPS_HAS_TINYGPSPLUS 0
-#endif
 #else
 #define SURVEYOPS_HAS_TINYGPSPLUS 0
 #endif

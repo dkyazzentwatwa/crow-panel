@@ -1,16 +1,13 @@
 #include "WigleCsvLogger.h"
 
+// Include SD.h directly under the flag - do NOT wrap it in __has_include.
+// arduino-cli decides which libraries to link by preprocessing sources before
+// SD is on the include path, so a __has_include guard evaluates false during
+// discovery, the library never gets linked, and the logger silently compiles
+// out even with USE_SD_WIGLE_LOG=1.
 #if USE_SD_WIGLE_LOG
-#if defined(__has_include)
-#if __has_include(<SD.h>)
 #include <SD.h>
 #define SURVEYOPS_HAS_SD_DRIVER 1
-#else
-#define SURVEYOPS_HAS_SD_DRIVER 0
-#endif
-#else
-#define SURVEYOPS_HAS_SD_DRIVER 0
-#endif
 #else
 #define SURVEYOPS_HAS_SD_DRIVER 0
 #endif
