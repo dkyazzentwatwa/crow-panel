@@ -44,9 +44,9 @@ PRESENCE,<name>,<rssi>,<type>
 1. **Panel** (ESP32-P4): build FieldOps with the ESP-NOW transport + display:
    ```sh
    CTAGS_WORKAROUND=1 EXTRA_FLAGS="-DUSE_ESPNOW=1 -DUSE_DISPLAY=1" \
-     ./scripts/upload-project.sh projects/01-fieldops-control-center <PANEL_PORT>
+     ./scripts/upload-project.sh in-progress/01-fieldops-control-center <PANEL_PORT>
    ```
-   Set the bridge UART pins first in `projects/01-fieldops-control-center/config/Pins.h`
+   Set the bridge UART pins first in `in-progress/01-fieldops-control-center/config/Pins.h`
    (`ESPNOW_UART_RX/TX`) — two FREE CrowPanel header pins (verify against the
    board silk; must not clash with the DSI backlight/reset, touch I2C, or the
    wireless socket).

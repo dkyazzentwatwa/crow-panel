@@ -5,13 +5,13 @@
 Copy and paste this prompt into an AI coding assistant from the repository root:
 
 ```text
-Set up and verify the project at projects/19-starbeam-console.
+Set up and verify the project at in-progress/19-starbeam-console.
 
 Read the repository AGENTS.md first. Preserve this project's existing behavior, safety boundaries, mock-first defaults, and proof-state requirements. Start by inspecting the current source, configuration, and the rest of this technical reference. Do not edit unrelated worktree changes.
 
 Use the documented build and upload commands for this project. Keep credentials, local device settings, and other ignored files out of Git. Do not claim an upload or runtime result unless the exact command succeeded and the behavior was observed on the intended hardware. Report results precisely as compile-ready, uploaded, or field-proven.
 
-At the end, summarize files changed, commands run, and remaining proof gaps. Keep the project README user-facing and put implementation details in projects/19-starbeam-console/TECHNICAL.md.
+At the end, summarize files changed, commands run, and remaining proof gaps. Keep the project README user-facing and put implementation details in in-progress/19-starbeam-console/TECHNICAL.md.
 ```
 
 ---
@@ -106,10 +106,10 @@ CTAGS_WORKAROUND=1 arduino-cli compile \
   --libraries "$PWD/shared" \
   --build-property "tools.ctags.cmd.path=/usr/bin/true" \
   --build-property "compiler.cpp.extra_flags=-DUSE_DISPLAY=1 -DUSE_STARBEAM_RADIOS=1 -DUSE_STARBEAM_COPROC=1" \
-  projects/19-starbeam-console
+  in-progress/19-starbeam-console
 ```
 
-Upload: `./scripts/upload-project.sh projects/19-starbeam-console /dev/cu.usbmodemXXXX`.
+Upload: `./scripts/upload-project.sh in-progress/19-starbeam-console /dev/cu.usbmodemXXXX`.
 
 ## Serial controls
 

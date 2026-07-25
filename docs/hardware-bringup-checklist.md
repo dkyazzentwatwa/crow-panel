@@ -16,7 +16,7 @@ Flags are enabled per stage via `EXTRA_FLAGS` so nothing is edited in git
 while testing:
 
 ```sh
-EXTRA_FLAGS="-DUSE_DISPLAY=1" ./scripts/upload-project.sh projects/01-fieldops-control-center /dev/cu.usbmodemXXXX
+EXTRA_FLAGS="-DUSE_DISPLAY=1" ./scripts/upload-project.sh in-progress/01-fieldops-control-center /dev/cu.usbmodemXXXX
 ```
 
 Rollback for every stage is the same: drop the flag from `EXTRA_FLAGS`,

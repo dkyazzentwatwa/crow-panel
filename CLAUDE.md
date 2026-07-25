@@ -76,12 +76,15 @@ projects/NN-name/
   src/                 implementation classes
   README.md            demo script / serial-command walkthrough
   TECHNICAL.md         wiring, drivers, proof state
+in-progress/NN-name/     same layout; still being worked on, not part of the featured set
 shared/CrowPanelShared/  Arduino library passed to every build via --libraries shared
 companions/, espnow/     firmware for helper boards (plain ESP32, BW16) — NOT built by compile-all
 signatures/, mock-api/, docs/
 ```
 
 `scripts/project-registry.sh` is the canonical project list — add new projects there or the build scripts skip them. Note the numbering gaps (no 06, 12); that is intentional.
+
+**Two tiers, one build.** `projects/` is release-facing and documented up front in `README.md`; `in-progress/` (01, 03, 11, 16, 19) is work that is not yet featured. The registry exposes `crowpanel_release_projects`, `crowpanel_inprogress_projects`, and `crowpanel_projects` (both tiers) — build scripts iterate the last one, so in-progress projects are still compiled and flag-matrixed exactly like the rest. Numbering is shared across both tiers so a project keeps its number when it graduates; promoting one is a `git mv` plus moving its line between the two registry lists, then updating the `README.md` tables and any `docs/` paths.
 
 `shared/CrowPanelShared/` is the spine. Include it as `#include <CrowPanelShared.h>` (umbrella header). The pieces that matter most:
 

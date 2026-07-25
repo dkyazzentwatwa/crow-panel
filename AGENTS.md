@@ -5,6 +5,7 @@ This is an Arduino-CLI-only monorepo of 20 standalone sketches for the Elecrow C
 ## Project Structure & Module Organization
 
 - `projects/NN-name/`: one sketch per folder. `scripts/project-registry.sh` is the canonical list — add new projects there or every build script skips them. Numbering gaps (no 06, 12) are intentional.
+- `in-progress/NN-name/`: same layout, for work not yet in the featured set (01, 03, 11, 16, 19). Still built by `compile-all.sh` and `check-flag-matrix.sh`; the registry's `crowpanel_projects` covers both tiers. Numbering is shared, so promoting one is a `git mv` plus a line move between the registry's two lists.
 - `shared/CrowPanelShared/`: the Arduino library every build gets via `--libraries shared`. `HardwareProfile.{h,cpp}` holds all pins, polarities, and panel timings — read pins from the profile, never hardcode a GPIO.
 - `companions/`, `espnow/`: firmware for helper boards (plain ESP32, BW16). Not built by `compile-all.sh`.
 - `scripts/`: install, compile, flag-matrix, upload, and host-test helpers.

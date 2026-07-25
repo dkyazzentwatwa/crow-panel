@@ -5,13 +5,13 @@
 Copy and paste this prompt into an AI coding assistant from the repository root:
 
 ```text
-Set up and verify the project at projects/16-cypher-flock-panel.
+Set up and verify the project at in-progress/16-cypher-flock-panel.
 
 Read the repository AGENTS.md first. Preserve this project's existing behavior, safety boundaries, mock-first defaults, and proof-state requirements. Start by inspecting the current source, configuration, and the rest of this technical reference. Do not edit unrelated worktree changes.
 
 Use the documented build and upload commands for this project. Keep credentials, local device settings, and other ignored files out of Git. Do not claim an upload or runtime result unless the exact command succeeded and the behavior was observed on the intended hardware. Report results precisely as compile-ready, uploaded, or field-proven.
 
-At the end, summarize files changed, commands run, and remaining proof gaps. Keep the project README user-facing and put implementation details in projects/16-cypher-flock-panel/TECHNICAL.md.
+At the end, summarize files changed, commands run, and remaining proof gaps. Keep the project README user-facing and put implementation details in in-progress/16-cypher-flock-panel/TECHNICAL.md.
 ```
 
 ---

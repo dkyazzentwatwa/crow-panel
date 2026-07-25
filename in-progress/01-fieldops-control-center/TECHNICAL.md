@@ -5,13 +5,13 @@
 Copy and paste this prompt into an AI coding assistant from the repository root:
 
 ```text
-Set up and verify the project at projects/01-fieldops-control-center.
+Set up and verify the project at in-progress/01-fieldops-control-center.
 
 Read the repository AGENTS.md first. Preserve this project's existing behavior, safety boundaries, mock-first defaults, and proof-state requirements. Start by inspecting the current source, configuration, and the rest of this technical reference. Do not edit unrelated worktree changes.
 
 Use the documented build and upload commands for this project. Keep credentials, local device settings, and other ignored files out of Git. Do not claim an upload or runtime result unless the exact command succeeded and the behavior was observed on the intended hardware. Report results precisely as compile-ready, uploaded, or field-proven.
 
-At the end, summarize files changed, commands run, and remaining proof gaps. Keep the project README user-facing and put implementation details in projects/01-fieldops-control-center/TECHNICAL.md.
+At the end, summarize files changed, commands run, and remaining proof gaps. Keep the project README user-facing and put implementation details in in-progress/01-fieldops-control-center/TECHNICAL.md.
 ```
 
 ---
@@ -105,7 +105,7 @@ CTAGS_WORKAROUND=1 arduino-cli compile \
   --fqbn "esp32:esp32:esp32p4:USBMode=hwcdc,PSRAM=enabled,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,UploadSpeed=921600" \
   --libraries "$PWD/shared" \
   --build-property "tools.ctags.cmd.path=/usr/bin/true" \
-  projects/01-fieldops-control-center
+  in-progress/01-fieldops-control-center
 ```
 
 Touch UI (the real panel build) — add `-DUSE_DISPLAY=1`:
@@ -116,7 +116,7 @@ CTAGS_WORKAROUND=1 arduino-cli compile \
   --libraries "$PWD/shared" \
   --build-property "tools.ctags.cmd.path=/usr/bin/true" \
   --build-property "compiler.cpp.extra_flags=-DUSE_DISPLAY=1" \
-  projects/01-fieldops-control-center
+  in-progress/01-fieldops-control-center
 ```
 
 Or `../../scripts/compile-all.sh` for every project. The shared flag matrix
@@ -130,7 +130,7 @@ README).
 
 ```sh
 arduino-cli board list
-../../scripts/upload-project.sh projects/01-fieldops-control-center /dev/cu.usbmodem101
+../../scripts/upload-project.sh in-progress/01-fieldops-control-center /dev/cu.usbmodem101
 ```
 
 ## LoRa / SX1262
@@ -150,7 +150,7 @@ An alternative transport (`USE_ESPNOW`) feeds the same dashboard from an ESP-NOW
 
 ```sh
 CTAGS_WORKAROUND=1 EXTRA_FLAGS="-DUSE_ESPNOW=1 -DUSE_DISPLAY=1" \
-  ../../scripts/upload-project.sh projects/01-fieldops-control-center <PORT>
+  ../../scripts/upload-project.sh in-progress/01-fieldops-control-center <PORT>
 ```
 
 ## What To Film

@@ -10,7 +10,7 @@ BUILD_ROOT="${BUILD_ROOT:-$ROOT/_arduino-build}"
 
 if [[ $# -ne 2 ]]; then
   echo "Usage: $0 <project-folder> <serial-port>" >&2
-  echo "Example: $0 projects/03-badgeops-nfc-rfid-system /dev/cu.usbmodem101" >&2
+  echo "Example: $0 in-progress/03-badgeops-nfc-rfid-system /dev/cu.usbmodem101" >&2
   exit 1
 fi
 

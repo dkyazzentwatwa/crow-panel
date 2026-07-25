@@ -64,7 +64,7 @@ Verify every supported flag combination:
 
 ```sh
 arduino-cli board list
-./scripts/upload-project.sh projects/01-fieldops-control-center /dev/cu.usbmodem101
+./scripts/upload-project.sh in-progress/01-fieldops-control-center /dev/cu.usbmodem101
 ```
 
 The script compiles and flashes in one step (`arduino-cli compile --upload`)

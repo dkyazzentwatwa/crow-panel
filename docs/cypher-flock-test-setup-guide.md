@@ -105,7 +105,7 @@ C6 link, and the passive AP witness without the external UART chain.
 FQBN='esp32:esp32:esp32p4:USBMode=hwcdc,PSRAM=enabled,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,UploadSpeed=921600' \
 CTAGS_WORKAROUND=1 \
 EXTRA_FLAGS='-DUSE_DISPLAY=1 -DUSE_FLOCK_C6_WITNESS=1' \
-./scripts/upload-project.sh projects/16-cypher-flock-panel "$PANEL_PORT"
+./scripts/upload-project.sh in-progress/16-cypher-flock-panel "$PANEL_PORT"
 ```
 
 On the panel:
@@ -179,7 +179,7 @@ with all power removed. Reconnect USB power after the UART wires are in place.
 FQBN='esp32:esp32:esp32p4:USBMode=hwcdc,PSRAM=enabled,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,UploadSpeed=921600' \
 CTAGS_WORKAROUND=1 \
 EXTRA_FLAGS='-DUSE_DISPLAY=1 -DUSE_FLOCK_UART_BRIDGE=1 -DUSE_FLOCK_PERSISTENCE=1 -DUSE_FLOCK_C6_WITNESS=1' \
-./scripts/upload-project.sh projects/16-cypher-flock-panel "$PANEL_PORT"
+./scripts/upload-project.sh in-progress/16-cypher-flock-panel "$PANEL_PORT"
 ```
 
 Use the panel in this order:
@@ -294,4 +294,4 @@ dual-band reception or detector accuracy.
 | Scope looks wrong | Verify the record has direct RSSI. Scope intentionally excludes inferred-peer RSSI. |
 | Data disappears after reboot | Check the FFat warning first. Persistence is opt-in and must never auto-format storage. |
 
-For system details and safety boundaries, see the [three-board architecture](cypher-flock-three-board.md) and the [Project 16 README](../projects/16-cypher-flock-panel/README.md).
+For system details and safety boundaries, see the [three-board architecture](cypher-flock-three-board.md) and the [Project 16 README](../in-progress/16-cypher-flock-panel/README.md).
