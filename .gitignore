@@ -23,6 +23,22 @@ Secrets.h
 **/config/Devices.h
 **/config/Location.h
 
+# Any variant of the above, not just the exact filename. A stray
+# "CamSecrets.h.bak" slipped past the exact-name rules and reached a public
+# commit (22c12fd, 2026-07-24); these catch-alls close that class of hole.
+# The .example.h templates are re-included below and stay tracked.
+**/config/*Secrets*
+**/config/Pins.h.*
+**/config/LabProfile.h.*
+**/config/Devices.h.*
+**/config/Location.h.*
+*.bak
+*.orig
+*.old
+*.save
+*~
+!**/config/*.example.h
+
 # Node mock API
 node_modules/
 package-lock.json
