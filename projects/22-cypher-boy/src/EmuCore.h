@@ -71,6 +71,12 @@ class EmuCore {
   // VDP always writes rows 320 apart even when showing 256 pixels.
   virtual int16_t stride() const { return frameW(); }
 
+  // Native audio rate of this console's sound hardware. The launcher retunes the
+  // I2S clock to it on every launch, so switching between systems cannot leave
+  // the previous core's rate in place (Genesis runs ~53 kHz vs Game Boy's 32 kHz
+  // - getting this wrong makes the next game play chipmunk-fast).
+  virtual uint32_t sampleRate() const { return GB_SAMPLERATE; }
+
   // Battery save (cartridge SRAM) - distinct from a save state.
   virtual bool sramDirty() const = 0;
   virtual bool save() = 0;

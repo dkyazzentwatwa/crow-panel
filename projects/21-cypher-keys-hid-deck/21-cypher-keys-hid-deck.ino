@@ -31,6 +31,10 @@ void cmdDictate(const String &args) { (void)args; deck.commandDictate(); }
 void cmdTheme(const String &args) { deck.commandTheme(args); }
 void cmdOutput(const String &args) { deck.commandOutput(args); }
 void cmdBle(const String &args) { deck.commandBle(args); }
+void cmdSound(const String &args) { deck.commandSound(args); }
+void cmdSettings(const String &args) { deck.commandSettings(args); }
+void cmdBright(const String &args) { deck.commandBright(args); }
+void cmdIdleDim(const String &args) { deck.commandIdleDim(args); }
 void cmdTouch(const String &args) { (void)args; deck.printTouchDiagnostics(Serial); }
 
 void setup() {
@@ -57,7 +61,11 @@ void setup() {
   router.on("theme", "switch UI theme: theme next | <name>", cmdTheme);
   router.on("out", "output: out usb|ble|toggle", cmdOutput);
   router.on("ble", "bluetooth: ble status|clear", cmdBle);
-  router.on("touch", "print raw and mapped touch diagnostics", cmdTouch);
+  router.on("sound", "key click: sound off|blue|brown|red|next|vol <0-100>|packs|pack <name>", cmdSound);
+  router.on("settings", "settings view: settings | open | close", cmdSettings);
+  router.on("bright", "backlight: bright | <0-255> | + | -", cmdBright);
+  router.on("idledim", "idle dimming: idledim on|off|toggle", cmdIdleDim);
+  router.on("touch", "print touch contacts, press count, and modifier state", cmdTouch);
 }
 
 void loop() {

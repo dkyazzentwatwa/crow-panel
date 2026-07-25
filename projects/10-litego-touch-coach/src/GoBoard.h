@@ -150,6 +150,16 @@ class GoBoard {
 
   ScoreEstimate score() const;
 
+  // Per-point area ownership for the endgame overlay: each entry is kBlack or
+  // kWhite for a stone or that colour's territory, kEmpty for a neutral region.
+  // Same flood fill as score(), kept separate so score() stays allocation-free.
+  void areaOwnership(uint8_t owner[kPointCount]) const;
+
+  // The point currently forbidden by ko/superko for the side to move, or kPass
+  // if none. Scans every empty point, so callers should compute it once per
+  // move and cache it rather than per frame.
+  int16_t koPoint() const;
+
   // Liberty count of the group at `point` (0 when the point is empty).
   uint8_t groupLiberties(int16_t point) const;
 

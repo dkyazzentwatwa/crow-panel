@@ -1,7 +1,8 @@
 #include "Trackpad.h"
 
 #include "HidBackend.h"
-#include "TouchInput.h"
+#include "KeysLayout.h"  // pad/scroll/button rects and the tap thresholds
+#include "KeysTouch.h"
 
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
 #include <CrowPanelShared.h>
@@ -9,23 +10,6 @@
 #endif
 
 namespace {
-// Trackpad screen regions (below the status bar at y 0..36).
-constexpr int16_t kPadX = 22, kPadY = 92, kPadW = 736, kPadH = 378;
-constexpr int16_t kScrollX = 780, kScrollY = 92, kScrollW = 222, kScrollH = 378;
-constexpr int16_t kBtnY = 486, kBtnH = 78;
-constexpr int16_t kLBtnX = 22, kLBtnW = 478;
-constexpr int16_t kRBtnX = 524, kRBtnW = 478;
-
-// A tap (vs a drag): small travel, released quickly.
-constexpr int16_t kTapSlop = 12;
-constexpr uint32_t kTapMs = 300;
-// Pixels of vertical travel in the scroll strip per one wheel detent.
-constexpr int16_t kScrollStep = 18;
-
-bool in(int16_t px, int16_t py, int16_t x, int16_t y, int16_t w, int16_t h) {
-  return px >= x && px < x + w && py >= y && py < y + h;
-}
-
 int16_t scaleMove(int16_t delta) {
   int32_t v = (int32_t)delta * CYPHER_KEYS_TRACKPAD_GAIN_NUM /
               CYPHER_KEYS_TRACKPAD_GAIN_DEN;
@@ -36,10 +20,10 @@ int16_t scaleMove(int16_t delta) {
 }  // namespace
 
 Trackpad::Zone Trackpad::zoneAt(int16_t x, int16_t y) {
-  if (in(x, y, kPadX, kPadY, kPadW, kPadH)) return kZonePad;
-  if (in(x, y, kScrollX, kScrollY, kScrollW, kScrollH)) return kZoneScroll;
-  if (in(x, y, kLBtnX, kBtnY, kLBtnW, kBtnH)) return kZoneLeft;
-  if (in(x, y, kRBtnX, kBtnY, kRBtnW, kBtnH)) return kZoneRight;
+  if (KeysLayout::hitPadSurface(x, y)) return kZonePad;
+  if (KeysLayout::hitScrollStrip(x, y)) return kZoneScroll;
+  if (KeysLayout::hitLeftButton(x, y)) return kZoneLeft;
+  if (KeysLayout::hitRightButton(x, y)) return kZoneRight;
   return kZoneNone;
 }
 
@@ -49,7 +33,7 @@ void Trackpad::reset() {
   moved_ = false;
 }
 
-void Trackpad::update(TouchInput &touch, HidBackend &hid) {
+void Trackpad::update(KeysTouch &touch, HidBackend &hid) {
   if (touch.pressedEdge()) {
     active_ = zoneAt(touch.x(), touch.y());
     lastX_ = touch.x();
@@ -69,18 +53,18 @@ void Trackpad::update(TouchInput &touch, HidBackend &hid) {
     int16_t dy = touch.y() - lastY_;
     if (active_ == kZonePad) {
       if (dx != 0 || dy != 0) hid.mouseMove(scaleMove(dx), scaleMove(dy));
-      if (abs(touch.x() - startX_) > kTapSlop ||
-          abs(touch.y() - startY_) > kTapSlop)
+      if (abs(touch.x() - startX_) > KeysLayout::kTapSlop ||
+          abs(touch.y() - startY_) > KeysLayout::kTapSlop)
         moved_ = true;
     } else if (active_ == kZoneScroll) {
       scrollAccum_ += dy;
-      while (scrollAccum_ >= kScrollStep) {
+      while (scrollAccum_ >= KeysLayout::kScrollStep) {
         hid.mouseScroll(-1);  // finger down = content up = wheel down
-        scrollAccum_ -= kScrollStep;
+        scrollAccum_ -= KeysLayout::kScrollStep;
       }
-      while (scrollAccum_ <= -kScrollStep) {
+      while (scrollAccum_ <= -KeysLayout::kScrollStep) {
         hid.mouseScroll(1);
-        scrollAccum_ += kScrollStep;
+        scrollAccum_ += KeysLayout::kScrollStep;
       }
     }
     lastX_ = touch.x();
@@ -91,7 +75,8 @@ void Trackpad::update(TouchInput &touch, HidBackend &hid) {
   if (touch.releasedEdge()) {
     switch (active_) {
       case kZonePad:
-        if (!moved_ && (millis() - startMs_) < kTapMs) hid.mouseClick(1);
+        if (!moved_ && (millis() - startMs_) < KeysLayout::kTapMs)
+          hid.mouseClick(1);
         break;
       case kZoneLeft:
         hid.mouseButton(1, false);
@@ -109,7 +94,8 @@ void Trackpad::update(TouchInput &touch, HidBackend &hid) {
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
 void Trackpad::draw(Arduino_GFX *g, const DeckTheme &theme) const {
   if (g == nullptr) return;
-  g->fillRect(0, 40, 1024, 560, theme.bg);
+  using namespace KeysLayout;  // every coordinate below comes from KeysLayout.h
+  g->fillRect(0, kTrackpadBgY, kScreenW, kTrackpadBgH, theme.bg);
 
   // Pad surface.
   Widgets::panel(g, kPadX, kPadY, kPadW, kPadH, 16, theme.surface, 2, theme.line);
@@ -126,13 +112,13 @@ void Trackpad::draw(Arduino_GFX *g, const DeckTheme &theme) const {
                 Widgets::fontS(), theme.muted, Widgets::kCenter);
 
   // Click buttons.
-  Widgets::panel(g, kLBtnX, kBtnY, kLBtnW, kBtnH, 14, theme.surfaceHi, 2,
-                 theme.accent);
-  Widgets::text(g, kLBtnX + kLBtnW / 2, kBtnY + 28, "LEFT CLICK", Widgets::fontL(),
-                theme.ink, Widgets::kCenter);
-  Widgets::panel(g, kRBtnX, kBtnY, kRBtnW, kBtnH, 14, theme.surfaceHi, 2,
-                 theme.accent);
-  Widgets::text(g, kRBtnX + kRBtnW / 2, kBtnY + 28, "RIGHT CLICK",
+  Widgets::panel(g, kLBtnX, kClickBtnY, kLBtnW, kClickBtnH, 14, theme.surfaceHi,
+                 2, theme.accent);
+  Widgets::text(g, kLBtnX + kLBtnW / 2, kClickBtnY + 28, "LEFT CLICK",
+                Widgets::fontL(), theme.ink, Widgets::kCenter);
+  Widgets::panel(g, kRBtnX, kClickBtnY, kRBtnW, kClickBtnH, 14, theme.surfaceHi,
+                 2, theme.accent);
+  Widgets::text(g, kRBtnX + kRBtnW / 2, kClickBtnY + 28, "RIGHT CLICK",
                 Widgets::fontL(), theme.ink, Widgets::kCenter);
 }
 #endif

@@ -5,7 +5,7 @@
 #include "DeckThemes.h"
 #include <Arduino.h>
 
-class TouchInput;
+class KeysTouch;
 class HidBackend;
 
 // Full-screen relative trackpad: a large move surface, a right-edge scroll
@@ -16,7 +16,7 @@ class Trackpad {
   void reset();
   // Consume the current touch state and emit mouse reports. Call once per loop
   // while the deck is in trackpad mode.
-  void update(TouchInput &touch, HidBackend &hid);
+  void update(KeysTouch &touch, HidBackend &hid);
 
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
   void draw(class Arduino_GFX *g, const DeckTheme &theme) const;

@@ -1,8 +1,28 @@
 #include "config/ProjectConfig.h"
 #include <CrowPanelShared.h>
+#include <esp_system.h>  // esp_reset_reason()
 
 extern "C" {
 #include "src/gnuboy/gnuboy.h"
+}
+
+// Survives a panic / watchdog / brownout reset (but not a power-off), so the
+// next boot can report exactly which ROM was running when the board died -
+// native USB serial does not enumerate while the app runs, so this is the only
+// channel. Mirrors the reset-reason helper in project 21's HidDeck.
+RTC_NOINIT_ATTR char gLastRomBreadcrumb[48];
+RTC_NOINIT_ATTR uint32_t gBreadcrumbMagic;
+static const uint32_t kBreadcrumbMagic = 0xC0FFEE22;
+
+const char *resetReasonLabel() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_PANIC: return "PANIC";
+    case ESP_RST_INT_WDT: return "INT-WDT";
+    case ESP_RST_TASK_WDT: return "TASK-WDT";
+    case ESP_RST_WDT: return "WDT";
+    case ESP_RST_BROWNOUT: return "BROWNOUT";
+    default: return nullptr;  // poweron / sw / deepsleep = a clean start
+  }
 }
 
 #include "src/GbRomStore.h"
@@ -15,6 +35,7 @@ extern "C" {
 #include "src/GbSplash.h"
 #include "src/GbStats.h"
 #include "src/GenesisCore.h"
+#include "src/NesCore.h"
 
 SerialCommandRouter router;
 EventLog eventLog;
@@ -28,6 +49,9 @@ GbStats stats;
 #if USE_GENESIS_CORE
 GenesisCore genesis;
 #endif
+#if USE_NES_CORE
+NesCore nes;
+#endif
 
 // The core driving the current game. Points at `host` until a ROM for another
 // system is launched, so every existing Game Boy path is unchanged.
@@ -37,6 +61,9 @@ EmuCore *coreFor(EmuSystem sys) {
   switch (sys) {
 #if USE_GENESIS_CORE
     case kSysGenesis: return &genesis;
+#endif
+#if USE_NES_CORE
+    case kSysNes: return &nes;
 #endif
     case kSysGameBoy: return &host;
     default: return nullptr;
@@ -214,11 +241,18 @@ bool launchRom(int8_t index) {
     ui.drawNotice(core->status());  // Serial is not reachable while running
     return false;
   }
+  // Retune the I2S clock to whatever this console's sound hardware runs at.
+  // Done on every launch, so switching systems never inherits the last rate.
+  audio.setSampleRate(core->sampleRate());
   // Video geometry and therefore the gamepad follow whichever core just started.
   video.begin(core->frameW(), core->frameH(), core->scale(), core->stride());
   GbInput::buildLayout(video.viewX(), video.viewY(), video.viewW(), video.viewH());
   selectedRom = index;
   stats.startSession(romStore.name(index), millis());
+  // Breadcrumb: if the emulator faults, the next boot reads this back.
+  snprintf(gLastRomBreadcrumb, sizeof(gLastRomBreadcrumb), "%s [%s]",
+           romStore.name(index).c_str(), GbRomStore::systemLabel(sys));
+  gBreadcrumbMagic = kBreadcrumbMagic;
   uiScreen = kScreenPlay;
   paused = false;
   ui.drawPlayChrome(romStore.name(index), !audio.muted(), fastForward);
@@ -761,6 +795,17 @@ void setup() {
   noteActivity();
   refreshPicker();
 
+  // If the previous boot died mid-game, say so on the picker with the ROM that
+  // was running. A clean poweron/SW reset shows nothing.
+  const char *reason = resetReasonLabel();
+  if (reason) {
+    String rom = (gBreadcrumbMagic == kBreadcrumbMagic && gLastRomBreadcrumb[0])
+                     ? String(gLastRomBreadcrumb)
+                     : String("unknown ROM");
+    ui.drawNotice(String("last boot ended: ") + reason + " - " + rom);
+  }
+  gBreadcrumbMagic = 0;  // consume it, so a later clean reboot stays quiet
+
   eventLog.add("Cypher Boy booted");
   router.begin(Serial, "cypher-boy");
   router.on("status", "uptime, heap, profile, flags", cmdStatus);
@@ -863,8 +908,13 @@ void loop() {
       const uint32_t fps = f - lastFpsFrames;
       lastFpsFrames = f;
       lastFpsMs = nowMs;
-      ui.drawPlayStatus(String(core->name()) + "  " + fps + " fps  " + f + " frames  " +
-                        core->frameW() + "x" + core->frameH());
+      // Include the ACTUAL I2S rate, not the rate we asked for: if a retune
+      // silently failed, audio plays at the wrong speed and this is the only
+      // way to see it without a serial port.
+      ui.drawPlayStatus(String(core->name()) + "  " + fps + " fps  " +
+                        core->frameW() + "x" + core->frameH() + "  " +
+                        (audio.sampleRate() / 1000) + "k/" +
+                        (core->sampleRate() / 1000) + "k");
     }
     // No delay: the emulator paces itself on the GB frame loop (and on audio
     // when sound is enabled), and touch/serial are polled once per frame.

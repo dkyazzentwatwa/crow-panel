@@ -62,6 +62,11 @@ class GoAi {
   // Root candidates are every legal non-eye point plus a pass, so the array
   // never needs more than one slot per point plus one.
   static const uint8_t kMaxCandidates = kPointCount + 1;
+  // The playout budget is small on the P4 (~750 playouts/move at normal), so
+  // the search is pruned to the top few moves by the one-ply heuristic before
+  // playing them out. Spreading ~750 playouts over 55 legal points is noise;
+  // concentrating them on 18 plausible moves gives real signal per move.
+  static const uint8_t kMaxSearchCandidates = 18;
   static const uint32_t kPlayoutsPerSlice = 96;
   // Virtual playouts each candidate starts with, carrying the one-ply score.
   static const uint32_t kPriorVisits = 8;
@@ -96,6 +101,7 @@ class GoAi {
   uint8_t randomBelow(uint8_t bound);
 
   void buildCandidates();
+  void pruneCandidates();  // keep only the top kMaxSearchCandidates by heuristic
   bool shouldAcceptEnd() const;
   // One-ply score for a candidate. `full` adds the two atari scans, which EASY
   // wants and the prior seeding cannot afford once per candidate per move.

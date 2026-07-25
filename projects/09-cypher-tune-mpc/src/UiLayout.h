@@ -73,10 +73,18 @@ constexpr int16_t kPitchSliderY = 308;
 constexpr int16_t kChokeY = 352;
 constexpr int16_t kChokeH = 40;
 constexpr int16_t kChokeX0 = 620, kChokeW = 56, kChokePitch = 64;  // OFF 1 2 3 4
+// The kit selector moved to the settings screen; this row now carries the
+// backing loop, which is a performance control and has to stay on the main
+// screen so you can drop a bed in and out mid-beat.
 constexpr int16_t kKitY = 404;
 constexpr int16_t kKitH = 40;
 constexpr int16_t kKitPrevX = 620, kKitArrowW = 48;
 constexpr int16_t kKitNextX = 944;
+constexpr int16_t kLoopY = kKitY;
+constexpr int16_t kLoopH = kKitH;
+constexpr int16_t kLoopPrevX = kKitPrevX;
+constexpr int16_t kLoopNextX = kKitNextX;
+constexpr int16_t kLoopArrowW = kKitArrowW;
 
 constexpr int16_t kVoicesY = 452;
 constexpr int16_t kVoicesH = 108;  // ..560
@@ -158,6 +166,8 @@ enum Control : int16_t {
   kControlThemePrev,
   kControlThemeNext,
   kControlIdleDim,
+  kControlLoopPrev,
+  kControlLoopNext,
   kControlPadBase = 100,   // +0..15
   kControlStepBase = 200,  // +0..15
 };
@@ -249,6 +259,10 @@ inline int16_t hitTest(int16_t x, int16_t y) {
         return kControlChoke0 + i;
       }
     }
+  }
+  if (y >= kLoopY && y < kLoopY + kLoopH) {
+    if (inRect(x, y, kLoopPrevX, kLoopY, kLoopArrowW, kLoopH)) return kControlLoopPrev;
+    if (inRect(x, y, kLoopNextX, kLoopY, kLoopArrowW, kLoopH)) return kControlLoopNext;
   }
   if (inRect(x, y, kSetBtnX, kSetBtnY, kSetBtnW, kSetBtnH)) {
     return kControlOpenSettings;

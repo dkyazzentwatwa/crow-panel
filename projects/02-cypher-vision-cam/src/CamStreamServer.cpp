@@ -19,6 +19,9 @@
 
 #include <WiFi.h>
 #include <WebServer.h>
+#if USE_CAM_SD
+#include <SD_MMC.h>
+#endif
 
 namespace {
 
@@ -38,25 +41,66 @@ constexpr uint16_t kStreamHeight = 480;
 constexpr uint8_t kStreamQuality = 60;
 constexpr uint32_t kStreamIntervalMs = 100;  // 10 fps ceiling
 
-// The viewer page. Deliberately a single self-contained string with no external
-// anything: the panel is often its own island with no route to the internet, so
-// a page that pulled in a CDN stylesheet would render as unstyled text.
-const char kViewerPage[] PROGMEM =
-    "<!doctype html><html><head><meta charset=utf-8>"
-    "<meta name=viewport content='width=device-width,initial-scale=1'>"
-    "<title>Cypher Vision Cam</title><style>"
-    "body{margin:0;background:#0b111c;color:#eaf0f7;"
-    "font-family:system-ui,-apple-system,sans-serif;text-align:center}"
-    "h1{font-size:1rem;font-weight:600;letter-spacing:.08em;padding:14px;margin:0;"
-    "color:#8296ac;text-transform:uppercase}"
-    "img{max-width:100%;height:auto;display:block;margin:0 auto;background:#16202f}"
-    "p{color:#8296ac;font-size:.8rem;padding:12px}"
-    "a{color:#16c2c9}"
-    "</style></head><body>"
-    "<h1>Cypher Vision Cam</h1>"
-    "<img src='http://%STREAM_HOST%/stream' alt='live feed'>"
-    "<p>Live feed &middot; <a href='/snapshot'>still snapshot</a></p>"
-    "</body></html>";
+// Shared stylesheet. Deliberately self-contained with no external anything: the
+// panel is often its own island with no route to the internet, so a page that
+// pulled in a CDN stylesheet or webfont would render as unstyled text.
+//
+// Palette matches shared/CrowPanelShared/DashboardWidgets.h so the browser and
+// the panel read as one product rather than two.
+const char kStyle[] PROGMEM =
+    "<style>"
+    ":root{--bg:#0b111c;--surf:#16202f;--surf2:#1e2b3d;--line:#2a3a4f;"
+    "--tx:#eaf0f7;--mut:#8296ac;--acc:#16c2c9;--grn:#35d07f;--amb:#f7b733;--red:#ff5470}"
+    "*{box-sizing:border-box}"
+    "body{margin:0;background:var(--bg);color:var(--tx);"
+    "font:15px/1.5 system-ui,-apple-system,'Segoe UI',sans-serif}"
+    "header{display:flex;align-items:center;gap:12px;padding:14px 18px;"
+    "border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:9}"
+    "header h1{font-size:.82rem;font-weight:600;letter-spacing:.14em;margin:0;"
+    "text-transform:uppercase;color:var(--mut);flex:1}"
+    "nav a{color:var(--mut);text-decoration:none;font-size:.78rem;letter-spacing:.08em;"
+    "text-transform:uppercase;padding:7px 12px;border-radius:8px;margin-left:4px}"
+    "nav a:hover{background:var(--surf)}"
+    "nav a.on{color:var(--bg);background:var(--acc);font-weight:600}"
+    "main{padding:18px;max-width:1100px;margin:0 auto}"
+    ".dot{width:8px;height:8px;border-radius:50%;display:inline-block;background:var(--mut)}"
+    ".dot.live{background:var(--grn)}.dot.rec{background:var(--red)}"
+    ".feed{background:#000;border:1px solid var(--line);border-radius:14px;"
+    "overflow:hidden;line-height:0}"
+    ".feed img{width:100%;height:auto;display:block}"
+    ".bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:14px}"
+    "button{font:inherit;font-weight:600;border:0;border-radius:10px;padding:12px 20px;"
+    "background:var(--acc);color:#04222a;cursor:pointer}"
+    "button:hover{filter:brightness(1.12)}"
+    "button.ghost{background:var(--surf2);color:var(--tx)}"
+    "button.rec{background:var(--red);color:#2a0009}"
+    "button:disabled{opacity:.45;cursor:not-allowed}"
+    ".stat{margin-left:auto;color:var(--mut);font-size:.82rem;font-variant-numeric:tabular-nums}"
+    ".grid{display:grid;gap:12px;margin-top:16px;"
+    "grid-template-columns:repeat(auto-fill,minmax(200px,1fr))}"
+    ".card{background:var(--surf);border:1px solid var(--line);border-radius:12px;"
+    "overflow:hidden}"
+    ".card img{width:100%;aspect-ratio:1024/600;object-fit:cover;display:block;"
+    "background:var(--surf2)}"
+    ".card .meta{display:flex;justify-content:space-between;align-items:center;"
+    "padding:9px 11px;font-size:.76rem;color:var(--mut)}"
+    ".card .meta b{color:var(--tx);font-weight:600}"
+    ".vid{display:flex;flex-direction:column;justify-content:center;align-items:center;"
+    "aspect-ratio:1024/600;background:var(--surf2);color:var(--mut);gap:6px}"
+    ".vid span{font-size:1.6rem}"
+    "a.dl{color:var(--acc);text-decoration:none;font-weight:600}"
+    "a.dl:hover{text-decoration:underline}"
+    ".note{color:var(--mut);font-size:.8rem;margin-top:18px;padding-top:14px;"
+    "border-top:1px solid var(--line)}"
+    ".warn{color:var(--amb)}"
+    ".empty{text-align:center;color:var(--mut);padding:60px 20px}"
+    "</style>";
+
+// Nav is shared between pages; `%A%` / `%B%` mark the active tab.
+const char kNav[] PROGMEM =
+    "<header><span class='dot %DOT%'></span><h1>Cypher Vision Cam</h1>"
+    "<nav><a class='%A%' href='/'>Live</a>"
+    "<a class='%B%' href='/gallery'>Gallery</a></nav></header>";
 
 }  // namespace
 
@@ -145,11 +189,33 @@ bool CamStreamServer::begin(JpegEncoder *encoder) {
 
   gPages = new WebServer(VISIONCAM_HTTP_PORT);
   gPages->on("/", HTTP_GET, [this]() { serveViewerPage_(); });
+  gPages->on("/gallery", HTTP_GET, [this]() { serveGalleryPage_(); });
+  gPages->on("/media", HTTP_GET, [this]() { serveMedia_(); });
+
+  // Control endpoints. Both only raise a flag - the sketch performs the action
+  // in loop(), which is the one place that holds a live camera frame. A second
+  // path owning a buffer would break the acquire/release contract that keeps
+  // the capture pipeline from stalling.
+  gPages->on("/shutter", HTTP_POST, [this]() {
+    if (onShutter_) onShutter_();
+    gPages->send(200, "application/json", "{\"ok\":true}");
+  });
+  gPages->on("/record", HTTP_POST, [this]() {
+    if (onRecordToggle_) onRecordToggle_();
+    gPages->send(200, "application/json", "{\"ok\":true}");
+  });
+
   gPages->on("/health", HTTP_GET, [this]() {
+    const uint32_t freeMb =
+        recorder_ != nullptr ? (uint32_t)(recorder_->freeBytes() / (1024ULL * 1024ULL)) : 0;
+    const uint8_t files = recorder_ != nullptr ? recorder_->mediaCount() : 0;
     String body = String("{\"ok\":true,\"service\":\"cypher-vision-cam\",\"viewer\":") +
                   (viewerConnected_ ? "true" : "false") +
+                  ",\"recording\":" + (recordingHint_ ? "true" : "false") +
                   ",\"frames_sent\":" + String(framesSent_) +
-                  ",\"stream_fps\":" + String(streamFps_, 1) + "}";
+                  ",\"fps\":" + String(streamFps_, 1) +
+                  ",\"files\":" + String(files) +
+                  ",\"free_mb\":" + String(freeMb) + "}";
     gPages->send(200, "application/json", body);
   });
   // Registered ONCE. WebServer::on() appends to a handler list rather than
@@ -193,17 +259,16 @@ void CamStreamServer::end() {
   Logger::info("stream", "stopped");
 }
 
-void CamStreamServer::serveViewerPage_() {
-  // The <img> needs an absolute URL because the stream lives on a different
-  // port, and a relative path would hit :80.
-  //
-  // The host MUST come from the request, not from softAPIP(). The panel can be
-  // reachable at two addresses at once - 192.168.4.1 on its own AP and a LAN
-  // address as a station - and baking in the AP address breaks every LAN
-  // viewer: the page loads fine over the LAN, then points the browser at an AP
-  // address it has no route to, so the frame never appears while /snapshot
-  // (a relative path) works perfectly. Echoing back the Host header keeps the
-  // stream on whichever interface the client actually used.
+// The host the client actually used to reach us.
+//
+// This MUST come from the request, not from softAPIP(). The panel can be
+// reachable at two addresses at once - 192.168.4.1 on its own AP and a LAN
+// address as a station - and baking in the AP address breaks every LAN viewer:
+// the page loads fine over the LAN, then points the browser at an AP address it
+// has no route to, so the frame never appears while /snapshot (a relative path)
+// works perfectly. Echoing back the Host header keeps the stream on whichever
+// interface the client actually used.
+String CamStreamServer::requestHost_() const {
   String host = gPages->hostHeader();
   const int colon = host.indexOf(':');
   if (colon >= 0) host = host.substring(0, colon);  // drop any :port
@@ -212,10 +277,199 @@ void CamStreamServer::serveViewerPage_() {
     // interface a client is most likely to have reached us on.
     host = stationConnected() ? WiFi.localIP().toString() : WiFi.softAPIP().toString();
   }
+  return host;
+}
 
-  String page = FPSTR(kViewerPage);
-  page.replace("%STREAM_HOST%", host + ":" + String(VISIONCAM_STREAM_PORT));
+String CamStreamServer::chrome_(bool onGallery) const {
+  String nav = FPSTR(kNav);
+  nav.replace("%DOT%", recordingHint_ ? "rec" : "live");
+  nav.replace("%A%", onGallery ? "" : "on");
+  nav.replace("%B%", onGallery ? "on" : "");
+  return nav;
+}
+
+void CamStreamServer::serveViewerPage_() {
+  const String stream =
+      "http://" + requestHost_() + ":" + String(VISIONCAM_STREAM_PORT) + "/stream";
+
+  String page = "<!doctype html><html><head><meta charset=utf-8>"
+                "<meta name=viewport content='width=device-width,initial-scale=1'>"
+                "<title>Cypher Vision Cam</title>";
+  page += FPSTR(kStyle);
+  page += "</head><body>";
+  page += chrome_(false);
+  page += "<main>";
+  page += "<div class=feed><img src='" + stream + "' alt='live feed'></div>";
+
+  page += "<div class=bar>"
+          "<button onclick=shot()>Take photo</button>"
+          "<button id=rec class='" +
+          String(recordingHint_ ? "rec" : "ghost") + "' onclick=rec_()>" +
+          String(recordingHint_ ? "Stop recording" : "Record") + "</button>"
+          "<a class=dl href='/snapshot' download><button class=ghost>Save snapshot</button></a>"
+          "<span class=stat id=stat>&nbsp;</span></div>";
+
+  // Status polls /health rather than being baked into the page, so the numbers
+  // stay live without a reload. Kept deliberately small - this is a camera, not
+  // a dashboard, and every byte here crosses the same link as the video.
+  page += "<p class=note>Anyone who can reach this page can make the camera "
+          "take pictures. There is no password on these controls.</p>";
+  page += "</main><script>"
+          "async function post(u){try{await fetch(u,{method:'POST'})}catch(e){}}"
+          "function shot(){post('/shutter')}"
+          "async function rec_(){await post('/record');setTimeout(stat_,300)}"
+          "async function stat_(){try{const r=await fetch('/health');const j=await r.json();"
+          "document.getElementById('stat').textContent="
+          "j.fps.toFixed(0)+' fps  |  '+j.files+' files  |  '+j.free_mb+' MB free';"
+          "const b=document.getElementById('rec');"
+          "b.textContent=j.recording?'Stop recording':'Record';"
+          "b.className=j.recording?'rec':'ghost';"
+          "document.querySelector('.dot').className='dot '+(j.recording?'rec':'live')"
+          "}catch(e){}}"
+          "stat_();setInterval(stat_,2000);"
+          "</script></body></html>";
+
   gPages->send(200, "text/html", page);
+}
+
+void CamStreamServer::serveGalleryPage_() {
+  if (recorder_ == nullptr) {
+    gPages->send(503, "text/plain", "no recorder");
+    return;
+  }
+  recorder_->refreshMediaList();
+  const uint8_t count = recorder_->mediaCount();
+
+  String page = "<!doctype html><html><head><meta charset=utf-8>"
+                "<meta name=viewport content='width=device-width,initial-scale=1'>"
+                "<title>Gallery - Cypher Vision Cam</title>";
+  page += FPSTR(kStyle);
+  page += "</head><body>";
+  page += chrome_(true);
+  page += "<main>";
+
+  if (!recorder_->storageReady()) {
+    page += "<div class=empty><h2>No card</h2><p>Insert an SD card to store and "
+            "browse captures.</p></div>";
+  } else if (count == 0) {
+    page += "<div class=empty><h2>Nothing yet</h2><p>Take a photo from the Live "
+            "page or press the panel's shutter.</p></div>";
+  } else {
+    page += "<div class=grid>";
+    for (uint8_t i = 0; i < count; i++) {
+      const CamRecorder::MediaEntry &e = recorder_->mediaAt(i);
+      const String name = String(e.name);
+      const String href = "/media?f=" + name;
+
+      char size[24];
+      if (e.bytes >= 1024UL * 1024UL) {
+        snprintf(size, sizeof(size), "%.1f MB", (double)e.bytes / (1024.0 * 1024.0));
+      } else {
+        snprintf(size, sizeof(size), "%lu KB", (unsigned long)(e.bytes / 1024UL));
+      }
+
+      page += "<div class=card>";
+      if (e.isVideo) {
+        // No poster frame for clips: producing one would mean decoding the
+        // first JPEG out of the AVI on the panel, and a placeholder is honest
+        // about the fact that nothing was rendered.
+        page += "<div class=vid><span>&#9654;</span>video</div>";
+      } else {
+        // loading=lazy is load-bearing, not decoration. There are no stored
+        // thumbnails, so each tile is the full ~200 KB JPEG; without lazy
+        // loading a card of 60 stills would try to pull ~12 MB at once over a
+        // link that also carries the live video.
+        page += "<a href='" + href + "'><img loading=lazy src='" + href + "' alt='" +
+                name + "'></a>";
+      }
+      page += "<div class=meta><b>" + name + "</b><span>" + size + "</span></div>";
+      page += "<div class=meta><a class=dl href='" + href +
+              "' download>Download</a><span>" + (e.isVideo ? "AVI" : "JPEG") +
+              "</span></div>";
+      page += "</div>";
+    }
+    page += "</div>";
+
+    page += "<p class=note>";
+    if (recorder_->mediaTruncated()) {
+      page += "<span class=warn>Showing the first " + String(CamRecorder::kMaxListed) +
+              " files only - the card holds more.</span><br>";
+    }
+    page += String(count) + " file" + (count == 1 ? "" : "s") + " &middot; " +
+            String((uint32_t)(recorder_->freeBytes() / (1024ULL * 1024ULL))) +
+            " MB free<br>Downloading a video pauses the panel until the transfer "
+            "finishes - the screen will say so.</p>";
+  }
+
+  page += "</main></body></html>";
+  gPages->send(200, "text/html", page);
+}
+
+// Only ever serve names this device itself created: CAM_NNNNN.JPG or
+// VID_NNNNN.AVI, nothing else.
+//
+// This is a whitelist rather than a blacklist on purpose. `/media?f=` takes a
+// name straight from the network and turns it into a path on the card, so
+// checking for ".." and slashes would be the start of an arms race. Requiring
+// the exact shape this recorder produces leaves no room to negotiate.
+bool CamStreamServer::validMediaName_(const String &name, bool &isVideo) {
+  if (name.length() != 13) return false;  // PREFIX(4) + 5 digits + ".EXT"(4)
+
+  const bool jpg = name.startsWith("CAM_") && name.endsWith(".JPG");
+  const bool avi = name.startsWith("VID_") && name.endsWith(".AVI");
+  if (!jpg && !avi) return false;
+
+  for (uint8_t i = 4; i < 9; i++) {
+    if (!isdigit((int)name[i])) return false;
+  }
+  isVideo = avi;
+  return true;
+}
+
+void CamStreamServer::serveMedia_() {
+#if USE_CAM_SD
+  const String name = gPages->arg("f");
+  bool isVideo = false;
+  if (!validMediaName_(name, isVideo)) {
+    gPages->send(400, "text/plain", "bad file name");
+    return;
+  }
+
+  const String path = String("/DCIM/") + name;
+  File file = SD_MMC.open(path, FILE_READ);
+  if (!file || file.isDirectory()) {
+    if (file) file.close();
+    gPages->send(404, "text/plain", "not found");
+    return;
+  }
+
+  // Announce the transfer BEFORE it starts. streamFile() runs to completion
+  // inside handleClient(), so from here until it returns the render loop is
+  // stopped: no video, no touch. For a still that is a blink; for a 30 MB clip
+  // it is most of a minute, and a panel that freezes without explanation reads
+  // as a crash. The MJPEG pusher is dropped for the same reason - it cannot run
+  // anyway, and releasing the viewer frees the link for the download.
+  serving_ = true;
+  servingName_ = name;
+  if (viewerConnected_) {
+    gViewer.stop();
+    viewerConnected_ = false;
+  }
+
+  // Inline for stills so the gallery grid can render them; attachment for clips
+  // because browsers largely cannot play AVI/MJPEG in a <video> tag, and a tab
+  // that opens and does nothing is worse than a download.
+  if (isVideo) {
+    gPages->sendHeader("Content-Disposition", "attachment; filename=" + name);
+  }
+  gPages->streamFile(file, isVideo ? "video/x-msvideo" : "image/jpeg");
+  file.close();
+
+  serving_ = false;
+  servingName_ = "";
+#else
+  gPages->send(503, "text/plain", "built without SD support");
+#endif
 }
 
 void CamStreamServer::serveSnapshot_(const CrowCamera::Frame *frame) {

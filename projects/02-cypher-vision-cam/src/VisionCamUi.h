@@ -6,6 +6,7 @@
 #include <CrowPanelShared.h>
 #include "CamRecorder.h"
 #include "CamRenderer.h"
+#include "ImageViewer.h"
 
 // Four-tab touch console for the Cypher Vision Cam, built on the shared
 // CrowDisplay bring-up and the Widgets:: toolkit (dark "ops" palette, FreeSans
@@ -38,7 +39,10 @@ enum class CamEventType : uint8_t {
   ExposureDown,
   AutoExposureToggle,
   FlipToggle,
-  StreamToggle,   // soft-AP + MJPEG server on/off
+  StreamToggle,       // soft-AP + MJPEG server on/off
+  OrientationToggle,  // landscape <-> portrait
+  VolumeUp,           // cue volume step; 0 is off
+  VolumeDown,
 };
 
 struct CamEvent {
@@ -47,6 +51,16 @@ struct CamEvent {
 };
 
 const char *camScreenName(CamScreen s);
+
+// How the device is being held. Portrait means the panel stands on its short
+// edge, phone-style.
+//
+// The VIEWFINDER needs no pixel rotation for this: the camera and the panel are
+// bolted to the same device, so they turn together and the preview stays
+// correct. What does change is the CHROME (which would otherwise read sideways)
+// and the SAVED FILES (which are stored long-axis-first and would open rotated
+// on a computer).
+enum class CamOrientation : uint8_t { Landscape = 0, Portrait = 1 };
 
 class VisionCamUi {
  public:
@@ -77,6 +91,18 @@ class VisionCamUi {
   // in red, because that is the difference between "correcting badly" and
   // "never ran", and there is no serial port to ask.
   void setWhitePatches(uint32_t patches) { whitePatches_ = patches; }
+  void setSound(bool on, uint8_t volume) {
+    if (on != soundEnabled_ || volume != soundVolume_) markDirty();
+    soundEnabled_ = on;
+    soundVolume_ = volume;
+  }
+
+  // Called by the sketch while the web server has a file transfer in flight.
+  void setServing(bool serving, const String &name) {
+    if (serving != serving_) markDirty();
+    serving_ = serving;
+    servingName_ = name;
+  }
 
   // Physical shutter state, for the Settings readout. `altLevel` is the other
   // boot strapping pin, shown only so the correct button GPIO can be confirmed
@@ -98,6 +124,20 @@ class VisionCamUi {
   // copies would only be two things to get out of sync.
   void setRecorder(const CamRecorder *recorder) { recorder_ = recorder; }
 
+  // Switching re-lays out every screen and re-rotates the GFX canvas. Safe to
+  // call before begin(); the layout is recomputed there too.
+  void setOrientation(CamOrientation orientation, bool flipped = false);
+  CamOrientation orientation() const { return orientation_; }
+  bool portraitFlipped() const { return portraitFlipped_; }
+
+  // Draws a crosshair wherever the UI believes a tap landed. The fastest way to
+  // tell a wrong touch mapping from a wrong hit rectangle.
+  void setShowTouchMark(bool on) {
+    showTouchMark_ = on;
+    markDirty();
+  }
+  bool showTouchMark() const { return showTouchMark_; }
+
   // Stream state, owned by the sketch's stream server.
   void setStreamState(bool up, const String &ssid, const String &url, uint8_t clients,
                       uint8_t stations = 0, const String &stationUrl = String());
@@ -109,7 +149,17 @@ class VisionCamUi {
   CamScreen screen_ = CAM_SCR_LIVE;
   CrowTouch touch_;
   CamRenderer renderer_;
+  CamOrientation orientation_ = CamOrientation::Landscape;
+  // Which way the panel was physically turned. Software cannot know, so this is
+  // a user choice - see mapTouch_.
+  bool portraitFlipped_ = false;
+  // Last mapped touch, drawn as a crosshair while set. Turns "touch is off"
+  // into something you can see rather than describe.
+  bool showTouchMark_ = false;
+  int16_t markX_ = -1, markY_ = -1;
+  uint32_t markMs_ = 0;
   const CamRecorder *recorder_ = nullptr;
+  ImageViewer viewer_;
   uint8_t galleryPage_ = 0;
 
   float fps_ = 0.0f;
@@ -122,6 +172,8 @@ class VisionCamUi {
   bool autoExposure_ = true;
   bool autoExposureConverged_ = false;
   uint32_t whitePatches_ = 0;
+  bool soundEnabled_ = true;
+  uint8_t soundVolume_ = 90;
   bool shutterLevel_ = true;
   bool shutterAltLevel_ = true;
   uint32_t shutterPresses_ = 0;
@@ -136,9 +188,15 @@ class VisionCamUi {
   uint8_t streamStations_ = 0;
   String stationUrl_;
 
-  // Live-screen HUD visibility. Tapping the image toggles it, because a
+  // Live-screen control bar visibility. Tapping the image toggles it, because a
   // viewfinder with permanent overlay chrome is a worse viewfinder.
-  bool hudVisible_ = true;
+  bool barVisible_ = true;
+
+  // Set while the web server is streaming a file off the SD card. That transfer
+  // owns the loop for its duration, so the panel says so instead of appearing
+  // to have crashed.
+  bool serving_ = false;
+  String servingName_;
 
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
   bool ready_ = false;
@@ -149,6 +207,19 @@ class VisionCamUi {
   void drawChrome_();
   void drawLive_(const CrowCamera::Frame *frame);
   void drawLiveHud_(const CrowCamera::Frame *frame);
+  void drawLiveMinimal_();
+  void drawServingOverlay_();
+  void mapTouch_(int16_t &x, int16_t &y) const;
+
+  // Content-change detection for the static screens. Repainting them on a timer
+  // flickers, because the panel is single-framebuffer and the DSI scans it while
+  // the redraw is still landing.
+  bool takeIfChanged_(uint32_t sig);
+  uint32_t settingsSignature_() const;
+  uint32_t streamSignature_() const;
+  uint32_t gallerySignature_() const;
+  uint32_t lastSig_ = 0;
+  bool drewThisFrame_ = false;
   void drawGallery_();
   void drawStream_();
   void drawSettings_();

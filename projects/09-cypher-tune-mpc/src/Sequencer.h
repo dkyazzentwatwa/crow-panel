@@ -74,6 +74,19 @@ class Sequencer {
   uint32_t stepDurationMs(uint8_t step) const;
   uint32_t stepDurationFrames(uint8_t step, uint32_t rate) const;
 
+  // Loop lock. A backing loop is a fixed number of frames covering a whole
+  // number of bars, so the only drift-free way to play over it is to derive
+  // the step length from the loop itself rather than from an integer BPM
+  // (these loops sit at 72.5, 77.6, 65.1... - rounding drifts audibly within
+  // a few bars). Set frames-per-16th here and every clock follows it; 0
+  // releases the lock and BPM takes over again. Swing still applies on top.
+  void setLockedStepFrames(uint32_t framesPerStep);
+  uint32_t lockedStepFrames() const { return lockedStepFrames_; }
+  bool locked() const { return lockedStepFrames_ != 0; }
+  // BPM actually being played: the locked value when a loop owns the clock,
+  // else the user's BPM. Tenths, so 72.5 shows honestly.
+  uint16_t effectiveBpmTenths(uint32_t rate) const;
+
   // Millis fallback clock; call every loop() when the audio engine is not
   // running. Fires fn once per active pad when a step boundary passes and
   // returns true on step advance (even if the step is empty, so the caller
@@ -100,6 +113,7 @@ class Sequencer {
   volatile bool recording_ = false;
   volatile bool metronome_ = false;
   volatile uint8_t playStep_ = kSteps - 1;
+  volatile uint32_t lockedStepFrames_ = 0;  // 0 = follow bpm_
   uint32_t lastStepAtMs_ = 0;  // millis clock only
 };
 

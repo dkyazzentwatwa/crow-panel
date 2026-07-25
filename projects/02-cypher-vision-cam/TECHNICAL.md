@@ -245,6 +245,68 @@ stream
 selftest
 ```
 
+## The web app
+
+Four pages, all self-contained — no CDN, no webfonts, no frameworks. The panel is
+frequently its own island with no route to the internet, so anything fetched from
+elsewhere would simply not arrive. The palette is copied from
+`shared/CrowPanelShared/DashboardWidgets.h` so browser and panel read as one
+product.
+
+| Route | Serves |
+|---|---|
+| `GET /` | Live view, Take photo / Record buttons, self-updating status line |
+| `GET /gallery` | Lazy-loaded thumbnail grid + download links |
+| `GET /media?f=NAME` | One file: JPEG inline, AVI as an attachment |
+| `POST /shutter` | Raise the shutter flag |
+| `POST /record` | Toggle recording |
+| `GET /health` | JSON: fps, recording, viewer, file count, free MB |
+
+Three decisions worth knowing:
+
+**The stream URL comes from the request's `Host` header, never from
+`softAPIP()`.** The panel can be reachable at two addresses at once (AP and
+station). Baking in the AP address produced a page that loaded perfectly over the
+LAN and then pointed the browser at an address it had no route to — video blank,
+`/snapshot` fine, because a relative path follows the host and an absolute one
+does not.
+
+**`loading=lazy` on gallery thumbnails is load-bearing.** There are no stored
+thumbnails, so each tile is the full ~200 KB JPEG. A card of 60 stills would pull
+~12 MB at once over the same link carrying the video. Lazy loading is what makes
+the page usable rather than a nicety.
+
+**Control endpoints only raise flags.** `POST /shutter` sets the same
+`shutterRequested` the touch button and BOOT button use; the capture happens in
+`loop()`, the one place holding a live frame. A second path owning a camera
+buffer would break the acquire/release contract.
+
+### The download freeze, stated plainly
+
+`WebServer::streamFile()` runs to completion inside `handleClient()`. While it
+does, the render loop is stopped: no video, no touch. A still is a blink; a
+30 MB clip is most of a minute.
+
+Rather than hide this, `serveMedia_` sets a flag before the transfer, drops any
+MJPEG viewer (it cannot run anyway, and releasing it frees the link), and the
+panel draws a `SERVING FILE` overlay. A frozen panel that says why is a very
+different experience from one that appears to have crashed.
+
+**The fix, if it becomes annoying, is a chunked transfer driven from `loop()`** —
+the same shape as the MJPEG pusher, a slice per iteration. Contained, not a
+rewrite. It was not done up front because the simple version is a fraction of the
+code and stills — the common case — are unaffected.
+
+### Path traversal
+
+`/media?f=` turns a network-supplied name into a path on the card, so
+`validMediaName_` whitelists rather than blacklists: exactly 13 characters,
+`CAM_` or `VID_`, five digits, matching extension. Checking for `..` and slashes
+would be the start of an arms race; requiring the precise shape this recorder
+produces leaves nothing to negotiate. Verified against `../../secret`,
+`/etc/passwd`, `../CAM_00001.JPG`, `CAM_00001.JPG/..`, wrong digit counts, and
+case variations — all rejected.
+
 ## Rendering, and why it is not a normal dashboard
 
 Every other project in this suite repaints a screen and flushes it. This one
@@ -268,9 +330,127 @@ Three rules follow, and `CamRenderer` + `VisionCamUi` exist to enforce them:
 The panel must be built with `CrowDisplay::begin(profile, title, true)` —
 `manualFlush=true` — or Arduino_GFX cache-syncs on every single draw call.
 
-Sensor resolution equals panel resolution, so the fullscreen case scales by
-exactly 1.0. Image flip is done in the **sensor** (`0x3221`), not the blitter:
-the SC2336 mirrors for free and spending PPA bandwidth on it would be waste.
+Image flip is done in the **sensor** (`0x3221`), not the blitter: the SC2336
+mirrors for free and spending PPA bandwidth on it would be waste.
+
+### The Live screen is full-bleed, and that is a correctness fix
+
+The viewfinder rect is the entire panel — `0, 0, 1024, 600` — which makes the
+PPA's `scale_x` and `scale_y` both exactly 1.0. Every sensor pixel lands on one
+panel pixel.
+
+This replaced a 1024x464 rect that fitted neatly between the header and tab bars.
+It looked reasonable and was quietly **wrong**: the PPA scaled x by 1.00 and y by
+464/600 = 0.77, squashing the preview 23% vertically while captured stills — taken
+from the full frame — came out correctly. **A preview that disagrees with the
+capture is worse than an ugly one**, and nothing in the code complained, because
+asking the PPA for a non-uniform scale is a perfectly legal request.
+
+Consequences for chrome: Live has no `headerBar` and no `tabBar`. A single 76 px
+bar is drawn **on top of** the image after the frame blit, carrying the actions,
+a compact status cluster, and navigation to the other three screens. Tapping the
+image hides it; a corner readout stays so a clean viewfinder is not a blind one.
+The other screens are dashboards, not video, and keep the conventional chrome.
+
+The bar is a solid fill rather than a translucent wash: the framebuffer is RGB565
+with no alpha, so real transparency would mean reading back and blending 76k
+pixels every frame.
+
+**Flush order is what stops the bar flickering.** `CamRenderer::drawFrame` takes
+an `autoFlush` flag, and Live passes `false`: the PPA writes all 600 rows into
+the framebuffer, the bar is drawn over the bottom 76, and then the image region
+and the bar region are flushed separately. Letting `drawFrame` flush the full
+panel first pushed video into the bar's rows and the bar over it a moment later —
+every frame, twenty times a second, which reads as the status line strobing. The
+framebuffer content was always correct; only the push order was wrong.
+
+## On-panel image preview
+
+Tapping a still in Gallery decodes and displays it, using the same JPEG block as
+the capture path but in the other direction: SD → `jpeg_decoder_process` (RGB565)
+→ PPA scale → framebuffer. `src/ImageViewer.{h,cpp}`.
+
+`jpeg_decoder_get_info` reads the header **before** decoding, so the output size
+is known and checked against the buffer first — a mismatch there is the
+difference between a picture and heap corruption.
+
+The image is letterboxed to preserve aspect rather than stretched to fill.
+Showing a photo at the wrong shape is precisely the bug the viewfinder rework
+fixed; reintroducing it in the viewer would be careless.
+
+Displaying is a modal state: `tick()` returns early while an image is up, so
+nothing paints over it, and the dismissing tap is swallowed before any other
+hit-test. Clips are not tappable — there is no video player here, and an
+affordance that does nothing is worse than none.
+
+## Portrait orientation
+
+The insight that makes this cheap: **the camera and panel are on the same device
+and turn together**, so the viewfinder needs no pixel rotation at all. Turning
+the panel gives a correct, full-screen, taller framing for free. Only two things
+actually break, and only those two are fixed:
+
+| Breaks | Fix |
+|---|---|
+| Chrome reads sideways | `Arduino_GFX::setRotation(1)` — logical canvas becomes 600x1024 |
+| Saved files open rotated | `JpegEncoder::setRotation(90)` — PPA rotates before encode, giving a true 600x1024 file |
+
+Consequences worth knowing:
+
+**Layout is runtime, not compile-time.** `VisionCamUi.cpp` holds a `Layout`
+struct filled by `computeLayout(portrait)`; every position reads from it. Hit
+rects and draw calls use the *same fields*, so the two can only disagree if a
+field is wrong for both.
+
+**Portrait cannot use the shared chrome.** `headerBar`/`tabBar` hardcode
+`kChromeW = 1024` (`DashboardWidgets.h`), so they would draw off the edge of a
+600-wide canvas. Portrait draws its own header and tab strip; landscape still
+uses the shared helpers.
+
+**Touch must be remapped by hand.** `CrowTouch` reports panel coordinates and
+knows nothing about rotation, so `mapTouch_` exchanges the axes in portrait.
+Rotating the drawing but not the touch would put every control visibly in one
+place and tappable in another — worse than no rotation at all.
+
+**Two layouts, two sets of constraints.** Settings has eight rows: fine in
+portrait's 1024 px of height, but 156 px too tall for landscape, so landscape
+uses two columns of four. The Live bar is one row landscape, three rows portrait
+(600 px will not hold shutter, two actions and three nav targets side by side at
+a size worth aiming at). Both were verified arithmetically against the content
+area before flashing, not discovered on the panel.
+
+## Sound
+
+`src/CamAudio.{h,cpp}`. Cues are synthesized — a filtered noise burst under a
+fast decay for the shutter, triangle two-tones for record start/stop — so there
+is no asset to ship or find, and they work with no card inserted, which is
+exactly when the error tone matters.
+
+Two details are inherited from project 09's field-proven `AudioEngine` rather
+than rediscovered: **the amp enable is active LOW** on this board (it comes from
+`profile.audio.controlActiveHigh` and is never hardcoded — driving IO30 high
+mutes the speaker while I2S keeps streaming, which presents as "the code works
+but there is no sound"), and **silence must be streamed before raising the
+enable** or the amp wakes onto an undefined bus and pops.
+
+Playback runs on its own FreeRTOS task pinned to core 0. Writing a 120 ms cue to
+I2S from `loop()` would stall the render loop for 120 ms — the same mistake as
+the ISP statistics stalls. `play()` posts to a 4-deep queue and returns; a fifth
+queued cue is dropped, because a backlog of shutter clicks is worse than a
+missing one.
+
+## Persisted settings
+
+Image flip (`vflip` / `hmirror`), panel orientation (`portrait`) and the sound
+toggle (`sound`) are written to NVS via `Preferences`. Flip is restored
+**before** the sensor starts streaming, so the first frame is already the right
+way up rather than flipping a moment after boot.
+
+It lives in NVS rather than on the card because it must survive with no card
+present, and it is two bits. `StorageManager` is in-memory only, so this uses
+`Preferences` directly. Orientation describes how the camera is *mounted* — a
+physical fact that does not change between power cycles — so asking the user to
+re-set it each boot would be asking them to correct the same thing repeatedly.
 
 ## Build
 

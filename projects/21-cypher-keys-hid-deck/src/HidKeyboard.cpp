@@ -1,20 +1,14 @@
 #include "HidKeyboard.h"
 
+#include "KeySoundPacks.h"  // KeyClass numbering shared with the audio engine
+#include "KeysLayout.h"     // row/key rectangles and their touch targets
+
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
 #include <CrowPanelShared.h>
 #include <Arduino_GFX_Library.h>
 #endif
 
 namespace {
-
-// Geometry copied verbatim from Cypher Desk's DeskTouchKeyboard so the panel's
-// bottom half feels identical.
-constexpr int16_t kKeyboardY = 316;
-constexpr int16_t kKeyboardMarginX = 22;
-constexpr int16_t kKeyboardWidth = 980;
-constexpr int16_t kRowHeight = 60;
-constexpr int16_t kRowGap = 8;
-constexpr int16_t kKeyGap = 6;
 
 enum KeyRole : uint8_t {
   kRoleText,     // ASCII character; honors shift for letters
@@ -100,32 +94,52 @@ KeyboardRow rowAt(bool symbols, uint8_t row) {
   return {kSymbols3, 7};
 }
 
-int16_t rowInset(uint8_t row) { return row == 1 ? 44 : 0; }
-int16_t rowWidth(uint8_t row) { return kKeyboardWidth - rowInset(row) * 2; }
+// Key ids pack the row and the index within it: row * 16 + keyIndex. 16 is a
+// clean shift and every row has at most 10 keys, so the two never collide.
+const uint8_t kKeysPerRowStride = 16;
 
-uint16_t totalWeight(const KeyboardRow &row) {
-  uint16_t total = 0;
-  for (uint8_t i = 0; i < row.count; ++i) total += row.keys[i].weight;
-  return total;
+int16_t makeKeyId(uint8_t rowIndex, uint8_t keyIndex) {
+  return (int16_t)(rowIndex * kKeysPerRowStride + keyIndex);
 }
 
-bool keyBounds(const KeyboardRow &row, uint8_t rowIndex, uint8_t keyIndex,
-               int16_t &x, int16_t &y, int16_t &w, int16_t &h) {
-  if (keyIndex >= row.count) return false;
-  int16_t available = rowWidth(rowIndex) - (row.count - 1) * kKeyGap;
-  uint16_t weight = totalWeight(row);
-  x = kKeyboardMarginX + rowInset(rowIndex);
-  for (uint8_t i = 0; i < keyIndex; ++i) {
-    x += (int32_t)available * row.keys[i].weight / weight + kKeyGap;
+// Resolve a key id against a layer. Returns nullptr when the id names no key in
+// that layer (which is what a stale id from the other layer looks like).
+const KeyDefinition *keyFromId(bool symbols, int16_t keyId) {
+  if (keyId < 0) return nullptr;
+  uint8_t rowIndex = (uint8_t)(keyId / kKeysPerRowStride);
+  uint8_t keyIndex = (uint8_t)(keyId % kKeysPerRowStride);
+  if (rowIndex >= 4) return nullptr;
+  KeyboardRow row = rowAt(symbols, rowIndex);
+  if (keyIndex >= row.count) return nullptr;
+  return &row.keys[keyIndex];
+}
+
+// Locate the key under (px,py) using the half-gutter touch targets, and hand
+// back both its indices and its rectangle. Pure integer math from KeysLayout,
+// so this works in headless builds too.
+bool locateKey(bool symbols, int16_t px, int16_t py, uint8_t &rowOut,
+               uint8_t &keyOut, int16_t &x, int16_t &y, int16_t &w, int16_t &h) {
+  for (uint8_t rowIndex = 0; rowIndex < 4; ++rowIndex) {
+    KeyboardRow row = rowAt(symbols, rowIndex);
+    for (uint8_t keyIndex = 0; keyIndex < row.count; ++keyIndex) {
+      KeysLayout::keyBounds(row.keys, row.count, rowIndex, keyIndex, x, y, w, h);
+      if (KeysLayout::hitKeyCell(px, py, x, y, w, h)) {
+        rowOut = rowIndex;
+        keyOut = keyIndex;
+        return true;
+      }
+    }
   }
-  w = (int32_t)available * row.keys[keyIndex].weight / weight;
-  y = kKeyboardY + rowIndex * (kRowHeight + kRowGap);
-  h = kRowHeight;
-  return true;
+  return false;
 }
 
-bool inside(int16_t px, int16_t py, int16_t x, int16_t y, int16_t w, int16_t h) {
-  return px >= x && px < x + w && py >= y && py < y + h;
+// Backspace and the arrows are the only keys worth auto-repeating: they are the
+// ones a user holds down. Repeating a letter or Return would be a footgun.
+bool keyRepeats(const KeyDefinition *key) {
+  if (key == nullptr || key->role != kRoleSpecial) return false;
+  return key->key == kKeyBackspace || key->key == kKeyLeftArrow ||
+         key->key == kKeyRightArrow || key->key == kKeyUpArrow ||
+         key->key == kKeyDownArrow;
 }
 
 }  // namespace
@@ -134,56 +148,157 @@ void HidKeyboard::reset() {
   shifted_ = false;
   symbols_ = false;
   stickyMods_ = 0;
+  heldMods_ = 0;
+  heldShift_ = false;
+  usedMods_ = 0;
+  shiftUsed_ = false;
 }
 
-HidKeyEvent HidKeyboard::hitTest(int16_t x, int16_t y) {
-  HidKeyEvent event;
-  for (uint8_t rowIndex = 0; rowIndex < 4; ++rowIndex) {
-    KeyboardRow row = rowAt(symbols_, rowIndex);
-    for (uint8_t keyIndex = 0; keyIndex < row.count; ++keyIndex) {
-      int16_t keyX, keyY, keyW, keyH;
-      keyBounds(row, rowIndex, keyIndex, keyX, keyY, keyW, keyH);
-      // Extend each target into half the gutter (matches Desk) so there are no
-      // dead strips between keys.
-      if (!inside(x, y, keyX - kKeyGap / 2, keyY - kRowGap / 2, keyW + kKeyGap,
-                  keyH + kRowGap))
-        continue;
+void HidKeyboard::consumeOneShots() {
+  stickyMods_ = 0;
+  shifted_ = false;
+  // Anything still under a finger just did its job, so lifting it must not also
+  // arm it sticky.
+  usedMods_ |= heldMods_;
+  if (heldShift_) shiftUsed_ = true;
+}
 
-      const KeyDefinition &key = row.keys[keyIndex];
-      switch (key.role) {
-        case kRoleShift:
-          shifted_ = !shifted_;
-          event.redraw = true;
-          return event;
-        case kRoleSymbols:
-          symbols_ = !symbols_;
-          shifted_ = false;
-          event.redraw = true;
-          return event;
-        case kRoleMod:
-          stickyMods_ ^= key.mod;  // toggle that modifier
-          event.redraw = true;
-          return event;
-        case kRoleSpecial:
-          event.send = true;
-          event.key = key.key;
-          event.mods = stickyMods_;
-          stickyMods_ = 0;  // one-shot
-          return event;
-        case kRoleText:
-        default: {
-          uint8_t ascii = key.key;
-          if (shifted_ && ascii >= 'a' && ascii <= 'z') ascii -= 32;
-          event.send = true;
-          event.key = ascii;
-          event.mods = stickyMods_;
-          stickyMods_ = 0;    // one-shot modifiers
-          shifted_ = false;   // one-shot shift
-          return event;
-        }
-      }
+HidKeyEvent HidKeyboard::pressAt(int16_t x, int16_t y, int16_t &keyIdOut) {
+  HidKeyEvent event;
+  keyIdOut = kNoKey;
+
+  uint8_t rowIndex = 0, keyIndex = 0;
+  int16_t kx = 0, ky = 0, kw = 0, kh = 0;  // rect unused here; keyRectAt serves it
+  if (!locateKey(symbols_, x, y, rowIndex, keyIndex, kx, ky, kw, kh)) {
+    return event;
+  }
+  keyIdOut = makeKeyId(rowIndex, keyIndex);
+  const KeyDefinition &key = rowAt(symbols_, rowIndex).keys[keyIndex];
+
+  switch (key.role) {
+    case kRoleShift:
+      heldShift_ = true;
+      shiftUsed_ = false;  // not yet used; a quick tap will arm it sticky
+      event.redraw = true;
+      return event;
+    case kRoleSymbols:
+      symbols_ = !symbols_;
+      shifted_ = false;
+      // Key ids are layer-relative, so nothing held can be matched to its
+      // release any more. Drop the chord rather than leave a stuck modifier.
+      heldMods_ = 0;
+      heldShift_ = false;
+      usedMods_ = 0;
+      shiftUsed_ = false;
+      event.redraw = true;
+      return event;
+    case kRoleMod:
+      heldMods_ |= key.mod;
+      usedMods_ &= (uint8_t)~key.mod;  // not yet used
+      event.redraw = true;
+      return event;
+    case kRoleSpecial:
+      event.send = true;
+      event.key = key.key;
+      event.mods = effectiveMods();
+      consumeOneShots();
+      return event;
+    case kRoleText:
+    default: {
+      uint8_t ascii = key.key;
+      // Shift is expressed by the ASCII case (the HID layer derives the Shift
+      // modifier from it), not by a kModShift bit in `mods`.
+      if ((shifted_ || heldShift_) && ascii >= 'a' && ascii <= 'z') ascii -= 32;
+      event.send = true;
+      event.key = ascii;
+      event.mods = effectiveMods();
+      consumeOneShots();
+      return event;
     }
   }
+}
+
+HidKeyEvent HidKeyboard::releaseKey(int16_t keyId) {
+  HidKeyEvent event;
+  const KeyDefinition *key = keyFromId(symbols_, keyId);
+  if (key == nullptr) return event;
+
+  switch (key->role) {
+    case kRoleShift:
+      heldShift_ = false;
+      // A hold that shifted something is done; a hold that shifted nothing was
+      // really a tap, so arm the classic one-shot shift.
+      if (!shiftUsed_) shifted_ = !shifted_;
+      shiftUsed_ = false;
+      event.redraw = true;
+      return event;
+    case kRoleMod: {
+      bool used = (usedMods_ & key->mod) != 0;
+      heldMods_ &= (uint8_t)~key->mod;
+      usedMods_ &= (uint8_t)~key->mod;
+      if (!used) stickyMods_ ^= key->mod;  // quick tap -> sticky one-shot
+      event.redraw = true;
+      return event;
+    }
+    case kRoleSymbols:
+    case kRoleSpecial:
+    case kRoleText:
+    default:
+      // Nothing to send and no visible state change: the press already did all
+      // the work. The caller just restores that key's normal art.
+      return event;
+  }
+}
+
+bool HidKeyboard::repeats(int16_t keyId) const {
+  return keyRepeats(keyFromId(symbols_, keyId));
+}
+
+// Read-only classification for the sound engine. Classified by what the key
+// actually sends, so BACK / RETURN / SPACE are recognized in both layers without
+// a second table to keep in sync.
+uint8_t HidKeyboard::keySoundClass(int16_t keyId) const {
+  const KeyDefinition *key = keyFromId(symbols_, keyId);
+  if (key == nullptr) return KeySoundPacks::kClassGeneric;
+  if (key->role == kRoleSpecial) {
+    if (key->key == kKeyBackspace) return KeySoundPacks::kClassBackspace;
+    if (key->key == kKeyReturn) return KeySoundPacks::kClassEnter;
+  } else if (key->role == kRoleText && key->key == ' ') {
+    return KeySoundPacks::kClassSpace;
+  }
+  return KeySoundPacks::kClassGeneric;
+}
+
+uint8_t HidKeyboard::keySoundRow(int16_t keyId) const {
+  if (keyId < 0) return 0;
+  const uint8_t row = (uint8_t)(keyId / kKeysPerRowStride);
+  if (row >= 4) return 0;
+  // Translate this panel's 4 rows into the sample-pack row convention, whose
+  // GENERIC_R<n> clips are pitch-adjusted per row of a full ANSI board counted
+  // from the top: R0 = function row, R1 = numbers, R2 = QWERTY, R3 = ASDF,
+  // R4 = ZXCV and everything below it (kbsim clamps its bottom rows to R4).
+  // Verified against kbsim's KeySimulator.js row switch + its default KLE
+  // preset, whose row 0 is "Esc F1..F12".
+  //   letters layer: QWERTY/ASDF/ZXCV/modifiers -> R2, R3, R4, R4
+  //   symbols layer: numbers sit in row 0        -> R1, R2, R3, R4
+  // Picking the wrong row here is not a bug you can see, only hear: the click
+  // would carry a neighbouring row's pitch.
+  if (symbols_) {
+    return (uint8_t)(row + 1);
+  }
+  const uint8_t mapped = (uint8_t)(row + 2);
+  return mapped > 4 ? 4 : mapped;
+}
+
+HidKeyEvent HidKeyboard::repeatKey(int16_t keyId) {
+  HidKeyEvent event;
+  const KeyDefinition *key = keyFromId(symbols_, keyId);
+  if (!keyRepeats(key)) return event;
+  event.send = true;
+  event.key = key->key;
+  // The one-shots were consumed by the initial press; whatever is still held
+  // rides along with every repeat.
+  event.mods = effectiveMods();
   return event;
 }
 
@@ -195,11 +310,14 @@ void drawSmallCentered(Arduino_GFX *g, int16_t centerX, int16_t topY,
                 Widgets::kCenter);
 }
 
-bool keyActive(const KeyDefinition &key, bool shifted, bool symbols,
-               uint8_t sticky) {
-  if (key.role == kRoleShift) return shifted;
+// A key draws highlighted when it is a held modifier, an armed sticky
+// modifier, a held or armed shift, or the symbols-layer toggle while that layer
+// is up - so chording lights up exactly like the old sticky taps did.
+bool keyActive(const KeyDefinition &key, bool shiftActive, bool symbols,
+               uint8_t modsActive) {
+  if (key.role == kRoleShift) return shiftActive;
   if (key.role == kRoleSymbols) return symbols;
-  if (key.role == kRoleMod) return (sticky & key.mod) != 0;
+  if (key.role == kRoleMod) return (modsActive & key.mod) != 0;
   return false;
 }
 
@@ -224,38 +342,23 @@ void drawKeyCell(Arduino_GFX *g, const DeckTheme &theme, const KeyDefinition &ke
     drawSmallCentered(g, x + w / 2, y + 24, key.label, ink);
   }
 }
-
-// Locate the key under (px,py) using the same half-gutter targets as hitTest.
-bool locateKey(bool symbols, int16_t px, int16_t py, uint8_t &rowOut,
-               uint8_t &keyOut, int16_t &x, int16_t &y, int16_t &w, int16_t &h) {
-  for (uint8_t rowIndex = 0; rowIndex < 4; ++rowIndex) {
-    KeyboardRow row = rowAt(symbols, rowIndex);
-    for (uint8_t keyIndex = 0; keyIndex < row.count; ++keyIndex) {
-      keyBounds(row, rowIndex, keyIndex, x, y, w, h);
-      if (inside(px, py, x - kKeyGap / 2, y - kRowGap / 2, w + kKeyGap,
-                 h + kRowGap)) {
-        rowOut = rowIndex;
-        keyOut = keyIndex;
-        return true;
-      }
-    }
-  }
-  return false;
-}
 }  // namespace
 
 void HidKeyboard::draw(Arduino_GFX *g, const DeckTheme &theme) const {
   if (g == nullptr) return;
-  g->fillRect(0, kKeyboardY - 12, 1024, 296, theme.bg);
-  g->fillRoundRect(430, kKeyboardY - 8, 164, 5, 3, theme.accent);
+  g->fillRect(0, KeysLayout::kKeyboardBandY, KeysLayout::kScreenW,
+              KeysLayout::kKeyboardBandH, theme.bg);
+  g->fillRoundRect(KeysLayout::kKeyboardHandleX, KeysLayout::kKeyboardHandleY,
+                   KeysLayout::kKeyboardHandleW, KeysLayout::kKeyboardHandleH, 3,
+                   theme.accent);
 
   for (uint8_t rowIndex = 0; rowIndex < 4; ++rowIndex) {
     KeyboardRow row = rowAt(symbols_, rowIndex);
     for (uint8_t keyIndex = 0; keyIndex < row.count; ++keyIndex) {
       const KeyDefinition &key = row.keys[keyIndex];
       int16_t x, y, w, h;
-      keyBounds(row, rowIndex, keyIndex, x, y, w, h);
-      bool active = keyActive(key, shifted_, symbols_, stickyMods_);
+      KeysLayout::keyBounds(row.keys, row.count, rowIndex, keyIndex, x, y, w, h);
+      bool active = keyActive(key, shifted_ || heldShift_, symbols_, effectiveMods());
       drawKeyCell(g, theme, key, rowIndex, x, y, w, h, active, false);
     }
   }
@@ -275,7 +378,7 @@ void HidKeyboard::drawSingleKey(Arduino_GFX *g, const DeckTheme &theme,
   int16_t x, y, w, h;
   if (!locateKey(symbols_, kx + kw / 2, ky + kh / 2, r, k, x, y, w, h)) return;
   const KeyDefinition &key = rowAt(symbols_, r).keys[k];
-  bool active = keyActive(key, shifted_, symbols_, stickyMods_);
+  bool active = keyActive(key, shifted_ || heldShift_, symbols_, effectiveMods());
   drawKeyCell(g, theme, key, r, x, y, w, h, active, pressed);
 }
 #endif

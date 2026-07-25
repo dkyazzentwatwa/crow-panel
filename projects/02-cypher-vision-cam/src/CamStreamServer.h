@@ -4,6 +4,7 @@
 #include "../config/ProjectConfig.h"
 #include <Arduino.h>
 #include <CrowPanelShared.h>
+#include "CamRecorder.h"
 #include "JpegEncoder.h"
 
 // Serves the live camera feed over Wi-Fi from the onboard ESP32-C6.
@@ -27,6 +28,31 @@
 
 class CamStreamServer {
  public:
+  // Actions the web UI can request. Both are raised as flags and performed by
+  // the sketch in loop() - the network must never own a camera buffer.
+  typedef void (*ActionHandler)();
+
+  // Wiring the server needs before begin(): the shared JPEG encoder, the
+  // recorder (for the gallery listing and free space), and the two control
+  // callbacks. Kept separate from begin() so the radio can be stopped and
+  // restarted without re-supplying any of it.
+  void attach(CamRecorder *recorder, ActionHandler onShutter,
+              ActionHandler onRecordToggle) {
+    recorder_ = recorder;
+    onShutter_ = onShutter;
+    onRecordToggle_ = onRecordToggle;
+  }
+
+  // Recording state, pushed in from the sketch so /health and the page's
+  // record button can reflect it without the server reaching into the recorder
+  // on every request.
+  void setRecording(bool on) { recordingHint_ = on; }
+
+  // True while a file transfer owns the loop. The panel shows an overlay for
+  // the duration; see serveMedia_ for why that matters.
+  bool servingFile() const { return serving_; }
+  const String &servingName() const { return servingName_; }
+
   // Brings up the radio and both sockets. `encoder` is the shared JPEG encoder
   // (the recorder uses the same one). Returns false if the AP could not start.
   bool begin(JpegEncoder *encoder);
@@ -76,13 +102,24 @@ class CamStreamServer {
 
  private:
 #if USE_WIFI
+  String requestHost_() const;
+  String chrome_(bool onGallery) const;
   void serveViewerPage_();
+  void serveGalleryPage_();
+  void serveMedia_();
   void serveSnapshot_(const CrowCamera::Frame *frame);
   void serviceStreamSocket_(const CrowCamera::Frame *frame);
   bool startAccessPoint_();
+  static bool validMediaName_(const String &name, bool &isVideo);
 #endif
 
   JpegEncoder *encoder_ = nullptr;
+  CamRecorder *recorder_ = nullptr;
+  ActionHandler onShutter_ = nullptr;
+  ActionHandler onRecordToggle_ = nullptr;
+  bool recordingHint_ = false;
+  bool serving_ = false;
+  String servingName_;
   bool running_ = false;
   bool viewerConnected_ = false;
   bool defaultPassword_ = false;

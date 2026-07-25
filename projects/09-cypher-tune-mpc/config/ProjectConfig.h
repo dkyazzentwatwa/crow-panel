@@ -59,6 +59,11 @@
 #define CYPHER_TUNE_KIT_DIR "/mpc/kits"
 #endif
 
+// Backing loops (one resident in PSRAM at a time; see LoopLibrary).
+#ifndef CYPHER_TUNE_LOOP_DIR
+#define CYPHER_TUNE_LOOP_DIR "/mpc/loops"
+#endif
+
 // Audio render task placement: loop()/UI own core 1, audio owns core 0.
 #ifndef CYPHER_TUNE_AUDIO_TASK_CORE
 #define CYPHER_TUNE_AUDIO_TASK_CORE 0

@@ -1,5 +1,7 @@
 #include "config/ProjectConfig.h"
 #include <CrowPanelShared.h>
+#include <Preferences.h>
+#include "src/CamAudio.h"
 #include "src/CamPipeline.h"
 #include "src/CamRecorder.h"
 #include "src/CamStreamServer.h"
@@ -35,6 +37,7 @@ CamPipeline pipeline;
 // instance rather than each allocating their own.
 JpegEncoder jpeg;
 CamRecorder recorder;
+CamAudio audio;
 CamStreamServer streamServer;
 VisionCamUi ui;
 
@@ -49,6 +52,95 @@ static uint32_t fpsWindowFrames = 0;
 // in loop(), which is the one place holding a live frame. Capturing anywhere
 // else would mean a second code path owning a camera buffer.
 static bool shutterRequested = false;
+
+// --- Persistent settings ----------------------------------------------------
+//
+// Camera orientation is a property of how the panel is MOUNTED, not of this
+// session. A camera bolted upside down under a shelf is upside down every time
+// it powers on, so making the user re-set the flip after each boot is asking
+// them to correct the same physical fact repeatedly.
+//
+// Stored in NVS rather than on the SD card: it must survive with no card
+// present, and it is two bits. StorageManager is in-memory only, so this uses
+// Preferences directly.
+Preferences settings;
+
+static void loadOrientation() {
+  if (!settings.begin("visioncam", /*readOnly=*/true)) return;
+  const bool vflip = settings.getBool("vflip", false);
+  const bool hmirror = settings.getBool("hmirror", false);
+  settings.end();
+
+  Sc2336Sensor *s = CrowCamera::sensor();
+  if (s != nullptr && (vflip || hmirror)) {
+    s->setFlip(vflip, hmirror);
+    Logger::info("settings", String("restored orientation vflip=") + (vflip ? "1" : "0") +
+                                 " hmirror=" + (hmirror ? "1" : "0"));
+  }
+}
+
+static void saveOrientation(bool vflip, bool hmirror) {
+  if (!settings.begin("visioncam", /*readOnly=*/false)) return;
+  settings.putBool("vflip", vflip);
+  settings.putBool("hmirror", hmirror);
+  settings.end();
+}
+
+// Portrait/landscape, remembered like the flip because it describes how the
+// device is being held, not a preference for this session.
+static void loadPortrait(bool &portrait, bool &flipped) {
+  portrait = false;
+  flipped = false;
+  if (!settings.begin("visioncam", /*readOnly=*/true)) return;
+  portrait = settings.getBool("portrait", false);
+  flipped = settings.getBool("portflip", false);
+  settings.end();
+}
+
+static void savePortrait(bool portrait, bool flipped) {
+  if (!settings.begin("visioncam", /*readOnly=*/false)) return;
+  settings.putBool("portrait", portrait);
+  settings.putBool("portflip", flipped);
+  settings.end();
+}
+
+// Keeps everything that has to agree about orientation in step: the UI layout,
+// the JPEG encoder (so saved files open upright), and the setting itself.
+static void applyOrientation(bool portrait, bool flipped) {
+  ui.setOrientation(portrait ? CamOrientation::Portrait : CamOrientation::Landscape,
+                    flipped);
+  // 90 degrees counter-clockwise turns a 1024x600 sensor frame into a true
+  // 600x1024 portrait file. The VIEWFINDER is deliberately NOT rotated - the
+  // camera and panel are on the same device and turn together, so the preview
+  // is already correct and rotating it would put it back on its side.
+  jpeg.setRotation(portrait ? 90 : 0);
+}
+
+// Volume doubles as the on/off state: 0 is off. One stored value cannot
+// disagree with itself the way a separate mute flag and level can.
+static uint8_t loadSoundVolume() {
+  if (!settings.begin("visioncam", /*readOnly=*/true)) return 90;
+  const uint8_t v = settings.getUChar("vol", 90);
+  settings.end();
+  return v > 100 ? 100 : v;
+}
+
+static void saveSoundVolume(uint8_t volume) {
+  if (!settings.begin("visioncam", /*readOnly=*/false)) return;
+  settings.putUChar("vol", volume);
+  settings.end();
+}
+
+// Pending record toggle, raised by the web UI and consumed in loop(). Same
+// reasoning as shutterRequested: the network thread must not start or stop a
+// clip mid-frame, so it asks and loop() acts.
+static bool recordToggleRequested = false;
+
+// Callbacks handed to CamStreamServer. Free functions because the server takes
+// plain function pointers, matching SerialCommandRouter's style - sketch
+// globals are directly reachable and there is nothing to capture.
+static void webShutter() { shutterRequested = true; }
+static void webRecordToggle() { recordToggleRequested = true; }
 
 // --- BOOT button as a physical shutter release -----------------------------
 //
@@ -260,6 +352,42 @@ static void cmdCam(const String &args) {
   }
 
   Serial.println(F("usage: cam [status|begin|start|stop|end|grab|exp <n>|gain <n>|ae ...]"));
+}
+
+// Escape hatch. A wrong portrait touch mapping makes the Settings row that
+// fixes it hard to hit - the exact trap encountered on hardware - so the same
+// control exists over Serial where touch cannot interfere.
+static void cmdOrient(const String &args) {
+  String a = args;
+  a.trim();
+  a.toLowerCase();
+
+  bool portrait = false, flipped = false;
+  if (a == "landscape" || a == "l") {
+    portrait = false;
+  } else if (a == "portrait" || a == "p") {
+    portrait = true;
+  } else if (a == "flipped" || a == "f") {
+    portrait = true;
+    flipped = true;
+  } else if (a == "mark") {
+    ui.setShowTouchMark(!ui.showTouchMark());
+    Serial.print(F("[orient] touch crosshair "));
+    Serial.println(ui.showTouchMark() ? F("ON") : F("OFF"));
+    return;
+  } else {
+    Serial.println(F("usage: orient <landscape|portrait|flipped|mark>"));
+    Serial.print(F("[orient] now: "));
+    Serial.println(ui.orientation() == CamOrientation::Portrait
+                       ? (ui.portraitFlipped() ? "portrait flipped" : "portrait")
+                       : "landscape");
+    return;
+  }
+
+  applyOrientation(portrait, flipped);
+  savePortrait(portrait, flipped);
+  Serial.print(F("[orient] set to "));
+  Serial.println(portrait ? (flipped ? "portrait flipped" : "portrait") : "landscape");
 }
 
 static void cmdShot(const String &) {
@@ -505,6 +633,9 @@ void setup() {
   // the reason is readable, which matters on a board whose USB serial drops the
   // moment the app runs.
   if (CrowCamera::begin(activeHardwareProfile())) {
+    // Orientation before streaming, so the very first frame is already the
+    // right way up rather than flipping a moment after boot.
+    loadOrientation();
     CrowCamera::start();
     eventLog.add("camera up");
   } else {
@@ -526,8 +657,16 @@ void setup() {
   recorder.begin(&jpeg);
   recorder.refreshMediaList();
 
+  // Audio is independent of the camera, but must be up before the first capture
+  // so the shutter is never silent.
+  audio.begin(activeHardwareProfile());
+  audio.setVolume(loadSoundVolume());
+  audio.setEnabled(audio.volume() > 0);
+  ui.setSound(audio.enabled(), audio.volume());
+
   // The radio comes up last. It is the only outward-facing thing here, and
   // advertising a feed before the camera works would be the wrong order.
+  streamServer.attach(&recorder, webShutter, webRecordToggle);
   if (!streamServer.begin(&jpeg)) {
     Logger::warn("boot", String("stream server down: ") + streamServer.lastError());
   }
@@ -535,12 +674,20 @@ void setup() {
   pipeline.begin();
   ui.setRecorder(&recorder);
   ui.begin();
+  // After ui.begin() so the first layout is already the remembered one.
+  {
+    bool portrait = false, flipped = false;
+    loadPortrait(portrait, flipped);
+    applyOrientation(portrait, flipped);
+  }
   fpsWindowStartMs = millis();
 
   router.begin(Serial, "cypher-vision-cam");
   router.on("status", "system + camera status", cmdStatus);
   router.on("history", "event log, oldest first", cmdHistory);
   router.on("cam", "camera pipeline control", cmdCam);
+  router.on("orient", "landscape|portrait|flipped|mark - orientation escape hatch",
+            cmdOrient);
   router.on("shot", "capture a still to SD", cmdShot);
   router.on("rec", "start/stop a video clip", cmdRec);
   router.on("gallery", "list captured media", cmdGallery);
@@ -599,6 +746,9 @@ static void applyUiEvent(const CamEvent &event) {
       else if (v && !h) s->setFlip(true, true);
       else if (v && h) s->setFlip(false, true);
       else s->setFlip(false, false);
+      // Persist immediately: orientation describes the mounting, so it should
+      // survive a power cycle without being re-set.
+      saveOrientation(s->flippedVertically(), s->flippedHorizontally());
       ui.markDirty();
       break;
     }
@@ -619,17 +769,51 @@ static void applyUiEvent(const CamEvent &event) {
       break;
 
     case CamEventType::RecordToggle:
-      if (recorder.recording()) {
-        recorder.stopClip();
-        recorder.refreshMediaList();
-        eventLog.add(String("clip: ") + String(recorder.clipFrames()) + " frames, " +
-                     String(recorder.droppedFrames()) + " dropped");
-      } else if (!recorder.startClip()) {
-        Serial.print(F("[rec] "));
-        Serial.println(recorder.lastError());
+      // Routed through the same flag the web path uses, so start/stop happens
+      // in exactly one place and always between frames.
+      recordToggleRequested = true;
+      break;
+    case CamEventType::OrientationToggle: {
+      // Cycle landscape -> portrait -> portrait flipped -> landscape. The two
+      // portrait states differ only in which way round the panel is held, which
+      // software cannot detect - so it is offered rather than guessed.
+      const bool wasPortrait = ui.orientation() == CamOrientation::Portrait;
+      const bool wasFlipped = ui.portraitFlipped();
+      bool portrait = true, flipped = false;
+      if (!wasPortrait) {
+        portrait = true;
+        flipped = false;
+      } else if (!wasFlipped) {
+        portrait = true;
+        flipped = true;
+      } else {
+        portrait = false;
+        flipped = false;
       }
+      applyOrientation(portrait, flipped);
+      savePortrait(portrait, flipped);
+      break;
+    }
+
+    case CamEventType::VolumeUp:
+    case CamEventType::VolumeDown: {
+      // 20% steps, 0 to 100. Zero is "off" - one control rather than a mute
+      // switch and a level that can disagree with each other.
+      int step = (event.type == CamEventType::VolumeUp) ? 20 : -20;
+      int vol = (int)audio.volume() + step;
+      if (vol < 0) vol = 0;
+      if (vol > 100) vol = 100;
+      audio.setVolume((uint8_t)vol);
+      audio.setEnabled(vol > 0);
+      saveSoundVolume((uint8_t)vol);
+      ui.setSound(audio.enabled(), audio.volume());
+      // Play at the new level so the setting demonstrates itself rather than
+      // making you take a photo to find out.
+      if (vol > 0) audio.play(CamSound::Shutter);
       ui.markDirty();
       break;
+    }
+
     case CamEventType::StreamToggle:
       if (streamServer.running()) {
         streamServer.end();
@@ -678,9 +862,14 @@ void loop() {
     if (shutterRequested) {
       shutterRequested = false;
       if (recorder.captureStill(frame)) {
+        // Sound AFTER the write succeeds, not before. A click that fires on
+        // intent rather than outcome teaches you to trust a capture that may
+        // not have happened.
+        audio.play(CamSound::Shutter);
         recorder.refreshMediaList();
         eventLog.add("still captured");
       } else {
+        audio.play(CamSound::Error);
         Serial.print(F("[shot] "));
         Serial.println(recorder.lastError());
       }
@@ -688,6 +877,24 @@ void loop() {
     }
     // Rate-limits internally to the configured record fps; cheap when idle.
     recorder.offerFrame(frame);
+  }
+
+  // Web-requested record toggle, handled here rather than in the HTTP handler
+  // so start/stop never lands mid-frame.
+  if (recordToggleRequested) {
+    recordToggleRequested = false;
+    if (recorder.recording()) {
+      recorder.stopClip();
+      audio.play(CamSound::RecordStop);
+      recorder.refreshMediaList();
+      eventLog.add(String("clip: ") + String(recorder.clipFrames()) + " frames, " +
+                   String(recorder.droppedFrames()) + " dropped");
+    } else if (recorder.startClip()) {
+      audio.play(CamSound::RecordStart);
+    } else {
+      audio.play(CamSound::Error);
+    }
+    ui.markDirty();
   }
 
   // Stream while the frame is still held - it encodes from the live buffer.
@@ -698,6 +905,8 @@ void loop() {
 
   ui.setRecording(recorder.recording(), recorder.clipElapsedSec(),
                   recorder.droppedFrames());
+  streamServer.setRecording(recorder.recording());
+  ui.setServing(streamServer.servingFile(), streamServer.servingName());
   ui.setStreamState(streamServer.running(), streamServer.ssid(), streamServer.url(),
                     streamServer.viewerCount(), streamServer.stationCount(),
                     streamServer.stationUrl());

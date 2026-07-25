@@ -3,6 +3,8 @@
 #include "src/AudioEngine.h"
 #include "src/SampleBank.h"
 #include "src/Sequencer.h"
+#include "src/BuiltinKit.h"
+#include "src/LoopLibrary.h"
 #include "src/SynthKit.h"
 #include "src/TuneSplash.h"
 #include "src/TuneUi.h"
@@ -122,7 +124,7 @@ bool doKitLoad(const String &name) {
   if (name == "builtin") {
     staging.beginDefaults(staging.engineRate());
     if (engineUp) {
-      SynthKit::synthesizeBuiltinKit(staging);
+      BuiltinKit::loadAll(staging);
     }
     status = "builtin kit";
   } else {
@@ -164,6 +166,85 @@ void cmdKit(const String &args) {
     return;
   }
   Serial.println(F("[kit] usage: kit | kit load <name> | kit builtin"));
+}
+
+// --- Backing loops ---
+// -1 = no loop. Selecting a loop locks the sequencer's step length to the
+// loop's own bar grid, which is the only drift-free way to play over a bed
+// whose real tempo is fractional (72.5, 77.6, 65.1 BPM in this pack).
+int8_t currentLoop = -1;
+
+void freeRetiredLoop() {
+  int16_t *old = audioEngine().takeRetiredLoop();
+  if (old != nullptr) {
+    free(old);
+  }
+}
+
+bool selectLoop(int8_t index) {
+  if (index < 0) {
+    currentLoop = -1;
+    seq.setLockedStepFrames(0);  // BPM takes the clock back
+    if (audioEngine().running()) {
+      EngineCommand cmd = {kCmdLoopClear, 0, 0};
+      audioEngine().post(cmd);
+    } else {
+      freeRetiredLoop();
+    }
+    Serial.println(F("[loop] off; tempo unlocked"));
+    return true;
+  }
+  if (index >= (int8_t)LoopLibrary::count()) {
+    return false;
+  }
+  const LoopLibrary::LoopInfo &info = LoopLibrary::info((uint8_t)index);
+  int16_t *pcm = nullptr;
+  uint32_t frames = LoopLibrary::loadLoop((uint8_t)index, &pcm);
+  if (frames == 0) {
+    Serial.println(String("[loop] failed to load ") + info.name);
+    return false;
+  }
+  uint32_t stepFrames = LoopLibrary::stepFramesFor(info);
+  currentLoop = index;
+  audioEngine().stageLoop(pcm, frames);
+  if (audioEngine().running()) {
+    EngineCommand cmd = {kCmdLoopSwap, 0, 0};
+    audioEngine().post(cmd);
+  } else {
+    freeRetiredLoop();  // silent build: nothing plays it, drop it again
+  }
+  seq.setLockedStepFrames(stepFrames);
+  Serial.println(String("[loop] ") + info.title + " " +
+                 String(info.bpmTenths / 10.0f, 1) + " BPM, " +
+                 String(info.bars) + " bars, " + String(frames * 2 / 1024) +
+                 "KB; step=" + String(stepFrames) + " frames (tempo locked)");
+  return true;
+}
+
+// Loop < > arrows: -1 walks off the front into "no loop".
+void uiLoopStep(void *, int8_t dir) {
+  uint8_t n = LoopLibrary::count();
+  if (n == 0) {
+    return;
+  }
+  int8_t next = currentLoop + dir;
+  if (next < -1) next = (int8_t)n - 1;
+  if (next >= (int8_t)n) next = -1;
+  selectLoop(next);
+}
+
+const char *uiLoopName(void *) {
+  if (currentLoop < 0) {
+    return LoopLibrary::count() ? "-- none --" : "no loops on SD";
+  }
+  return LoopLibrary::info((uint8_t)currentLoop).title;
+}
+
+const char *currentLoopTitle() {
+  if (currentLoop < 0) {
+    return LoopLibrary::count() ? "-- none --" : "no loops on SD";
+  }
+  return LoopLibrary::info((uint8_t)currentLoop).title;
 }
 
 // Kit < > arrows on the edit panel cycle through builtin + SD kits.
@@ -223,6 +304,9 @@ void drainEngineEvents() {
         break;
       case kEvtKitSwapped:
         onKitSwapped(evt.pad);
+        break;
+      case kEvtLoopSwapped:
+        freeRetiredLoop();  // the engine has stopped reading the old buffer
         break;
       default:
         break;
@@ -447,6 +531,46 @@ void cmdPerf(const String &) {
   Serial.println(String("[perf] ") + ui.perfLine());
 }
 
+void cmdLoop(const String &args) {
+  String arg = args;
+  arg.trim();
+  if (arg.length() == 0) {
+    uint8_t n = LoopLibrary::count();
+    Serial.println(String("[loop] active=") + currentLoopTitle() +
+                   (seq.locked() ? " (tempo locked)" : "") + " available=" + String(n));
+    for (uint8_t i = 0; i < n; i++) {
+      const LoopLibrary::LoopInfo &l = LoopLibrary::info(i);
+      Serial.println(String("  ") + (i == (uint8_t)currentLoop ? "*" : " ") +
+                     l.name + "  " + l.title + "  " +
+                     String(l.bpmTenths / 10.0f, 1) + " BPM  " + String(l.bars) +
+                     " bars  " + String(l.frames / 22050.0f, 1) + "s");
+    }
+    if (n == 0) {
+      Serial.println(F("  (none; needs /mpc/loops/loops.txt on SD and USE_MPC_SD=1)"));
+    }
+    return;
+  }
+  if (arg.equalsIgnoreCase("off") || arg.equalsIgnoreCase("none")) {
+    selectLoop(-1);
+    return;
+  }
+  int8_t idx = LoopLibrary::indexOfName(arg.c_str());
+  if (idx < 0) {
+    Serial.println(String("[loop] no loop named \"") + arg + "\"");
+    return;
+  }
+  selectLoop(idx);
+}
+
+void cmdLoopVol(const String &args) {
+  String arg = args;
+  arg.trim();
+  if (arg.length()) {
+    audioEngine().setLoopVolume((uint8_t)constrain(arg.toInt(), 0, 255));
+  }
+  Serial.println(String("[loopvol] ") + String(audioEngine().loopVolume()) + "/255");
+}
+
 void cmdBright(const String &args) {
   String arg = args;
   arg.trim();
@@ -526,7 +650,7 @@ void setup() {
   bankStaging.beginDefaults(CYPHER_TUNE_ENGINE_RATE);
   seq.begin(92);
   if (audioEngine().begin(profile, &bank, &bankStaging, &seq, Serial)) {
-    uint8_t loaded = SynthKit::synthesizeBuiltinKit(bank);
+    uint8_t loaded = BuiltinKit::loadAll(bank);
     Serial.println(String("[engine] builtin kit synthesized: ") +
                    String(loaded) + "/16 pads, " +
                    String(bank.totalBytes() / 1024) + "KB PSRAM");
@@ -540,6 +664,10 @@ void setup() {
   uiCallbacks.scope = uiScope;
   uiCallbacks.volumeGet = uiVolumeGet;
   uiCallbacks.volumeSet = uiVolumeSet;
+  if (LoopLibrary::begin() > 0) {
+    uiCallbacks.loopStep = uiLoopStep;
+    uiCallbacks.loopName = uiLoopName;
+  }
   ui.begin(&bank, &seq, &voices, uiCallbacks);
   // Splash runs after the engine so its subtitle reports the real audio state
   // (and after ui.begin(), which owns display bring-up and the saved theme).
@@ -571,6 +699,8 @@ void setup() {
   router.on("touch", "touch tracker diagnostics", cmdTouch);
   router.on("perf", "UI render timing", cmdPerf);
   router.on("theme", "switch UI theme: theme | next | <name>", cmdTheme);
+  router.on("loop", "backing loop: loop | <name> | off", cmdLoop);
+  router.on("loopvol", "backing loop level: loopvol | <0-255>", cmdLoopVol);
   router.on("bright", "backlight: bright | <40-255> | + | -", cmdBright);
   router.on("vol", "master volume: vol | <0-255>", cmdVolume);
   router.on("settings", "settings view: settings | open | close | idledim", cmdSettings);

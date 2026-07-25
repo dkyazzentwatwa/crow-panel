@@ -199,10 +199,14 @@ void AudioEngine::drainCommands_() {
         seq_->play();
         framesToNextStep_ = 0;
         curStepFrames_ = 0;
+        // Restart the backing loop from its downbeat so the pattern and the
+        // loop always begin together on beat 1.
+        loopPos_ = 0;
         break;
       case kCmdStop:
         seq_->stop();
         fadeAll_();
+        loopPos_ = 0;
         break;
       case kCmdKitSwap: {
         // Kill every voice before the flip so nothing can read buffers the
@@ -215,6 +219,26 @@ void AudioEngine::drainCommands_() {
         pushEvent_({kEvtKitSwapped, 0, retired, 0});
         break;
       }
+      case kCmdLoopSwap: {
+        // Adopt the staged buffer at a block boundary; the displaced one is
+        // handed back through takeRetiredLoop() once the loop context sees
+        // kEvtLoopSwapped, so it is never freed while this task can read it.
+        loopRetired_ = loopPcm_;
+        loopPcm_ = loopPending_;
+        loopFrames_ = loopPendingFrames_;
+        loopPending_ = nullptr;
+        loopPendingFrames_ = 0;
+        loopPos_ = 0;
+        pushEvent_({kEvtLoopSwapped, 0, 0, 0});
+        break;
+      }
+      case kCmdLoopClear:
+        loopRetired_ = loopPcm_;
+        loopPcm_ = nullptr;
+        loopFrames_ = 0;
+        loopPos_ = 0;
+        pushEvent_({kEvtLoopSwapped, 0, 0, 0});
+        break;
       case kCmdChokeAll:
         fadeAll_();
         break;
@@ -329,6 +353,21 @@ void AudioEngine::fadeAll_() {
 }
 
 void AudioEngine::mixChunk_(int32_t *acc, uint32_t frames) {
+  // Backing loop first, so the pads sit on top of it. It is at the engine
+  // rate, so this is a plain integer walk that wraps - no resampling and no
+  // end-of-sample check beyond the wrap.
+  if (loopPcm_ != nullptr && loopFrames_ > 0) {
+    uint32_t pos = loopPos_;
+    int32_t gain = (int32_t)loopVolume_ * masterVolume_;  // 0..65025
+    for (uint32_t n = 0; n < frames; n++) {
+      acc[n] += ((int32_t)loopPcm_[pos] * gain) >> 16;
+      if (++pos >= loopFrames_) {
+        pos = 0;
+      }
+    }
+    loopPos_ = pos;
+  }
+
   for (uint8_t i = 0; i <= kVoices; i++) {
     Voice &voice = voices_[i];
     if (!voice.active) {
@@ -406,6 +445,17 @@ uint8_t AudioEngine::activeVoices() const {
   return activeVoiceCount_;
 }
 
+void AudioEngine::stageLoop(int16_t *pcm, uint32_t frames) {
+  loopPending_ = pcm;
+  loopPendingFrames_ = frames;
+}
+
+int16_t *AudioEngine::takeRetiredLoop() {
+  int16_t *old = loopRetired_;
+  loopRetired_ = nullptr;
+  return old;
+}
+
 uint16_t AudioEngine::copyScope(int16_t *out, uint16_t max) const {
   if (out == nullptr || max == 0) {
     return 0;
@@ -458,6 +508,16 @@ uint8_t AudioEngine::activeVoices() const { return 0; }
 
 // No mix to scope: returning 0 is the UI's cue to draw the simulated meters.
 uint16_t AudioEngine::copyScope(int16_t *, uint16_t) const { return 0; }
+
+// Silent build: accept the buffer and hand it straight back, so the loop
+// context's alloc/free bookkeeping works identically with no engine running.
+void AudioEngine::stageLoop(int16_t *pcm, uint32_t) { loopRetired_ = pcm; }
+
+int16_t *AudioEngine::takeRetiredLoop() {
+  int16_t *old = loopRetired_;
+  loopRetired_ = nullptr;
+  return old;
+}
 
 const char *AudioEngine::modeName() const {
   return "stub";

@@ -76,6 +76,21 @@ bool JpegEncoder::begin(uint16_t maxWidth, uint16_t maxHeight) {
 bool JpegEncoder::scaleTo_(const CrowCamera::Frame &frame, uint16_t outW, uint16_t outH) {
   if (gScaler == nullptr || scratch_ == nullptr) return false;
 
+  // At 90 or 270 the PPA writes a rotated picture, so the OUTPUT picture is
+  // as tall as the input is wide. Getting this backwards would have it write
+  // outside the buffer.
+  const bool swaps = (rotation_ == 90 || rotation_ == 270);
+  const uint16_t picW = swaps ? outH : outW;
+  const uint16_t picH = swaps ? outW : outH;
+
+  ppa_srm_rotation_angle_t angle = PPA_SRM_ROTATION_ANGLE_0;
+  switch (rotation_) {
+    case 90: angle = PPA_SRM_ROTATION_ANGLE_90; break;
+    case 180: angle = PPA_SRM_ROTATION_ANGLE_180; break;
+    case 270: angle = PPA_SRM_ROTATION_ANGLE_270; break;
+    default: break;
+  }
+
   ppa_srm_oper_config_t op = {};
   op.in.buffer = frame.data;
   op.in.pic_w = frame.width;
@@ -86,18 +101,20 @@ bool JpegEncoder::scaleTo_(const CrowCamera::Frame &frame, uint16_t outW, uint16
 
   op.out.buffer = scratch_;
   op.out.buffer_size = scratchBytes_;
-  op.out.pic_w = outW;
-  op.out.pic_h = outH;
+  op.out.pic_w = picW;
+  op.out.pic_h = picH;
   op.out.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
 
-  op.rotation_angle = PPA_SRM_ROTATION_ANGLE_0;
+  op.rotation_angle = angle;
+  // Scale is expressed against the UNROTATED axes - it is applied before the
+  // rotation, not after.
   op.scale_x = (float)outW / (float)frame.width;
   op.scale_y = (float)outH / (float)frame.height;
   op.mode = PPA_TRANS_MODE_BLOCKING;
 
   if (ppa_do_scale_rotate_mirror(gScaler, &op) != ESP_OK) return false;
-  scratchW_ = outW;
-  scratchH_ = outH;
+  scratchW_ = picW;
+  scratchH_ = picH;
   return true;
 }
 
@@ -110,12 +127,16 @@ size_t JpegEncoder::encode(const CrowCamera::Frame &frame, uint16_t outW, uint16
   uint16_t width = frame.width;
   uint16_t height = frame.height;
 
-  if (outW != frame.width || outH != frame.height) {
+  // Rotation alone is reason enough to go through the PPA, even when the size
+  // already matches - otherwise a portrait capture would silently come out
+  // landscape.
+  if (outW != frame.width || outH != frame.height || rotation_ != 0) {
     if (scaleTo_(frame, outW, outH)) {
       source = scratch_;
-      sourceBytes = (size_t)outW * outH * sizeof(uint16_t);
-      width = outW;
-      height = outH;
+      // scratchW_/H_ already account for the 90/270 axis swap.
+      width = scratchW_;
+      height = scratchH_;
+      sourceBytes = (size_t)width * height * sizeof(uint16_t);
     } else {
       // Scaling is an optimisation, not a requirement. Encoding at native size
       // still produces a valid JPEG - just a bigger one - so say so and carry

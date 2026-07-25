@@ -164,6 +164,14 @@ ROWS=(
   # The Bluetooth path compiles here too (BLE does not need USB-OTG). The BLE lib
   # ships with the core (no install), so it is not listed as a required lib.
   "$P21|ble-hid-mock|-DUSE_DISPLAY=1 -DUSE_BLE_HID=1|GFX Library for Arduino,SensorLib"
+  # Synthesized mechanical key clicks out of the NS4168 I2S amp (src/KeyAudio).
+  # The amp path itself is proven by project 09; this row only proves the click
+  # engine compiles and that it vanishes cleanly without the flag.
+  "$P21|key-audio|-DUSE_DISPLAY=1 -DUSE_CYPHER_KEYS_AUDIO=1|GFX Library for Arduino,SensorLib"
+  # Real recorded switch samples loaded off SD (src/KeySoundPacks). No audio is
+  # vendored in the repo, so this row proves the loader compiles and that it
+  # leaves the baseline/display builds alone - it cannot prove a card reads.
+  "$P21|key-audio-sd|-DUSE_DISPLAY=1 -DUSE_CYPHER_KEYS_AUDIO=1 -DUSE_CYPHER_KEYS_SD=1|GFX Library for Arduino,SensorLib"
   # Project 22 loads ROMs and writes battery saves through SD_MMC's FAT VFS
   # (gnuboy does its own stdio file I/O). Verify SD_MMC actually appears under
   # <build-path>/libraries/ for these rows - a green build alone does not prove
@@ -177,6 +185,9 @@ ROWS=(
   # that warning to an error). EXTRA_C_FLAGS reaches only the C compiler.
   "$P22|genesis|-DUSE_GENESIS_CORE=1|"
   "$P22|genesis-full|-DUSE_DISPLAY=1 -DUSE_GB_SD=1 -DUSE_GB_AUDIO=1 -DUSE_GENESIS_CORE=1|GFX Library for Arduino,SensorLib"
+  "$P22|nes|-DUSE_NES_CORE=1|"
+  "$P22|nes-full|-DUSE_DISPLAY=1 -DUSE_GB_SD=1 -DUSE_GB_AUDIO=1 -DUSE_NES_CORE=1|GFX Library for Arduino,SensorLib"
+  "$P22|all-systems|-DUSE_DISPLAY=1 -DUSE_GB_SD=1 -DUSE_GB_AUDIO=1 -DUSE_GENESIS_CORE=1 -DUSE_NES_CORE=1|GFX Library for Arduino,SensorLib"
 )
 
 echo "Flag matrix: ${#ROWS[@]} rows on $FQBN"
@@ -213,6 +224,12 @@ for ROW in "${ROWS[@]}"; do
   EXTRA_C_FLAGS=""
   if [[ "$FLAGS" == *"USE_GENESIS_CORE=1"* ]]; then
     EXTRA_C_FLAGS="-Wno-incompatible-pointer-types -Wno-error=incompatible-pointer-types"
+  fi
+  # nofrendo: upstream's own warning suppressions, plus NES6502_JUMPTABLE because
+  # Arduino's P4 flags include -fno-jump-tables, which would otherwise degrade the
+  # 256-case opcode switch to a compare tree.
+  if [[ "$FLAGS" == *"USE_NES_CORE=1"* ]]; then
+    EXTRA_C_FLAGS="$EXTRA_C_FLAGS -DNES6502_JUMPTABLE -Wno-array-bounds -Wno-error=format -Wno-format -Wno-incompatible-pointer-types -Wno-error=incompatible-pointer-types"
   fi
 
   FLAG_ARGS=()

@@ -215,6 +215,26 @@ LiteGoGame::MoveResult LiteGoGame::cpuMoveBlocking() {
   return takeAiMove();
 }
 
+int16_t LiteGoGame::suggestMove() {
+  if (board_.finished()) {
+    return kPass;
+  }
+  // Borrow the AI for a short blocking search from the current side's view.
+  // Safe on the human's turn (the opponent's searcher is idle); the level
+  // config is restored on the way out so the opponent still plays at its level.
+  aiThinking_ = false;
+  litego::AiConfig hint = litego::aiConfigForLevel(litego::kLevelNormal);
+  hint.budgetMs = 800;
+  hint.maxPlayouts = 6000;
+  ai_.setConfig(hint);
+  ai_.start(board_);
+  while (!ai_.step(50)) {
+  }
+  int16_t move = ai_.bestMove();
+  ai_.setConfig(litego::aiConfigForLevel(level_));
+  return move;
+}
+
 char LiteGoGame::currentPlayer() const { return colorChar(board_.toMove()); }
 
 char LiteGoGame::at(uint8_t x, uint8_t y) const {

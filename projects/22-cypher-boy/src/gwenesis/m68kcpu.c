@@ -17,11 +17,11 @@ extern int vdp_68k_irq_ack(int int_level);
 /* ======================================================================== */
 
 #ifndef BUILD_TABLES
-  #ifndef TABLES_FULL
-    #include "m68ki_cycles.h"
-  #else
-    #include "m68ki_cycles_full.h"
-  #endif
+  // CrowPanel patch: ALWAYS the _full table. Dispatch indexes the jump/cycle
+  // tables with the unmasked 16-bit opcode (0x0000-0xFFFF), so the table MUST
+  // have 65536 entries. The non-_full m68ki_cycles.h has only 61376 (0xEFC0),
+  // so any opcode >= 0xEFC0 read out of bounds. See src/gwenesis/VENDORED.md.
+  #include "m68ki_cycles_full.h"
 #endif
 
 #include "m68kconf.h"

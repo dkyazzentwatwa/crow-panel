@@ -101,7 +101,22 @@ void GbInput::tick() {
     return;
   }
 
-  buttons_ = touch_.down() ? mapPoint(touch_.x(), touch_.y()) : 0;
+  // Multi-touch button state: OR together the button under EVERY active
+  // contact, so you can hold a direction and press A at the same time - the
+  // single-point path could only ever report one button, which made movement +
+  // action games unplayable. The GT911 reports up to 5 points; they share the
+  // same cached sample CrowTouch just read, so this adds no extra I2C traffic.
+  uint32_t bits = 0;
+#if USE_DISPLAY
+  CrowDisplay::TouchPointData pts[5];
+  const uint8_t n = CrowDisplay::touchPoints(pts, 5);
+  for (uint8_t i = 0; i < n; i++) {
+    bits |= mapPoint(pts[i].x, pts[i].y);
+  }
+#else
+  if (touch_.down()) bits = mapPoint(touch_.x(), touch_.y());
+#endif
+  buttons_ = bits;
 
   // MENU on release, so dragging off it cancels.
   if (touch_.releasedEdge()) {

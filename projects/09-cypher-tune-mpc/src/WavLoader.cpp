@@ -1,6 +1,6 @@
 #include "WavLoader.h"
 
-#include "SynthKit.h"
+#include "BuiltinKit.h"
 
 #if USE_MPC_SD
 #include <SD_MMC.h>
@@ -171,7 +171,7 @@ uint8_t loadKit(const char *name, SampleBank &staging, String &status) {
         free(pcm);
       }
     } else {
-      SynthKit::synthesizePad(staging, pad);  // builtin fallback for the pad
+      BuiltinKit::loadPad(staging, pad);  // builtin fallback for the pad
     }
   }
   staging.setKitName(name);

@@ -75,6 +75,11 @@ class LiteGoGame {
   // Blocking search used by the Serial `cpu` command and `autoplay`.
   MoveResult cpuMoveBlocking();
 
+  // A suggested move for the side to move, from a short blocking search that
+  // borrows the AI. Returns litego::kPass for "no useful suggestion" (game
+  // over, or passing is best). Used by HINT.
+  int16_t suggestMove();
+
   // --- queries --------------------------------------------------------------
   char currentPlayer() const;
   char at(uint8_t x, uint8_t y) const;

@@ -29,16 +29,25 @@ while (scan_line < lines_per_frame) {
 That is the same shape as `GameBoyHost::runFrame()` calling `gnuboy_run()`. It
 drops into the existing architecture almost unchanged.
 
-**Nofrendo (NES) is caller-style** — `nofrendo_start(filename, savefile)` blocks
-until the game stops and calls *your* `blit` / `vsync` / `input` callbacks. It
-wants to own the program. Wrapping it means a dedicated FreeRTOS task and
-cross-task frame marshalling.
+**Nofrendo (NES) — CORRECTED 2026-07-24: it is ALSO callee-style.**
+
+> The original claim here was that `nofrendo_start()` blocks and calls host
+> callbacks, so NES would need a dedicated FreeRTOS task and cross-task frame
+> marshalling. **That was wrong**, and it was written from the shape of *classic*
+> nofrendo rather than from reading ducalex's source.
+>
+> `nes_emulate(bool draw)` (`nes/nes.h:122`) runs exactly one frame and returns —
+> a literal signature match for `EmuCore::runFrame(bool draw)`.
+> `nofrendo_start()` does exist and does block (`nofrendo.c:117-122`), which is
+> where the belief came from, but retro-go's own NES app never calls it: it runs
+> its own loop calling `nes_emulate(drawFrame)`. That wrapper is dead code we do
+> not vendor. **No task, no marshalling.**
 
 So the "bigger" console is the simpler integration:
 
 | | Gwenesis (Genesis) | Nofrendo (NES) |
 |---|---|---|
-| Control flow | callee — we own the loop | **caller — blocks, needs its own task** |
+| Control flow | callee — we own the loop | **also callee** (`nes_emulate`) — the "blocking" claim was wrong |
 | Source files | ~37 `.c/.h` | ~85 |
 | Runtime cost | high (68000 + Z80 + VDP + YM2612 FM) | low (6502 is trivial for a P4) |
 | Big data | M68K jump/cycle tables, ~300-600 KB flash | `database.h`, 401 KB |
@@ -94,9 +103,10 @@ class EmuCore {
 };
 ```
 
-Lifecycle-shaped rather than strictly frame-shaped, so the NES implementation can
-satisfy it by running `nofrendo_start()` on its own task while `runFrame()` simply
-waits for the next frame that task published. GB and Genesis implement it directly.
+Lifecycle-shaped rather than strictly frame-shaped. That generality turned out to
+be unnecessary for NES — all three cores (gnuboy, gwenesis, nofrendo) implement
+`runFrame()` directly — but it costs nothing and still buys headroom for any
+future core that genuinely does want to own its loop.
 
 Button bits stay the GB set plus extras (`GB_BTN_C`, `GB_BTN_MODE`) for Genesis;
 each core maps them to its own pad encoding, `static_assert`ed wherever a vendored

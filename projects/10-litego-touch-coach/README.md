@@ -12,11 +12,12 @@ no PWA, no network.
 
 ## Status
 
-Compile-ready for the baseline and `USE_DISPLAY=1` builds on the ESP32-P4
-target, and the rules engine and AI pass their full test suite on the host. The
-board has not been played on a physical CrowPanel yet — the screen, the taps,
-the opponent's on-device speed, and the `selftest` all still need to be observed
-there. See the [technical reference](TECHNICAL.md).
+**Uploaded** to a CrowPanel: the `USE_DISPLAY=1` build has been flashed to the
+board (hash verified) and the rules engine and AI pass their full test suite on
+the host. Not yet **field-proven** — the screen, the taps, the opponent's
+on-device speed, and the `selftest` still need to be observed on the panel,
+which the flash cannot confirm on its own (native USB-CDC serial drops once the
+app runs). See the [technical reference](TECHNICAL.md).
 
 ## Playing
 

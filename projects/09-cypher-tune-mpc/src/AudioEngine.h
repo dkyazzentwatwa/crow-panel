@@ -31,6 +31,8 @@ enum EngineCommandType : uint8_t {
   kCmdStop,
   kCmdKitSwap,      // a = bank index (0/1) to make active
   kCmdChokeAll,     // fade every voice (panic)
+  kCmdLoopSwap,     // adopt the staged loop buffer at a block boundary
+  kCmdLoopClear,    // drop the current loop
 };
 
 struct EngineCommand {
@@ -44,6 +46,7 @@ enum EngineEventType : uint8_t {
   kEvtTrigger,      // a voice actually started (sequencer or live pad)
   kEvtRecorded,     // live hit quantized into the pattern
   kEvtKitSwapped,   // bank flip done; `pad` = retired bank index, safe to free
+  kEvtLoopSwapped,  // loop buffer flip done; takeRetiredLoop() is safe to call
 };
 
 struct EngineEvent {
@@ -79,6 +82,24 @@ class AudioEngine {
   // from the loop context needs no handshake with the render task.
   uint8_t masterVolume() const { return masterVolume_; }
   void setMasterVolume(uint8_t v) { masterVolume_ = v; }
+
+  // --- Backing loop -------------------------------------------------------
+  // A single wrapping voice for a bar-aligned loop, mixed under the pads. The
+  // loops are rendered at the engine rate, so playback is an integer walk with
+  // no resampling. Buffer ownership follows the same rule as kits: the loop
+  // context allocates and frees, the render task only ever reads, and the flip
+  // happens at a block boundary.
+  //
+  // stageLoop() hands over a PSRAM buffer; post kCmdLoopSwap to adopt it. When
+  // kEvtLoopSwapped comes back, takeRetiredLoop() returns the displaced buffer
+  // for the loop context to free.
+  void stageLoop(int16_t *pcm, uint32_t frames);
+  int16_t *takeRetiredLoop();
+  bool loopActive() const { return loopPcm_ != nullptr; }
+  uint32_t loopFrames() const { return loopFrames_; }
+  uint32_t loopPosition() const { return loopPos_; }
+  uint8_t loopVolume() const { return loopVolume_; }
+  void setLoopVolume(uint8_t v) { loopVolume_ = v; }
 
   static const uint16_t kScopeSize = 256;
   uint8_t outputPeak() const { return outPeak_; }
@@ -144,6 +165,16 @@ class AudioEngine {
   volatile uint32_t framesRendered_ = 0;
   volatile uint8_t activeVoiceCount_ = 0;
   volatile uint8_t masterVolume_ = CYPHER_TUNE_MASTER_VOLUME;
+
+  // Backing loop. Only the render task advances loopPos_; only the loop
+  // context touches the pending/retired slots.
+  int16_t *loopPcm_ = nullptr;
+  uint32_t loopFrames_ = 0;
+  volatile uint32_t loopPos_ = 0;
+  int16_t *loopPending_ = nullptr;
+  uint32_t loopPendingFrames_ = 0;
+  int16_t *loopRetired_ = nullptr;
+  volatile uint8_t loopVolume_ = 190;
 
   // Scope ring (render task writes, UI reads). Power-of-two size.
   volatile int16_t scope_[kScopeSize];

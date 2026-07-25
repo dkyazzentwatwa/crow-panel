@@ -3,6 +3,13 @@
 #include <math.h>
 #include <stdlib.h>
 
+// Same reasoning as GoBoard.cpp: this is the search hot path, so override the
+// platform's default -Os with -O3 for throughput on the P4. Guarded to real
+// GCC; the host uses clang, which rejects this pragma.
+#if !defined(LITEGO_HOST_BUILD) && defined(__GNUC__) && !defined(__clang__)
+#pragma GCC optimize("O3")
+#endif
+
 namespace litego {
 namespace {
 
@@ -35,17 +42,24 @@ AiConfig aiConfigForLevel(Level level) {
     // burning the whole budget. The host harness installs no clock, so there
     // these run to exactly maxPlayouts and stay reproducible. Retune budgetMs
     // from the on-device `bench` numbers, not from the host's.
+    // budgetMs is what binds on device and maxPlayouts is only a ceiling, so
+    // the caps are set high and the wall-clock is what actually decides depth.
+    // These times were raised after the first on-panel game showed normal
+    // playing near heuristic strength: the P4 is far slower than the host, so a
+    // 1.2 s budget bought too few playouts to beat the priors. The opponent now
+    // prints its achieved playout count on screen after each move - retune from
+    // that number, not from the host's.
     case kLevelNormal:
       c.heuristicOnly = false;
-      c.maxPlayouts = 3000;
-      c.budgetMs = 1200;
+      c.maxPlayouts = 8000;
+      c.budgetMs = 2000;
       c.atariPercent = 60;
       break;
     case kLevelHard:
     default:
       c.heuristicOnly = false;
-      c.maxPlayouts = 20000;
-      c.budgetMs = 3000;
+      c.maxPlayouts = 40000;
+      c.budgetMs = 4000;
       c.atariPercent = 70;
       break;
   }
@@ -211,8 +225,38 @@ void GoAi::start(const GoBoard &board) {
     thinking_ = false;
     return;
   }
+  pruneCandidates();
   seedPriors();
   targetPlayouts_ = config_.maxPlayouts;
+}
+
+void GoAi::pruneCandidates() {
+  if (candidateCount_ <= kMaxSearchCandidates) {
+    return;
+  }
+  int32_t scores[kMaxCandidates];
+  for (uint8_t i = 0; i < candidateCount_; i++) {
+    scores[i] = heuristicScore(candidates_[i], false);
+  }
+  // Partial selection sort: move the top-K candidates to the front, then drop
+  // the rest. K is small so this is cheap and avoids a full sort.
+  for (uint8_t k = 0; k < kMaxSearchCandidates; k++) {
+    uint8_t best = k;
+    for (uint8_t j = (uint8_t)(k + 1); j < candidateCount_; j++) {
+      if (scores[j] > scores[best]) {
+        best = j;
+      }
+    }
+    if (best != k) {
+      int32_t ts = scores[k];
+      scores[k] = scores[best];
+      scores[best] = ts;
+      int16_t tc = candidates_[k];
+      candidates_[k] = candidates_[best];
+      candidates_[best] = tc;
+    }
+  }
+  candidateCount_ = kMaxSearchCandidates;
 }
 
 bool GoAi::shouldAcceptEnd() const {

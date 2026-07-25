@@ -157,20 +157,65 @@ Use 115200 baud with newline line endings.
 - The P4 uses the onboard ESP32-C6 for Wi-Fi through the hosted link. The P4 itself has no radio.
 - Rendering uses Arduino_GFX through the shared CrowPanel library. LVGL is not required.
 - Aircraft polling runs on a background FreeRTOS task by default so network delays do not stop the radar animation.
-- `RadarScope` composites the scope into an offscreen buffer before blitting it to the directly scanned DSI framebuffer.
+- `RadarScope` composites the scope into an offscreen buffer (internal SRAM when it fits, PSRAM otherwise) before blitting it to the directly scanned DSI framebuffer.
+
+## Rendering rules
+
+The panel has one directly scanned framebuffer and no page flip, so anything
+that clears and redraws a live region tears. Three rules follow, and the UI is
+built around them:
+
+1. **Manual flush.** The display is opened with `CrowDisplay::begin(..., manualFlush=true)`,
+   so draws only touch the cached framebuffer. Each painter calls `markRows()`
+   for the rows it dirties and `tick()` issues exactly one `flushMarked()` per
+   frame. `CrowDisplay::flush()` ignores x/w and syncs whole rows, so the
+   accumulator tracks a single row *range* rather than per-region bands, which
+   overlap heavily in Y here.
+   A painter that draws outside the rows it marks leaves those rows frozen on
+   the panel indefinitely — it does not self-correct next frame.
+2. **Per-frame content lives in the scope canvas.** The sweep, the blips *and
+   the selected-aircraft detail card* are all composited into the same 360×360
+   offscreen buffer and reach the panel in one `draw16bitRGBBitmap`. The card
+   overlaps the scope rect, so drawing it separately meant the blit erased it
+   and the repaint drew it back ~30×/s — that was the visible strobe.
+3. **Nothing repaints on a bare timer.** Every region outside the scope has a
+   content signature (`headerSignature_`, `listSignature_`, …) quantized to
+   exactly what gets printed. A region repaints when its signature moves and
+   not otherwise. Selecting an aircraft repaints the list, not the screen.
+
+Two related invariants:
+
+- **Selection is an ICAO address, not a row index.** `copySnapshot()` re-sorts by
+  distance every frame, so an index silently transfers the selection to a
+  different aircraft whenever two contacts cross.
+- **One altitude colour ramp.** `RadarScope::altBand()` feeds the blips, the list
+  dots, the detail-card border and the on-screen legend, so the same aircraft is
+  never two different colours.
 
 ## Project layout
 
 ```text
 14-adsb-flight-tracker-radar.ino   Application entry point and Serial commands
-config/ProjectConfig.h              Feed, location, timing, and UI defaults
+config/ProjectConfig.h              Feed, location, timing, touch, and UI defaults
 config/*.example.h                  Safe templates for local credentials/location
 src/AdsbClient.*                    Live aircraft API client
 src/MockAdsbSource.*                Offline aircraft generator
 src/AircraftStore.*                 Shared, mutex-protected aircraft state
-src/RadarScope.*                    Animated scope renderer
+src/AdsbFormat.h                    Display-independent field formatting
+src/RadarScope.*                    Animated scope + detail card renderer, altitude ramp
+src/RadarDashboard.*                Screen layout, dirty-region dispatch, touch
 src/RadarUi.*                       Display and touch integration
 ```
+
+## Touch orientation
+
+The GT911 mapping is pinned by `ADSB_TOUCH_SWAP_XY` / `_INVERT_X` / `_INVERT_Y`
+in `config/ProjectConfig.h` (identity by default, which is what the reference
+V1.2 panel reports). If a board disagrees, build once with
+`-DADSB_TOUCH_AUTOPROBE=1`, tap each corner, read the `touch` log lines to see
+which mapping is consistent, pin it, then turn the probe back off. Leaving the
+probe on means a single stray reading can select an aircraft through a
+mirrored interpretation of the tap.
 
 ## Proof language
 
@@ -181,5 +226,15 @@ src/RadarUi.*                       Display and touch integration
 
 The tested live Wi-Fi path is field-proven on the reference panel. New changes,
 different board revisions, and other hardware paths need fresh verification.
+
+The rendering rules above are **field-proven as of 2026-07-24**: flashed with
+`USE_DISPLAY=1 USE_WIFI=1` and observed on the reference panel. The detail card
+holds steady over the running sweep with no flash on open or close, no region
+goes stale, and the UI is markedly more responsive than the pre-manualFlush
+build. Not separately confirmed on that run: whether the scope buffer landed in
+internal SRAM or fell back to PSRAM (internal headroom is ~276 KB against a
+259 KB canvas). The boot log reports which, but this board's native USB-CDC port
+drops within seconds of the app starting, so reading it needs a replug and a
+fast capture.
 See [`docs/full-port-proof-matrix.md`](../../docs/full-port-proof-matrix.md)
 for the repository-wide proof matrix.

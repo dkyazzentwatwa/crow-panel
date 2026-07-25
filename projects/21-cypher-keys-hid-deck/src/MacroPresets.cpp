@@ -3,49 +3,12 @@
 #include <Preferences.h>
 
 #include "../config/Macros.h"
+#include "KeysLayout.h"  // tab bar + macro grid geometry (draw and hit-test)
 
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
 #include <CrowPanelShared.h>
 #include <Arduino_GFX_Library.h>
 #endif
-
-namespace {
-// Tab bar and macro grid geometry (shared by draw + hit-testing).
-constexpr int16_t kMarginX = 22;
-constexpr int16_t kTabTop = 42;
-constexpr int16_t kTabH = 36;
-constexpr int16_t kTabGap = 8;
-constexpr int16_t kBandW = 980;
-
-constexpr int16_t kGridTop = 88;
-constexpr int16_t kGridH = 212;
-constexpr int16_t kSlotGap = 10;
-constexpr int16_t kCols = CYPHER_KEYS_MACRO_COLS;
-constexpr int16_t kRows = CYPHER_KEYS_MACRO_SLOTS / CYPHER_KEYS_MACRO_COLS;
-
-void tabBounds(uint8_t index, uint8_t count, int16_t &x, int16_t &y, int16_t &w,
-               int16_t &h) {
-  if (count == 0) count = 1;
-  int16_t available = kBandW - (count - 1) * kTabGap;
-  w = available / count;
-  x = kMarginX + index * (w + kTabGap);
-  y = kTabTop;
-  h = kTabH;
-}
-
-void slotBounds(uint8_t index, int16_t &x, int16_t &y, int16_t &w, int16_t &h) {
-  int16_t col = index % kCols;
-  int16_t row = index / kCols;
-  w = (kBandW - (kCols - 1) * kSlotGap) / kCols;
-  h = (kGridH - (kRows - 1) * kSlotGap) / kRows;
-  x = kMarginX + col * (w + kSlotGap);
-  y = kGridTop + row * (h + kSlotGap);
-}
-
-bool inside(int16_t px, int16_t py, int16_t x, int16_t y, int16_t w, int16_t h) {
-  return px >= x && px < x + w && py >= y && py < y + h;
-}
-}  // namespace
 
 void MacroPresets::begin() {
   count_ = kCypherKeysPresetCount;
@@ -112,21 +75,11 @@ bool MacroPresets::selectByName(const String &name) {
 }
 
 int8_t MacroPresets::hitTab(int16_t x, int16_t y) const {
-  for (uint8_t i = 0; i < count_; ++i) {
-    int16_t bx, by, bw, bh;
-    tabBounds(i, count_, bx, by, bw, bh);
-    if (inside(x, y, bx, by, bw, bh)) return (int8_t)i;
-  }
-  return -1;
+  return KeysLayout::hitTab(x, y, count_);
 }
 
 int8_t MacroPresets::hitSlot(int16_t x, int16_t y) const {
-  for (uint8_t i = 0; i < CYPHER_KEYS_MACRO_SLOTS; ++i) {
-    int16_t bx, by, bw, bh;
-    slotBounds(i, bx, by, bw, bh);
-    if (inside(x, y, bx, by, bw, bh)) return (int8_t)i;
-  }
-  return -1;
+  return KeysLayout::hitSlot(x, y);
 }
 
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
@@ -148,7 +101,7 @@ void MacroPresets::draw(Arduino_GFX *g, const DeckTheme &theme) const {
   // Tabs.
   for (uint8_t i = 0; i < count_; ++i) {
     int16_t x, y, w, h;
-    tabBounds(i, count_, x, y, w, h);
+    KeysLayout::tabBounds(i, count_, x, y, w, h);
     bool on = (i == active_);
     Widgets::panel(g, x, y, w, h, 9, on ? theme.accent : theme.surface, 1,
                    on ? theme.accent : theme.line);
@@ -161,7 +114,7 @@ void MacroPresets::draw(Arduino_GFX *g, const DeckTheme &theme) const {
   for (uint8_t i = 0; i < CYPHER_KEYS_MACRO_SLOTS; ++i) {
     const MacroSlot &s = active().slots[i];
     int16_t x, y, w, h;
-    slotBounds(i, x, y, w, h);
+    KeysLayout::slotBounds(i, x, y, w, h);
     bool empty = (s.kind == kMacroNone);
     uint16_t fill = empty ? theme.surface : theme.surfaceHi;
     uint16_t accent = slotAccent(s, theme);

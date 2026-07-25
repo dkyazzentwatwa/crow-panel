@@ -30,10 +30,17 @@ class CamRenderer {
   // works via the CPU path in that case, so the return is informational.
   bool begin();
 
-  // Blits one frame into the framebuffer rectangle (x, y, w, h) and flushes
-  // just that rectangle. Scales if the frame does not match the rectangle,
-  // which the PPA does for free. Returns false if nothing was drawn.
-  bool drawFrame(const CrowCamera::Frame &frame, int16_t x, int16_t y, int16_t w, int16_t h);
+  // Blits one frame into the framebuffer rectangle (x, y, w, h). Scales if the
+  // frame does not match the rectangle, which the PPA does for free. Returns
+  // false if nothing was drawn.
+  //
+  // `autoFlush` false writes the framebuffer WITHOUT pushing it, leaving the
+  // caller to flush. That matters whenever chrome is drawn over the image:
+  // flushing the full frame first and the chrome second pushes video into the
+  // chrome's rectangle for one frame, every frame, which reads as a persistent
+  // flicker rather than the one-off it looks like in code.
+  bool drawFrame(const CrowCamera::Frame &frame, int16_t x, int16_t y, int16_t w,
+                 int16_t h, bool autoFlush = true);
 
   // True when the hardware blitter is in use. The UI surfaces this because a
   // silent fall back to the CPU path is the difference between 25 fps and 4.

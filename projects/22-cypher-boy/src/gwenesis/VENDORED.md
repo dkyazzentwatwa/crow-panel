@@ -83,3 +83,29 @@ build without the flag pays nothing — verified: the default build is byte-iden
 gwenesis exports a global named `screen`. The sketch had `Screen screen` and the
 two collided at link time, so ours was renamed **`uiScreen`** — `screen` was too
 generic for a global regardless.
+
+## CRITICAL corrections (2026-07-24, after the first on-hardware test)
+
+The first Genesis bring-up rebooted ~2 s into every game. Two vendoring mistakes:
+
+### The `_full` M68K tables are REQUIRED, not optional
+
+The initial vendoring kept `m68ki_instruction_jump_table.h` / `m68ki_cycles.h` and
+skipped the `_full` variants to save flash. **That was wrong.** m68kcpu.c dispatches
+every instruction with the *unmasked* 16-bit opcode (`m68ki_instruction_jump_table[REG_IR]`,
+`REG_IR` ∈ 0x0000..0xFFFF), so the tables must have all 65536 entries. The non-`_full`
+tables have only **61376 (0xEFC0)** — any opcode ≥ 0xEFC0 (line-F traps, some line-E,
+illegal encodings) called a function pointer past the end of the array → wild jump →
+reboot a few seconds into a game. The `_full` tables (65536 entries) are now vendored,
+`TABLES_FULL` is `#define`d in `m68kconf.h` (which is included before m68kops.h in
+m68kcpu.c, so its `#ifdef TABLES_FULL` line-F handler `m68k_op_1111` compiles), and the
+two include sites were made unconditional. The non-`_full` tables were deleted. Net flash
+cost of the complete tables vs the broken ones: ~+20 KB.
+
+### VRAM backing is host-provided
+
+`gwenesis_vdp_mem.c` declares `unsigned char *VRAM;` and only assigns it in the
+Game&Watch target branch (which we don't compile), so in this build it was an unassigned
+pointer that `gwenesis_vdp_reset()` memsets and every tile/sprite fetch reads through.
+`GenesisCore::begin()` now allocates 64 KB (internal SRAM, PSRAM fallback) and assigns
+`VRAM` before any ROM loads.

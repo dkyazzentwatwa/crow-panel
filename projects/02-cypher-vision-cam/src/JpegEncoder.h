@@ -32,6 +32,18 @@ class JpegEncoder {
   size_t encode(const CrowCamera::Frame &frame, uint16_t outW, uint16_t outH,
                 uint8_t quality);
 
+  // Rotation applied to everything encoded from here on, in degrees
+  // counter-clockwise (0, 90, 180, 270).
+  //
+  // This exists for portrait shooting. The sensor always delivers 1024x600 with
+  // its long axis first; a file written that way opens rotated on a computer,
+  // which assumes the first axis is horizontal. Turning the device does not
+  // change the buffer layout - only rotating the pixels does. At 90 or 270 the
+  // encoded dimensions swap, so a portrait still is a true 600x1024 JPEG rather
+  // than a landscape one with a note attached.
+  void setRotation(uint16_t degrees) { rotation_ = degrees; }
+  uint16_t rotation() const { return rotation_; }
+
   const uint8_t *data() const { return output_; }
   bool ready() const { return ready_; }
   const char *lastError() const { return lastError_; }
@@ -52,6 +64,7 @@ class JpegEncoder {
   size_t outputBytes_ = 0;
   bool ready_ = false;
   bool canScale_ = false;
+  uint16_t rotation_ = 0;
   const char *lastError_ = "not started";
 };
 

@@ -87,9 +87,32 @@ void cmdHistory(const String &) { eventLog.printHistory(Serial); }
 void cmdBoard(const String &) { printBoard(); }
 
 void cmdHint(const String &) {
-  Serial.print(F("[coach] "));
-  Serial.println(game.lastCoach());
-  touchView.setStatus(String("Hint: ") + game.lastCoach());
+  if (game.finished()) {
+    Serial.println(F("[hint] game over"));
+    touchView.setStatus(String("Game over. ") + game.resultText() + ".");
+    return;
+  }
+  if (!game.humanToMove()) {
+    Serial.println(F("[hint] not your turn"));
+    touchView.setStatus("Wait for your turn to ask for a hint.");
+    return;
+  }
+  // Brief blocking search for the human's side; the ~0.8 s pause is fine for a
+  // button press and the suggestion lands as a green marker on the board.
+  cancelAiTurn();
+  int16_t suggestion = game.suggestMove();
+  if (suggestion < 0) {
+    touchView.setHint(-1, -1);
+    Serial.println(F("[hint] passing is reasonable here"));
+    touchView.setStatus("Hint: passing is reasonable here.");
+    return;
+  }
+  int8_t hx = (int8_t)(suggestion % LiteGoGame::kSize);
+  int8_t hy = (int8_t)(suggestion / LiteGoGame::kSize);
+  touchView.setHint(hx, hy);
+  Serial.println(String("[hint] try ") + String(hx) + "," + String(hy));
+  touchView.setStatus(String("Hint: try ") + String(hx) + "," + String(hy) +
+                      " (green marker). Tap it twice to play there.");
 }
 
 void cmdPlay(const String &args) {
@@ -359,7 +382,20 @@ void loop() {
     if (game.tickAi(LITEGO_AI_SLICE_MS)) {
       aiTurnActive = false;
       touchView.setThinking(false);
+      // Capture the search stats before takeAiMove() applies the move.
+      uint32_t playouts = game.aiPlayouts();
+      uint8_t confidence = game.aiConfidencePercent();
       reportMove(game.takeAiMove(), "cpu");
+      Serial.println(String("[cpu] ") + game.levelName() + " searched " + String(playouts) +
+                     " playouts, " + String(confidence) + "% confident");
+      // On-screen, because USB-CDC serial is gone by now: this is the real
+      // on-device search depth the level budgets should be tuned against.
+      // Skipped for easy, which does a single heuristic ply (0 playouts).
+      if (playouts > 0) {
+        touchView.setStatus(String("Opponent (") + game.levelName() + ") searched " +
+                            String(playouts) + " playouts, " + String(confidence) +
+                            "% confident.");
+      }
     }
   }
 

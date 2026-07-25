@@ -23672,11 +23672,12 @@ static void m68k_op_unlk_32(void)
 
 #ifndef BUILD_TABLES
 
-  #ifndef TABLES_FULL
-    #include "m68ki_instruction_jump_table.h"
-  #else
-    #include "m68ki_instruction_jump_table_full.h"
-  #endif
+  // CrowPanel patch: ALWAYS the _full 65536-entry jump table. The non-_full one
+  // has only 61376 entries and dispatch is by unmasked 16-bit opcode, so any
+  // opcode >= 0xEFC0 (line-F traps, illegal encodings) called a function
+  // pointer past the end of the array -> wild jump -> reboot a few seconds into
+  // a game. See src/gwenesis/VENDORED.md.
+  #include "m68ki_instruction_jump_table_full.h"
 #else
 
 /* This is used to generate the opcode handler jump table */

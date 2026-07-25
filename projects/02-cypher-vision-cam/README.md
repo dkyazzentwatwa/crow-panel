@@ -68,19 +68,26 @@ P4 has no radio of its own and the C6 never touches a pixel.
 
 A four-tab touch console:
 
-- **Live** — fullscreen viewfinder. Tap the image to show or hide the HUD, which
-  carries shutter, record and start/pause, plus the numbers that actually
-  explain performance: measured fps, microseconds per blit, whether the hardware
-  blitter or the CPU fallback is running, and the dropped-frame count.
-- **Gallery** — what is on the card, with sizes and free space. File rows rather
-  than thumbnails, because decoding every JPEG on the card to build a grid would
-  stall the render loop for seconds.
+- **Live** — the viewfinder fills the whole screen at native 1:1, so what you
+  see is exactly what gets saved. One slim bar floats over the bottom with
+  shutter, record, pause, a compact status readout and links to the other
+  screens. **Tap the image to hide the bar** for an uninterrupted view; a small
+  frame-rate readout (or a red recording dot) stays in the corner so a clean
+  viewfinder is never a blind one.
+- **Gallery** — what is on the card, with sizes and free space. **Tap a photo to
+  view it full screen** on the panel, letterboxed to its real aspect; tap again
+  to close. Rows rather than a thumbnail grid, because decoding every JPEG on
+  the card at once would stall the render loop for seconds — the web gallery
+  does show thumbnails, since the browser does that work instead.
 - **Stream** — the access point's name, the URL to open, and how many people are
   watching.
-- **Settings** — exposure with manual −/+ steps, auto exposure, image flip, and
-  battery. The auto-exposure row distinguishes *AUTO* from *AUTO — settling*,
+- **Settings** — exposure, auto exposure, image flip, **orientation**,
+  **shutter sound**, and battery. The auto-exposure row distinguishes *AUTO* from *AUTO — settling*,
   because an exposure that is still moving is worth knowing about before you
   take a picture. Touching −/+ drops out of auto rather than fighting it.
+  **Image flip is remembered across reboots** — it describes how the camera is
+  mounted, not a preference for this session, so a camera fixed upside down
+  under a shelf should not need correcting every power-up.
 
 Every number on screen is measured. The fps figure is counted from frames that
 actually arrived, not the sensor's nominal 30. The battery row says
@@ -99,6 +106,39 @@ need all of it with nothing to spare. The REC display reports the fps actually
 achieved and counts frames the card was too slow to take — if that number climbs,
 lower the resolution, the quality or the frame rate.
 
+## Portrait shooting
+
+Set **Orientation → PORTRAIT** in Settings and turn the panel on its short edge,
+phone-style. The whole interface rotates with it, and photos are saved as true
+**600×1024** files that open upright — the full sensor, no cropping.
+
+One thing worth understanding, because it explains why this works at all: the
+camera and the screen are bolted to the same device, so they turn together. The
+viewfinder therefore needs no rotation — turn the device and you are simply
+framing a taller scene, correctly, full screen. What does need fixing is the
+*file* (stored long-axis-first, so a computer would open it sideways) and the
+*chrome* (which would otherwise read sideways). Those are the two things
+portrait mode actually changes.
+
+That native portrait framing is 600×1024, or **9:15.4** — a shade taller than
+9:16 and close enough that nothing crops it. The setting is remembered across
+reboots, like the flip.
+
+## Sound
+
+A shutter click when a photo lands, and distinct rising/falling tones when
+recording starts and stops, through the onboard speaker. There is also a low
+buzz when a capture fails, which is worth having when the panel is somewhere you
+are not looking.
+
+The cues are synthesized rather than sampled — nothing to ship, nothing to find
+on the card, and they work with no card inserted, which is exactly when you want
+the error tone. The shutter fires **after** the file is written, not when you
+press: a click on intent rather than outcome teaches you to trust a capture that
+may not have happened.
+
+Turn it off with **Settings → Shutter sound**; the setting persists.
+
 ## Wi-Fi
 
 Put your network's credentials in `config/WiFiSecrets.h` (copy the `.example.h`
@@ -108,10 +148,26 @@ is the path that works.
 
 It serves:
 
-- `/` — a viewer page (self-contained; no internet needed to render it)
+- `/` — live view with **Take photo** and **Record** buttons, and a status line
+  that updates itself
+- `/gallery` — everything on the card as a thumbnail grid, with download links
+- `/media?f=NAME` — one file; stills render inline, clips download
 - `/stream` on port 81 — Motion-JPEG, one viewer at a time
 - `/snapshot` — a single still
 - `/health` — JSON status
+
+The pages are entirely self-contained — no CDN, no webfonts, no frameworks —
+because the panel is often its own island with no route to the internet, and a
+page that fetched a remote stylesheet would arrive unstyled.
+
+**There is no password on the web controls.** Anyone who can reach the panel can
+make it take a picture or start recording. The page says so too. If that matters
+for where you're using it, keep the panel off shared networks.
+
+**Downloading a video pauses the panel** for the length of the transfer — tens
+of seconds for a large clip — because the transfer runs to completion inside the
+web server. The screen shows `SERVING FILE` while it happens so a frozen panel
+reads as busy rather than crashed. Stills are quick enough not to notice.
 
 The panel also hosts its own password-protected access point, but **no client
 has ever successfully associated with it on this board.** The AP appears and the

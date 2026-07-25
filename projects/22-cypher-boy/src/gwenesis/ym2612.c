@@ -2128,6 +2128,14 @@ static inline void YM2612Update(int16_t *buffer, int length)
     lt += out_fm[5];
    // rt += out_fm[5];
 
+    // CrowPanel patch: CLAMP, do not truncate. lt is the sum of six 14-bit
+    // channels (each -8192..+8191), so it can reach about +/-49000 - well past
+    // int16. The original `*buffer++ = lt;` truncates, which WRAPS a loud
+    // passage from full-positive to full-negative and produces exactly the
+    // garbled buzz you hear on busy music. Clipping is not transparent either,
+    // but it degrades gracefully instead of inverting the waveform.
+    if (lt > 32767) lt = 32767;
+    else if (lt < -32768) lt = -32768;
     *buffer++ = lt;
 
     /* CSM mode: if CSM Key ON has occured, CSM Key OFF need to be sent       */

@@ -1,37 +1,12 @@
 #include "SampleBank.h"
 
+#include "KitSamples.h"
+
 #if defined(ARDUINO_ARCH_ESP32)
 #include <esp_heap_caps.h>
 #endif
 
 namespace {
-
-struct PadDefault {
-  const char *label;
-  uint8_t defaultVelocity;
-  uint8_t chokeGroup;
-};
-
-// Same 16-pad map the project has always shipped; hats share choke group 1
-// so a closed hat cuts the open hat ringing (and vice versa).
-const PadDefault kPadDefaults[SampleBank::kPadCount] = {
-  {"Kick", 115, 0},
-  {"Snare", 110, 0},
-  {"Hat", 92, 1},
-  {"OpenHat", 88, 1},
-  {"Clap", 108, 0},
-  {"Rim", 94, 0},
-  {"PercA", 96, 0},
-  {"PercB", 96, 0},
-  {"BassA", 112, 2},
-  {"BassB", 112, 2},
-  {"ChordA", 86, 3},
-  {"ChordB", 86, 3},
-  {"VoxA", 90, 0},
-  {"VoxB", 90, 0},
-  {"FxUp", 84, 0},
-  {"FxDn", 84, 0},
-};
 
 void copyString(char *dst, size_t dstSize, const char *src) {
   strncpy(dst, src, dstSize - 1);
@@ -54,10 +29,15 @@ void SampleBank::beginDefaults(uint32_t engineRate) {
   for (uint8_t i = 0; i < kPadCount; i++) {
     PadSound &pad = pads_[i];
     pad = PadSound();
-    copyString(pad.label, sizeof(pad.label), kPadDefaults[i].label);
+    // Labels, velocities, choke groups, and the mix balance all come from the
+    // built-in kit table so there is exactly one description of the kit. An SD
+    // kit replaces the PCM per pad but keeps these, which is why swapping kits
+    // preserves your choke setup.
+    copyString(pad.label, sizeof(pad.label), kBuiltinKit[i].label);
     copyString(pad.sampleRef, sizeof(pad.sampleRef), "none");
-    pad.defaultVelocity = kPadDefaults[i].defaultVelocity;
-    pad.chokeGroup = kPadDefaults[i].chokeGroup;
+    pad.defaultVelocity = kBuiltinKit[i].defaultVelocity;
+    pad.chokeGroup = kBuiltinKit[i].chokeGroup;
+    pad.gain = kBuiltinKit[i].gain;
   }
   copyString(kitName_, sizeof(kitName_), "builtin");
 }

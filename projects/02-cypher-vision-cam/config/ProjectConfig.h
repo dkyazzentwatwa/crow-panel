@@ -45,6 +45,15 @@
 #define VISIONCAM_REC_FPS 10
 #endif
 
+// --- Audio -----------------------------------------------------------------
+
+// Shutter and record cues through the onboard NS4168 amp. Default ON: a camera
+// that captures silently, with a viewfinder that keeps running, gives no
+// indication anything happened.
+#ifndef USE_CAM_AUDIO
+#define USE_CAM_AUDIO 1
+#endif
+
 // --- Physical shutter ------------------------------------------------------
 
 // The BOOT button doubles as a shutter release. Safe to reuse: BOOT is a

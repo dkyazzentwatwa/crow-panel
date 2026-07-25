@@ -38,6 +38,7 @@ class GenesisCore : public EmuCore {
   // pointer handed to gwenesis is offset into it.
   static const int16_t kGuard = 64;
   int16_t stride() const { return kStride; }
+  uint32_t sampleRate() const override;
 
   EmuSystem system() const override { return kSysGenesis; }
   const char *name() const override { return "Genesis"; }
@@ -62,12 +63,22 @@ class GenesisCore : public EmuCore {
   // trades red and blue - which is exactly the blue cast it produced.
   const uint16_t *palette() const override;
 
-  bool sramDirty() const override { return false; }  // cart SRAM: not yet wired
+  // Cartridge battery saves are NOT possible with this core: gwenesis's memory
+  // map (enum mapped_address in gwenesis_bus.h) has ROM / Z80 RAM / VDP / IO /
+  // work RAM and no SRAM region at all, so a game's save hardware simply is not
+  // emulated. Save STATES cover the need better anyway - they snapshot the whole
+  // machine and can be taken anywhere, not just at the game's own save points.
+  bool sramDirty() const override { return false; }
   bool save() override { return false; }
   void tickSave(uint32_t) override {}
   bool saveState(const String &path) override;
   bool loadState(const String &path) override;
   bool saveThumb(const String &statePath) override;
+
+ private:
+  void submitAudio_();
+
+ public:
 
   bool ready() const override { return ready_; }
   bool romLoaded() const override { return romLoaded_; }
@@ -77,7 +88,11 @@ class GenesisCore : public EmuCore {
  private:
   uint8_t *fbAlloc_ = nullptr;  // raw allocation incl. guard margins
   uint8_t *fb_ = nullptr;       // fbAlloc_ + kGuard: what gwenesis is given
+  uint8_t *vram_ = nullptr;     // 64 KB backing store gwenesis's VRAM points at
   uint8_t *rom_ = nullptr;   // whole cartridge, PSRAM
+  class GbAudio *audio_ = nullptr;  // null => silent
+  int16_t *mix_ = nullptr;   // stereo interleave scratch, internal SRAM
+  static const size_t kMixFrames = 1152;  // >= PAL 1056, headroom
   size_t romSize_ = 0;
   int16_t frameW_ = 320, frameH_ = 224;
   uint32_t pad_ = 0;

@@ -160,7 +160,15 @@ void beginTouch(const HardwareProfile &profile) {
     Logger::error("touch", "GT911 not found on I2C (tried 0x5D and 0x14)");
     return;
   }
-  Logger::info("touch", String("GT911 ready, model=") + touch.getModelName());
+  // The GT911 reports at most the number of contacts its config register
+  // allows, and panels commonly ship configured for a single point - which
+  // looks exactly like a driver that "doesn't do multi-touch". Ask for the
+  // full 5 so touchPoints() can actually return more than one finger. This
+  // writes the RAM config + refresh flag (0x8100), not the flash-backed
+  // config, so it is safe to do on every boot.
+  touch.setMaxTouchPoint(TouchPoints::MAX_POINTS);
+  Logger::info("touch", String("GT911 ready, model=") + touch.getModelName() +
+                            ", max points=" + String(TouchPoints::MAX_POINTS));
 }
 
 void buildStatusScreen(const char *title) {

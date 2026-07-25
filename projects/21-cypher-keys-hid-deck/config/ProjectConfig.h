@@ -39,6 +39,66 @@
 #define CYPHER_KEYS_BLE_NAME "Cypher Keys"
 #endif
 
+// Synthesized mechanical-keyboard switch sounds for the on-screen keyboard,
+// played out of the NS4168 I2S amp + speaker. Off by default: the amp path is
+// shared hardware and a silent build must stay the suite's default.
+//
+// The I2S bring-up is transcribed from project 09 (Cypher Tune MPC), whose
+// AudioEngine is hardware-proven audible on this board: IDF <driver/i2s_std.h>
+// (never the Arduino ESP_I2S wrapper), silence written before the amp enable,
+// and the amp control level taken from HardwareProfile (it is active-LOW).
+//
+// Sounds are synthesized into small PCM buffers at boot (~16 KB total); there
+// are no sample files and no SD dependency. See src/KeyAudio.{h,cpp}.
+#ifndef USE_CYPHER_KEYS_AUDIO
+#define USE_CYPHER_KEYS_AUDIO 0
+#endif
+
+// I2S sample rate for the click engine. 22050 Hz is plenty for 10-30 ms
+// transients (Nyquist ~11 kHz) and halves both the buffer cost and the render
+// task's wakeup rate versus 44100.
+#ifndef CYPHER_KEYS_AUDIO_SAMPLE_RATE
+#define CYPHER_KEYS_AUDIO_SAMPLE_RATE 22050
+#endif
+
+// Optional SD-card sound packs: REAL recorded switch samples, loaded off the
+// card and played instead of the synthesized profiles. Off by default, and the
+// synthesized profiles stay the always-available fallback - a card is a nice
+// upgrade, never a dependency. Needs USE_CYPHER_KEYS_AUDIO=1 to be audible.
+//
+// A pack is a folder of 16-bit PCM mono WAVs at CYPHER_KEYS_AUDIO_SAMPLE_RATE
+// (so nothing is ever resampled on the keypress path):
+//
+//   <CYPHER_KEYS_SOUNDS_DIR>/<pack>/press/GENERIC_R0..R4.wav
+//   <CYPHER_KEYS_SOUNDS_DIR>/<pack>/press/{BACKSPACE,ENTER,SPACE}.wav
+//   <CYPHER_KEYS_SOUNDS_DIR>/<pack>/release/GENERIC.wav
+//   <CYPHER_KEYS_SOUNDS_DIR>/<pack>/release/{BACKSPACE,ENTER,SPACE}.wav
+//
+// Every file except press/GENERIC_R0.wav is optional; see src/KeySoundPacks.h
+// for the resolution order. scripts/convert-key-sounds.sh builds this layout.
+// No audio is vendored in the repo - see TECHNICAL.md.
+#ifndef USE_CYPHER_KEYS_SD
+#define USE_CYPHER_KEYS_SD 0
+#endif
+
+// Where the pack folders live on the card.
+#ifndef CYPHER_KEYS_SOUNDS_DIR
+#define CYPHER_KEYS_SOUNDS_DIR "/cypher-keys/sounds"
+#endif
+
+// SD_MMC bus width. 1-bit is the conservative bring-up the rest of the suite
+// defaults to (projects 02/08/09/20); set to 0 for the faster 4-bit bus once the
+// card and wiring are known good.
+#ifndef CYPHER_KEYS_SDMMC_1BIT
+#define CYPHER_KEYS_SDMMC_1BIT 1
+#endif
+
+// Click volume, 0-100 percent. Persisted in NVS under "sndvol"; this is only
+// the value used the first time, before anything is stored.
+#ifndef CYPHER_KEYS_AUDIO_VOLUME
+#define CYPHER_KEYS_AUDIO_VOLUME 70
+#endif
+
 // Number of macro tiles per preset (grid rows x cols) and the tab bar width.
 #ifndef CYPHER_KEYS_MACRO_SLOTS
 #define CYPHER_KEYS_MACRO_SLOTS 12  // 3 rows x 4 columns
@@ -53,6 +113,31 @@
 // Longest canned text snippet a Text-kind macro slot may type.
 #ifndef CYPHER_KEYS_MACRO_TEXT_MAX
 #define CYPHER_KEYS_MACRO_TEXT_MAX 160
+#endif
+
+// Panel backlight the deck boots at, 0-255. Persisted in NVS under "bright";
+// this is only the value used before anything is stored. The settings screen
+// floors it at HidDeck::kMinBrightness, because a keyboard you cannot see is
+// indistinguishable from a crash.
+#ifndef CYPHER_KEYS_BRIGHTNESS
+#define CYPHER_KEYS_BRIGHTNESS 255
+#endif
+
+// Idle dimming: with no touch for this long the backlight ramps down to
+// CYPHER_KEYS_IDLE_DIM_LEVEL, and the next tap restores it instantly (that tap
+// is consumed - it wakes the panel and does NOT type). Only active while the
+// Idle-dim setting is on (persisted in NVS under "idledim").
+//
+// 60 s is deliberately shorter than an ambient dashboard's: a keyboard sits
+// untouched between bursts of typing, and the wake tap costs nothing.
+#ifndef CYPHER_KEYS_IDLE_DIM_MS
+#define CYPHER_KEYS_IDLE_DIM_MS 60000
+#endif
+
+// How dark idle dimming goes, 0-255. Low enough to read as "asleep", not 0:
+// the keys must stay faintly visible so it is obvious where to tap to wake it.
+#ifndef CYPHER_KEYS_IDLE_DIM_LEVEL
+#define CYPHER_KEYS_IDLE_DIM_LEVEL 24
 #endif
 
 // NVS namespace/key for remembering the last-used preset across reboot.
@@ -115,6 +200,26 @@
 // frames while still allowing very fast typing.
 #ifndef CYPHER_KEYS_TOUCH_RELEASE_DEBOUNCE_MS
 #define CYPHER_KEYS_TOUCH_RELEASE_DEBOUNCE_MS 30
+#endif
+
+// Multi-contact matching: the GT911 keeps a track id per finger, but on some
+// panels those ids churn between samples. An unmatched incoming point that
+// lands within this many mapped pixels of an unmatched live contact is treated
+// as the same finger continuing, not as a new press.
+#ifndef CYPHER_KEYS_TOUCH_MATCH_RADIUS
+#define CYPHER_KEYS_TOUCH_MATCH_RADIUS 48
+#endif
+
+// Hold-to-repeat for Backspace and the arrow keys: how long a finger must rest
+// on the key before the first repeat, and the interval between repeats after
+// that. 400/60 ms is close to a Mac's own default key-repeat feel. Each repeat
+// is a full down/up pair through HidBackend (which holds a key for 24 ms), so
+// the interval must stay comfortably above that hold window.
+#ifndef CYPHER_KEYS_KEY_REPEAT_DELAY_MS
+#define CYPHER_KEYS_KEY_REPEAT_DELAY_MS 400
+#endif
+#ifndef CYPHER_KEYS_KEY_REPEAT_MS
+#define CYPHER_KEYS_KEY_REPEAT_MS 60
 #endif
 
 #endif

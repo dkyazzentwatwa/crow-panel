@@ -264,8 +264,18 @@ void TuneUi::pressControl_(TouchTracker::Contact &c, uint32_t now) {
         cb_.kitStep(cb_.ctx, owner == kControlKitNext ? 1 : -1);
       }
       break;
-    case kControlTheme:
-      cycleTheme();  // repaints the whole screen: every color changed
+    case kControlLoopPrev:
+    case kControlLoopNext:
+      if (cb_.loopStep != nullptr) {
+        cb_.loopStep(cb_.ctx, owner == kControlLoopNext ? 1 : -1);
+        // Loading a loop relocks the tempo, so the transport readout changes
+        // with it.
+        dirtyEdit_ = true;
+        dirtyTransport_ = true;
+      }
+      break;
+    case kControlOpenSettings:
+      setView(kViewSettings);
       break;
     default:
       break;
@@ -314,6 +324,9 @@ void TuneUi::holdControl_(TouchTracker::Contact &c, uint32_t now) {
 }
 
 void TuneUi::bumpBpm_(int8_t dir) {
+  if (seq_ != nullptr && seq_->locked()) {
+    return;  // the loop owns the clock; nudging BPM would only break sync
+  }
   int next = (int)seq_->bpm() + dir;
   if (next < 40) next = 40;
   if (next > 240) next = 240;
@@ -406,6 +419,13 @@ void TuneUi::syncState_(uint32_t now) {
   if (now - lastStatusDrawMs_ >= 500) {
     dirtyStatus_ = true;
     lastStatusDrawMs_ = now;
+  }
+  // Contact count changes need to show immediately, not on the 500 ms tick,
+  // or the multi-touch readout would miss every drum hit.
+  uint8_t contacts = touch_.activeCount();
+  if (contacts != mirrorContacts_) {
+    mirrorContacts_ = contacts;
+    dirtyStatus_ = true;
   }
 
   mirrorBpm_ = seq_->bpm();
@@ -687,9 +707,20 @@ void TuneUi::drawTransport_() {
   Widgets::text(g, kBpmMinusX + kBpmMinusW / 2, kBtnY + 12, "-", Widgets::fontL(),
                 t.ink, Widgets::kCenter);
   Widgets::panel(g, kBpmValX, kBtnY, kBpmValW, kBtnH, 8, t.surfaceHi, 1, t.line);
-  Widgets::text(g, kBpmValX + kBpmValW / 2, kBtnY + 12,
-                String(seq_->bpm()).c_str(), Widgets::fontL(), t.accent,
-                Widgets::kCenter);
+  // While a loop owns the clock the real tempo is fractional, so show one
+  // decimal and mark it locked - the +/- buttons cannot move it.
+  if (seq_->locked()) {
+    uint16_t tenths = seq_->effectiveBpmTenths(CYPHER_TUNE_ENGINE_RATE);
+    Widgets::text(g, kBpmValX + kBpmValW / 2, kBtnY + 8,
+                  String(tenths / 10.0f, 1).c_str(), Widgets::fontM(), t.good,
+                  Widgets::kCenter);
+    Widgets::text(g, kBpmValX + kBpmValW / 2, kBtnY + 32, "LOCK",
+                  Widgets::fontS(), t.muted, Widgets::kCenter);
+  } else {
+    Widgets::text(g, kBpmValX + kBpmValW / 2, kBtnY + 12,
+                  String(seq_->bpm()).c_str(), Widgets::fontL(), t.accent,
+                  Widgets::kCenter);
+  }
   Widgets::panel(g, kBpmPlusX, kBtnY, kBpmPlusW, kBtnH, 8, t.surface, 1, t.line);
   Widgets::text(g, kBpmPlusX + kBpmPlusW / 2, kBtnY + 12, "+", Widgets::fontL(),
                 t.ink, Widgets::kCenter);
@@ -882,8 +913,21 @@ void TuneUi::drawEditPanel_() {
                   selected ? t.onAccent : t.muted, Widgets::kCenter);
   }
 
-  // Kit selection lives on the settings screen now; this panel stays focused
-  // on the three things you reach for while playing a pad.
+  // Backing loop: a performance control, so it stays on this screen rather
+  // than moving to settings with the kit selector.
+  Widgets::text(g, kEditLabelX, kLoopY + 12, "LOOP", Widgets::fontS(), t.muted);
+  bool haveLoops = cb_.loopStep != nullptr;
+  Widgets::panel(g, kLoopPrevX, kLoopY, kLoopArrowW, kLoopH, 8, t.surface, 1, t.line);
+  Widgets::text(g, kLoopPrevX + kLoopArrowW / 2, kLoopY + 9, "<", Widgets::fontL(),
+                haveLoops ? t.ink : t.line, Widgets::kCenter);
+  const char *loopName = cb_.loopName != nullptr ? cb_.loopName(cb_.ctx) : "no loops";
+  bool running = seq_->locked();
+  Widgets::text(g, (kLoopPrevX + kLoopArrowW + kLoopNextX) / 2, kLoopY + 10,
+                loopName, Widgets::fontM(), running ? t.accent : t.muted,
+                Widgets::kCenter);
+  Widgets::panel(g, kLoopNextX, kLoopY, kLoopArrowW, kLoopH, 8, t.surface, 1, t.line);
+  Widgets::text(g, kLoopNextX + kLoopArrowW / 2, kLoopY + 9, ">", Widgets::fontL(),
+                haveLoops ? t.ink : t.line, Widgets::kCenter);
 }
 
 void TuneUi::drawScope_() {
@@ -975,9 +1019,14 @@ void TuneUi::drawStatus_() {
                String(ESP.getFreePsram() / 1024 / 1024) + "M";
   Widgets::text(g, kScreenW / 2, kStatusY + 12, mem.c_str(), Widgets::fontS(),
                 t.muted, Widgets::kCenter);
-  String perf = String("ui ") + String(lastRenderUs_ / 1000.0f, 1) + "ms";
+  // Live contact count: the only way to confirm multi-touch on this board,
+  // since USB-CDC serial drops once the sketch runs. Lights up when more than
+  // one finger is tracked.
+  uint8_t contacts = touch_.activeCount();
+  String perf = String("ui ") + String(lastRenderUs_ / 1000.0f, 1) + "ms  T" +
+                String(contacts);
   Widgets::text(g, kScreenW - 8, kStatusY + 12, perf.c_str(), Widgets::fontS(),
-                t.muted, Widgets::kRight);
+                contacts > 1 ? t.accent : t.muted, Widgets::kRight);
 }
 
 #else  // headless / non-P4: keep the class alive with no-op behavior

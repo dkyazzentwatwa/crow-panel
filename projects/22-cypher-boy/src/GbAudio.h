@@ -38,6 +38,12 @@ class GbAudio {
 
   // Synthesized UI sounds. Both are blocking but short, and both are no-ops
   // when muted or when I2S never came up, so callers need no guards.
+  // Retune the I2S clock at runtime. Genesis runs its sound chips at ~53 kHz
+  // while Game Boy uses 32 kHz, and resampling on an MCU costs quality and
+  // cycles for nothing - the hardware can simply change rate between games.
+  bool setSampleRate(uint32_t hz);
+  uint32_t sampleRate() const { return rate_; }
+
   void playChime();  // ~450 ms two-note startup tone for the splash
   void playClick();  // ~10 ms tick for touch feedback
 
@@ -57,6 +63,7 @@ class GbAudio {
   uint8_t ampPin_ = 0;
   bool ampActiveHigh_ = false;
   uint32_t underruns_ = 0;
+  uint32_t rate_ = GB_SAMPLERATE;
   String status_;
 };
 

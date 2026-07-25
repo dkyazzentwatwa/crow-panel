@@ -119,8 +119,15 @@ playing to the end is what guarantees no dead stones are left to be mis-counted.
 | Level | Behaviour |
 | --- | --- |
 | `easy` | One-ply heuristic — captures, atari pressure, liberties, centre pull, random tiebreak. Instant, and with the eye guard it no longer kills its own groups. |
-| `normal` | Monte-Carlo playouts, `budgetMs` 1200, cap 3000 playouts. |
-| `hard` | Monte-Carlo playouts, `budgetMs` 3000, cap 20000 playouts. |
+| `normal` | Monte-Carlo playouts, `budgetMs` 2000, cap 8000 playouts. |
+| `hard` | Monte-Carlo playouts, `budgetMs` 4000, cap 40000 playouts. |
+
+The first on-panel game showed `normal` playing near heuristic strength: at the
+original 1.2 s budget the P4 (far slower than the host) ran too few playouts to
+overcome the priors. The budgets above are the raised values; after each move
+the opponent prints its achieved playout count to Serial **and to the on-screen
+status line**, so the real device depth is visible without a live serial port.
+Retune `budgetMs` from that number.
 
 Search details:
 
@@ -238,12 +245,17 @@ CTAGS_WORKAROUND=1 EXTRA_FLAGS="-DUSE_DISPLAY=1" \
 - `field-proven`: the physical board has shown the UI, accepted touch moves, and
   produced matching Serial proof.
 
-Current proof state: **compile-ready** for baseline and `USE_DISPLAY=1` on the
-ESP32-P4 FQBN, with the rules engine and AI **host-tested** (28/28 fixtures and
-all hygiene checks green).
+Current proof state: **uploaded**. The `USE_DISPLAY=1` build was flashed to a
+CrowPanel on `/dev/cu.usbmodem1101` — `esptool` wrote 282066 compressed bytes
+and reported "Hash of data verified", then hard-reset the board. Baseline and
+display both compile on the ESP32-P4 FQBN, and the rules engine and AI are
+**host-tested** (28/28 fixtures and all hygiene checks green).
 
-Not yet claimed: `uploaded` or `field-proven`. Reaching those needs a detected
-CrowPanel port to accept the `USE_DISPLAY=1` upload, and then on the panel:
+Not yet claimed: `field-proven`. The flash and its hash verification prove the
+binary is on the board; they prove nothing about what it does once running. The
+panel's native USB-CDC serial drops within seconds of boot (the port
+disappeared right after this upload, as expected), so `field-proven` needs
+someone watching the screen for:
 
 1. `selftest` reports overall PASS.
 2. `bench 1000` records a real playout rate, and the level budgets are retuned

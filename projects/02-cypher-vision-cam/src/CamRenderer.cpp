@@ -98,7 +98,7 @@ bool CamRenderer::drawFrameCpu_(const CrowCamera::Frame &frame, int16_t x, int16
 }
 
 bool CamRenderer::drawFrame(const CrowCamera::Frame &frame, int16_t x, int16_t y,
-                            int16_t w, int16_t h) {
+                            int16_t w, int16_t h, bool autoFlush) {
   if (frame.data == nullptr) return false;
   if (!clampRect(x, y, w, h)) return false;
 
@@ -160,9 +160,10 @@ bool CamRenderer::drawFrame(const CrowCamera::Frame &frame, int16_t x, int16_t y
 
   if (!drawn) return false;
 
-  // Flush ONLY the viewfinder rectangle. Flushing the whole panel here would
-  // cache-sync 1.2 MB per frame and re-push chrome that has not changed.
-  CrowDisplay::flush(x, y, w, h);
+  // Flush ONLY the viewfinder rectangle, and only when the caller has not asked
+  // to do it itself. Flushing the whole panel here would cache-sync 1.2 MB per
+  // frame and re-push chrome that has not changed.
+  if (autoFlush) CrowDisplay::flush(x, y, w, h);
 
   lastBlitUs_ = micros() - startUs;
   blitTotalUs_ += lastBlitUs_;
@@ -183,7 +184,8 @@ bool CamRenderer::begin() {
   return false;
 }
 
-bool CamRenderer::drawFrame(const CrowCamera::Frame &, int16_t, int16_t, int16_t, int16_t) {
+bool CamRenderer::drawFrame(const CrowCamera::Frame &, int16_t, int16_t, int16_t, int16_t,
+                            bool) {
   return false;
 }
 

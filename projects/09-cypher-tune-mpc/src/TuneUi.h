@@ -46,6 +46,10 @@ class TuneUi {
   // Master output volume 0-255, owned by the engine.
   typedef uint8_t (*VolumeGetFn)(void *ctx);
   typedef void (*VolumeSetFn)(void *ctx, uint8_t volume);
+  // Backing loop: step through the catalog (dir -1/+1, walking off the front
+  // means "no loop") and report the current one's title for the panel.
+  typedef void (*LoopStepFn)(void *ctx, int8_t dir);
+  typedef const char *(*LoopNameFn)(void *ctx);
 
   // Everything the UI needs from the sketch, in one bag. This started as a
   // parameter list and outgrew being readable; the struct also means adding a
@@ -59,6 +63,8 @@ class TuneUi {
     ScopeFn scope = nullptr;
     VolumeGetFn volumeGet = nullptr;
     VolumeSetFn volumeSet = nullptr;
+    LoopStepFn loopStep = nullptr;
+    LoopNameFn loopName = nullptr;
     void *ctx = nullptr;
   };
 
@@ -179,6 +185,7 @@ class TuneUi {
   uint8_t mirrorChoke_ = 0;
   String mirrorKit_;
   uint8_t mirrorVoiceLevels_[4] = {0};
+  uint8_t mirrorContacts_ = 0;
 
   uint8_t vuHold_ = 0;  // slow-falling VU peak-hold marker
 

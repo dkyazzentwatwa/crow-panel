@@ -1,6 +1,16 @@
 #ifndef M68KCONF__HEADER
 #define M68KCONF__HEADER
 
+/* CrowPanel patch: force the complete (_full) opcode tables. The dispatch in
+ * m68kcpu.c indexes the jump/cycle tables with the unmasked 16-bit opcode, so
+ * they MUST cover all 65536 encodings. This macro selects the _full tables AND
+ * enables the m68k_op_1111 (line-F) handler, which is guarded by #ifdef
+ * TABLES_FULL in m68kops.h. m68kconf.h is included before m68kops.h in
+ * m68kcpu.c, so the guard sees it. See src/gwenesis/VENDORED.md. */
+#ifndef TABLES_FULL
+#define TABLES_FULL 1
+#endif
+
 /* ======================================================================== */
 /* ======================== MAIN 68K CONFIGURATION ======================== */
 /* ======================================================================== */

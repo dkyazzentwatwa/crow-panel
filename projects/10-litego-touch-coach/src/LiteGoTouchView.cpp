@@ -26,6 +26,7 @@ void LiteGoTouchView::requestScoreRepaint() {}
 void LiteGoTouchView::noteMoveResult(const LiteGoGame::MoveResult &, const char *) {}
 void LiteGoTouchView::clearGhost() {}
 void LiteGoTouchView::setThinking(bool) {}
+void LiteGoTouchView::setHint(int8_t, int8_t) {}
 bool LiteGoTouchView::tick(Action &action) {
   action.type = kActionNone;
   action.x = -1;
@@ -49,19 +50,23 @@ constexpr int16_t kHeaderH = 56;
 constexpr int16_t kFooterY = 548;
 constexpr int16_t kFooterH = kScreenH - kFooterY;
 
-// Board geometry. 48 px cells with 20 px stones give a target a fingertip can
-// hit, and preview-then-confirm covers the rest.
-constexpr int16_t kCell = 48;
-constexpr int16_t kGridSpan = kCell * (LiteGoGame::kSize - 1);  // 384
-constexpr int16_t kTilePad = 34;
+// Board geometry. 46 px cells with 19 px stones stay finger-sized, and the
+// 42 px gutter has to hold both a stone (19 px) and a coordinate label under
+// it - at 34 px the labels overlapped the edge stones and clipped on the tile
+// border. Tile footprint is unchanged (452 px), so the side panel is untouched.
+constexpr int16_t kCell = 46;
+constexpr int16_t kGridSpan = kCell * (LiteGoGame::kSize - 1);  // 368
+constexpr int16_t kTilePad = 42;
 constexpr int16_t kTileX = 22;
 constexpr int16_t kTileY = 68;
 constexpr int16_t kTileSize = kGridSpan + 2 * kTilePad;  // 452
-constexpr int16_t kOriginX = kTileX + kTilePad;          // 56
-constexpr int16_t kOriginY = kTileY + kTilePad;          // 102
-constexpr int16_t kStoneR = 20;
-constexpr int16_t kCellHalf = kCell / 2;
+constexpr int16_t kOriginX = kTileX + kTilePad;          // 64
+constexpr int16_t kOriginY = kTileY + kTilePad;          // 110
+constexpr int16_t kStoneR = 19;
+constexpr int16_t kCellHalf = kCell / 2;                 // 23
 constexpr int16_t kHitPad = kCellHalf;
+// Coordinate labels sit below/left of the outer line, past the edge stones.
+constexpr int16_t kLabelGap = kStoneR + 4;
 
 // Side column
 constexpr int16_t kSideX = 496;
@@ -88,6 +93,7 @@ constexpr uint16_t kWhiteEdge = Widgets::rgb(0xB6, 0xAD, 0x98);
 constexpr uint16_t kStoneShadow = Widgets::rgb(0xA8, 0x8C, 0x52);
 constexpr uint16_t kGhostBlack = Widgets::rgb(0x86, 0x74, 0x50);
 constexpr uint16_t kGhostWhite = Widgets::rgb(0xE7, 0xDA, 0xB8);
+constexpr uint16_t kHintColor = Widgets::rgb(0x2F, 0xD0, 0x6A);  // hint target ring
 
 struct ButtonDef {
   LiteGoTouchView::ActionType type;
@@ -425,6 +431,10 @@ void LiteGoTouchView::begin(LiteGoGame *game) {
   statusWarning_ = false;
   ghostX_ = -1;
   ghostY_ = -1;
+  hintX_ = -1;
+  hintY_ = -1;
+  koPoint_ = -1;
+  territoryValid_ = false;
   pressedButton_ = -1;
   dirtyPointCount_ = 0;
 
@@ -447,6 +457,12 @@ void LiteGoTouchView::requestFullRepaint() {
   dirtyScore_ = true;
   dirtyButtons_ = true;
   thinkingShown_ = 255;
+  // Derived overlays get recomputed from the (possibly new) position: a full
+  // repaint follows reset, resign, and side-swap.
+  hintX_ = -1;
+  hintY_ = -1;
+  territoryValid_ = false;
+  koPoint_ = game_ != nullptr ? game_->board().koPoint() : -1;
 }
 
 void LiteGoTouchView::requestBoardRepaint() { dirtyBoard_ = true; }
@@ -476,6 +492,17 @@ void LiteGoTouchView::clearGhost() {
 
 void LiteGoTouchView::setThinking(bool thinking) { thinking_ = thinking; }
 
+void LiteGoTouchView::setHint(int8_t x, int8_t y) {
+  if (hintX_ >= 0) {
+    markPointDirty((uint8_t)hintX_, (uint8_t)hintY_);
+  }
+  hintX_ = x;
+  hintY_ = y;
+  if (hintX_ >= 0) {
+    markPointDirty((uint8_t)hintX_, (uint8_t)hintY_);
+  }
+}
+
 void LiteGoTouchView::noteMoveResult(const LiteGoGame::MoveResult &result, const char *source) {
   if (result.status == LiteGoGame::kMoveOk) {
     // Only the placed stone, the stones it removed, and the cell that used to
@@ -498,6 +525,30 @@ void LiteGoTouchView::noteMoveResult(const LiteGoGame::MoveResult &result, const
     }
     markerX_ = -1;
     markerY_ = -1;
+  }
+
+  if (result.status == LiteGoGame::kMoveOk || result.status == LiteGoGame::kMovePass) {
+    // A stale hint marker would point at the previous position; drop it, and
+    // recompute the ko point once here rather than scanning every frame.
+    if (hintX_ >= 0) {
+      markPointDirty((uint8_t)hintX_, (uint8_t)hintY_);
+      hintX_ = -1;
+      hintY_ = -1;
+    }
+    int16_t previousKo = koPoint_;
+    koPoint_ = game_ != nullptr ? game_->board().koPoint() : -1;
+    if (previousKo != koPoint_) {
+      if (previousKo >= 0) {
+        markPointDirty((uint8_t)(previousKo % LiteGoGame::kSize),
+                       (uint8_t)(previousKo / LiteGoGame::kSize));
+      }
+      if (koPoint_ >= 0) {
+        markPointDirty((uint8_t)(koPoint_ % LiteGoGame::kSize),
+                       (uint8_t)(koPoint_ / LiteGoGame::kSize));
+      }
+    }
+    // Territory shading is only valid for the final position.
+    territoryValid_ = false;
   }
 
   String label = source != nullptr ? source : "move";
@@ -533,10 +584,15 @@ void LiteGoTouchView::drawChrome() {
   for (uint8_t i = 0; i < LiteGoGame::kSize; i++) {
     char n[3];
     snprintf(n, sizeof(n), "%u", i);
-    Widgets::text(g, pointCoordX((int8_t)i), kOriginY + kGridSpan + 16, n, Widgets::fontS(),
+    // Column labels sit just below the last row of cell fills (drawCell paints
+    // a kCellHalf-radius square of wood per point). Row labels must clear the
+    // column-0 cell fills to their LEFT, or every drawCell in column 0 repaints
+    // over them - which is why they were showing only a sliver. kCellHalf + 9
+    // puts the whole glyph left of the first column's fill.
+    Widgets::text(g, pointCoordX((int8_t)i), kOriginY + kGridSpan + kLabelGap, n, Widgets::fontS(),
                   kBoardLine, Widgets::kCenter);
-    Widgets::text(g, kOriginX - 26, pointCoordY((int8_t)i) - 7, n, Widgets::fontS(), kBoardLine,
-                  Widgets::kCenter);
+    Widgets::text(g, kOriginX - kCellHalf - 9, pointCoordY((int8_t)i) - 7, n, Widgets::fontS(),
+                  kBoardLine, Widgets::kCenter);
   }
 
   g->fillRect(0, kFooterY, kScreenW, kFooterH, Widgets::kSurface);
@@ -583,11 +639,44 @@ void LiteGoTouchView::drawCell(uint8_t x, uint8_t y) {
       // Marker sits inside the stone so it cannot bleed into the next cell.
       g->fillCircle(cx, cy, 5, Widgets::kAccent);
     }
-  } else if (ghostX_ == (int8_t)x && ghostY_ == (int8_t)y) {
+    markRows(top, kCell);
+    return;
+  }
+
+  // Empty point. At game end it may be shaded territory; during play it may
+  // carry the ghost preview, a hint suggestion, or a ko-forbidden marker.
+  int16_t point = (int16_t)(y * LiteGoGame::kSize + x);
+
+  if (game_->finished() && territoryValid_) {
+    uint8_t owner = territory_[point];
+    if (owner == litego::kBlack) {
+      g->fillRect(cx - 7, cy - 7, 14, 14, kBlackStone);
+      g->drawRect(cx - 7, cy - 7, 14, 14, kBoardLine);
+    } else if (owner == litego::kWhite) {
+      g->fillRect(cx - 7, cy - 7, 14, 14, kWhiteStone);
+      g->drawRect(cx - 7, cy - 7, 14, 14, kWhiteEdge);
+    }
+    markRows(top, kCell);
+    return;
+  }
+
+  if (ghostX_ == (int8_t)x && ghostY_ == (int8_t)y) {
     bool black = game_->currentPlayer() == 'B';
     g->fillCircle(cx, cy, kStoneR - 3, black ? kGhostBlack : kGhostWhite);
     g->drawCircle(cx, cy, kStoneR, Widgets::kAccent);
     g->drawCircle(cx, cy, kStoneR - 1, Widgets::kAccent);
+  } else if (hintX_ == (int8_t)x && hintY_ == (int8_t)y) {
+    // Suggestion marker: a green target ring, deliberately unlike the blue
+    // ghost so a hint never looks like a committed preview.
+    g->drawCircle(cx, cy, kStoneR - 2, kHintColor);
+    g->drawCircle(cx, cy, kStoneR - 3, kHintColor);
+    g->fillCircle(cx, cy, 3, kHintColor);
+  }
+
+  if (koPoint_ == point && !game_->finished()) {
+    // Standard ko mark: a small hollow square on the forbidden point.
+    g->drawRect(cx - 6, cy - 6, 12, 12, Widgets::kAmber);
+    g->drawRect(cx - 5, cy - 5, 10, 10, Widgets::kAmber);
   }
 
   markRows(top, kCell);
@@ -696,25 +785,53 @@ void LiteGoTouchView::drawButtons() {
   markRows(kRow1Y, kRow2Y + kButtonH - kRow1Y);
 }
 
-void LiteGoTouchView::drawThinking() {
+void LiteGoTouchView::drawEvalStrip() {
+  // One strip, two jobs: the opponent's search progress while it thinks, and a
+  // live "who's ahead" lead bar the rest of the time.
   Arduino_GFX *g = CrowDisplay::canvas();
   g->fillRect(kSideX, kThinkY, kSideW, kThinkH, Widgets::kBg);
 
-  if (!thinking_) {
-    thinkingShown_ = 255;
+  if (thinking_) {
+    uint8_t pct = game_->aiProgressPercent();
+    Widgets::text(g, kSideX, kThinkY + 6, "THINKING", Widgets::fontS(), Widgets::kAccent,
+                  Widgets::kLeft);
+    Widgets::hBar(g, kSideX + 92, kThinkY + 8, kSideW - 92 - 60, 12, pct / 100.0f,
+                  Widgets::kAccent);
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%u%%", pct);
+    Widgets::text(g, kSideX + kSideW, kThinkY + 6, buf, Widgets::fontS(), Widgets::kTextMut,
+                  Widgets::kRight);
+    thinkingShown_ = pct;
     markRows(kThinkY, kThinkH);
     return;
   }
+  thinkingShown_ = 255;
 
-  uint8_t pct = game_->aiProgressPercent();
-  Widgets::text(g, kSideX, kThinkY + 6, "THINKING", Widgets::fontS(), Widgets::kAccent,
+  // Lead bar: black's share of total area (komi counted for White) as a
+  // black-fills-from-left bar with a centre reference tick. Early on it sits
+  // near the middle because most of the board is still neutral - that is
+  // honest, not a bug.
+  litego::ScoreEstimate s = game_->estimateScore();
+  float komi = s.komiX2 / 2.0f;
+  float total = (float)s.blackArea + (float)s.whiteArea + komi;
+  float blackFrac = total > 0.0f ? (float)s.blackArea / total : 0.5f;
+
+  const int16_t barX = kSideX + 52;
+  const int16_t barW = kSideW - 52 - 92;
+  const int16_t barY = kThinkY + 8;
+  const int16_t barH = 12;
+  int16_t blackW = (int16_t)(blackFrac * barW + 0.5f);
+
+  Widgets::text(g, kSideX, kThinkY + 6, "LEAD", Widgets::fontS(), Widgets::kTextMut,
                 Widgets::kLeft);
-  Widgets::hBar(g, kSideX + 92, kThinkY + 8, kSideW - 92 - 60, 12, pct / 100.0f, Widgets::kAccent);
-  char buf[8];
-  snprintf(buf, sizeof(buf), "%u%%", pct);
-  Widgets::text(g, kSideX + kSideW, kThinkY + 6, buf, Widgets::fontS(), Widgets::kTextMut,
-                Widgets::kRight);
-  thinkingShown_ = pct;
+  g->fillRoundRect(barX, barY, barW, barH, barH / 2, kWhiteStone);
+  if (blackW > 0) {
+    g->fillRect(barX, barY, blackW, barH, kBlackStone);
+  }
+  g->drawRoundRect(barX, barY, barW, barH, barH / 2, Widgets::kLine);
+  g->drawFastVLine(barX + barW / 2, barY - 3, barH + 6, Widgets::kAccent);
+  Widgets::text(g, kSideX + kSideW, kThinkY + 6, game_->resultText().c_str(), Widgets::fontS(),
+                s.marginX2 == 0 ? Widgets::kTextMut : Widgets::kTextHi, Widgets::kRight);
   markRows(kThinkY, kThinkH);
 }
 
@@ -743,6 +860,18 @@ void LiteGoTouchView::render() {
 
   gFlushTop = 0x7FFF;
   gFlushBottom = -1;
+
+  // The lead bar tracks the score, so remember whether it changed before the
+  // flag is cleared below.
+  bool scoreWasDirty = dirtyScore_;
+
+  // Compute the endgame territory shading once, the first frame after the game
+  // ends, and repaint the whole board to show it.
+  if (game_->finished() && !territoryValid_) {
+    game_->board().areaOwnership(territory_);
+    territoryValid_ = true;
+    dirtyBoard_ = true;
+  }
 
   if (dirtyChrome_) {
     drawChrome();
@@ -775,11 +904,15 @@ void LiteGoTouchView::render() {
     drawButtons();
     dirtyButtons_ = false;
   }
-  if (thinking_ || thinkingShown_ != 255) {
-    uint8_t pct = thinking_ ? game_->aiProgressPercent() : 255;
-    if (pct != thinkingShown_) {
-      drawThinking();
+  // Eval strip: progress bar while searching (redraw when the percent moves),
+  // otherwise the lead bar (redraw when the score changed or the search just
+  // ended, marked by thinkingShown_ still holding a percent).
+  if (thinking_) {
+    if (game_->aiProgressPercent() != thinkingShown_) {
+      drawEvalStrip();
     }
+  } else if (scoreWasDirty || thinkingShown_ != 255) {
+    drawEvalStrip();
   }
 
   // The overlay is only repainted when it first appears or when something

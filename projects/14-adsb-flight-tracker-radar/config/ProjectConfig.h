@@ -62,6 +62,30 @@
 #define ADSB_POLL_TASK 1
 #endif
 
+// --- Touch orientation -------------------------------------------------------
+// The GT911 reports panel-native coordinates. These map them to screen space:
+// swap first, then invert. The defaults are the identity mapping, which is what
+// the V1.2 CrowPanel Advanced 7" reports.
+//
+// This used to be handled by trying eight candidate transforms per tap and
+// taking the first that landed on any control - which is a lottery, not a
+// calibration: a single reading could select an aircraft via its swapped twin.
+// If a fresh board disagrees, build once with ADSB_TOUCH_AUTOPROBE=1, tap each
+// corner, read the `touch` log lines to see which mapping is consistent, then
+// pin it here and turn the probe back off.
+#ifndef ADSB_TOUCH_SWAP_XY
+#define ADSB_TOUCH_SWAP_XY 0
+#endif
+#ifndef ADSB_TOUCH_INVERT_X
+#define ADSB_TOUCH_INVERT_X 0
+#endif
+#ifndef ADSB_TOUCH_INVERT_Y
+#define ADSB_TOUCH_INVERT_Y 0
+#endif
+#ifndef ADSB_TOUCH_AUTOPROBE
+#define ADSB_TOUCH_AUTOPROBE 0
+#endif
+
 // --- Wi-Fi credentials (gitignored copy of WiFiSecrets.example.h) ------------
 // Only meaningful when built with -DUSE_WIFI=1. Empty defaults keep every build
 // compiling; the network client warns and runs log-only.

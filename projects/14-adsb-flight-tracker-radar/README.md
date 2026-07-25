@@ -19,9 +19,13 @@ boundaries.
 
 ## What you get
 
-- A radar view with aircraft markers and range rings
-- A nearby-aircraft list with useful flight details
-- Touch selection and dashboard navigation
+- A radar scope with a graduated compass bezel, range rings, and aircraft
+  markers that show heading and a speed-scaled velocity leader
+- Aircraft colour-coded by altitude band, with an on-screen legend
+- A nearby-aircraft list with altitude, speed, type, distance, and bearing
+- Touch selection and dashboard navigation, with a detail card showing a
+  heading rosette and altitude profile for the selected aircraft
+- A feed-health panel: contacts over time, raw traffic seen, and feed age
 - Optional weather, earthquake, aurora, and air-quality views
 - An offline demo with simulated aircraft
 - Free public data sources with no API key required

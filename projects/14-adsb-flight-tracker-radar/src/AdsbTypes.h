@@ -33,7 +33,10 @@ struct AdsbSnapshot {
   Aircraft ac[kMaxContacts];
   uint8_t count;         // valid entries in ac[]
   uint16_t totalSeen;    // raw aircraft in the last fetch (before the cap)
-  uint8_t rangeRingKm;   // outer display ring (set by the dashboard)
+  uint16_t rangeRingKm;  // outer display ring (set by the dashboard). uint16 so
+                         // `range 300` reaches the scope intact - as a uint8 it
+                         // wrapped to 44 km and the disc silently disagreed
+                         // with the header pill.
   uint32_t generatedMs;  // millis() of the fetch that produced this data
   const char *source;    // "airplanes.live" / "adsb.fi" / "mock" / "no-wifi"
 };

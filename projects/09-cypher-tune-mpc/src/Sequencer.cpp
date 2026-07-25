@@ -171,10 +171,30 @@ uint32_t Sequencer::stepDurationMs(uint8_t step) const {
 }
 
 uint32_t Sequencer::stepDurationFrames(uint8_t step, uint32_t rate) const {
-  uint64_t pairFrames = (uint64_t)rate * 2 * 60 / bpm_ / 4;
+  // Locked to a loop: the pair length comes from the loop, not from BPM, so
+  // the grid can never drift away from the backing track.
+  uint64_t pairFrames = lockedStepFrames_ != 0
+                            ? (uint64_t)lockedStepFrames_ * 2
+                            : (uint64_t)rate * 2 * 60 / bpm_ / 4;
   uint64_t evenFrames = pairFrames * swing_ / 100;
   uint64_t frames = (step % 2 == 0) ? evenFrames : pairFrames - evenFrames;
   return frames == 0 ? 1 : (uint32_t)frames;
+}
+
+void Sequencer::setLockedStepFrames(uint32_t framesPerStep) {
+  lockedStepFrames_ = framesPerStep;
+}
+
+uint16_t Sequencer::effectiveBpmTenths(uint32_t rate) const {
+  if (lockedStepFrames_ == 0 || rate == 0) {
+    return (uint16_t)(bpm_ * 10);
+  }
+  // 16 steps per bar, 4 beats per bar -> a beat is 4 steps.
+  uint32_t beatFrames = lockedStepFrames_ * 4;
+  if (beatFrames == 0) {
+    return (uint16_t)(bpm_ * 10);
+  }
+  return (uint16_t)(((uint64_t)rate * 600) / beatFrames);
 }
 
 bool Sequencer::tickMillis(uint32_t nowMs, StepFireFn fn, void *ctx) {

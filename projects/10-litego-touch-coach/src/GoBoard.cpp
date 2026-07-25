@@ -2,6 +2,15 @@
 
 #include <string.h>
 
+// The Arduino esp32 platform compiles sketch code at -Os. This is the Monte-
+// Carlo hot path - flood fills run thousands of times per move - so build it
+// for speed instead. Measured ~375 playouts/sec at -Os on the P4; every bit of
+// throughput buys the opponent search depth. Guarded to real GCC (the firmware
+// build): the host uses clang -O2, which rejects this pragma.
+#if !defined(LITEGO_HOST_BUILD) && defined(__GNUC__) && !defined(__clang__)
+#pragma GCC optimize("O3")
+#endif
+
 namespace litego {
 namespace {
 
@@ -463,6 +472,73 @@ void GoBoard::setPosition(const char *const rows[kSize], Color toMove) {
   toMove_ = toMove;
   historyCount_ = 0;
   recordHistory(hash_);
+}
+
+void GoBoard::areaOwnership(uint8_t owner[kPointCount]) const {
+  // Stones own their own point; empty points start neutral and are claimed by
+  // the flood fill below.
+  for (int16_t p = 0; p < kPointCount; p++) {
+    owner[p] = points_[p];
+  }
+
+  clearMarks();
+  for (int16_t start = 0; start < kPointCount; start++) {
+    if (points_[start] != kEmpty || mark_[start] == markEpoch_) {
+      continue;
+    }
+
+    int16_t region[kPointCount];
+    uint8_t regionCount = 0;
+    uint8_t top = 0;
+    bool touchesBlack = false;
+    bool touchesWhite = false;
+    stack_[top++] = start;
+    mark_[start] = markEpoch_;
+
+    while (top > 0) {
+      int16_t current = stack_[--top];
+      region[regionCount++] = current;
+      const int8_t *adj = tables().neighbors[current];
+      for (uint8_t i = 0; i < 4; i++) {
+        int8_t n = adj[i];
+        if (n < 0) {
+          continue;
+        }
+        if (points_[n] == kBlack) {
+          touchesBlack = true;
+        } else if (points_[n] == kWhite) {
+          touchesWhite = true;
+        } else if (mark_[n] != markEpoch_) {
+          mark_[n] = markEpoch_;
+          stack_[top++] = n;
+        }
+      }
+    }
+
+    uint8_t claim = (touchesBlack && !touchesWhite) ? kBlack
+                    : (touchesWhite && !touchesBlack) ? kWhite
+                                                      : kEmpty;
+    for (uint8_t i = 0; i < regionCount; i++) {
+      owner[region[i]] = claim;
+    }
+  }
+}
+
+int16_t GoBoard::koPoint() const {
+  if (state_ != kPlaying) {
+    return kPass;
+  }
+  uint8_t work[kPointCount];
+  MoveInfo info;
+  for (int16_t p = 0; p < kPointCount; p++) {
+    if (points_[p] != kEmpty) {
+      continue;
+    }
+    if (probe(p, toMove_, work, info, false) == kMoveKo) {
+      return p;
+    }
+  }
+  return kPass;
 }
 
 void GoBoard::save(Snapshot &out) const {

@@ -91,6 +91,7 @@ bool GbAudio::begin() {
   ampEnable(true);
 
   ready_ = true;
+  rate_ = GB_SAMPLERATE;
   status_ = String("i2s ready @") + GB_SAMPLERATE + "Hz, amp IO" + ampPin_ +
             (ampActiveHigh_ ? " (active-HIGH)" : " (active-LOW)");
   Logger::info("gbaudio", status_);
@@ -121,6 +122,27 @@ void GbAudio::shutdown() {
     txChan_ = nullptr;
   }
   ready_ = false;
+#endif
+}
+
+bool GbAudio::setSampleRate(uint32_t hz) {
+#if CYPHER_BOY_HAS_I2S
+  if (!ready_ || hz == rate_ || hz == 0) return ready_;
+  // Reconfiguring the clock needs the channel disabled. Genesis is ~53 kHz and
+  // Game Boy 32 kHz; retuning the hardware beats resampling in software.
+  i2s_chan_handle_t tx = (i2s_chan_handle_t)txChan_;
+  i2s_std_clk_config_t clk = I2S_STD_CLK_DEFAULT_CONFIG(hz);
+  if (i2s_channel_disable(tx) != ESP_OK) return false;
+  const bool ok = i2s_channel_reconfig_std_clock(tx, &clk) == ESP_OK;
+  if (i2s_channel_enable(tx) != ESP_OK) return false;
+  if (ok) {
+    rate_ = hz;
+    Logger::info("gbaudio", String("sample rate -> ") + hz + " Hz");
+  }
+  return ok;
+#else
+  (void)hz;
+  return false;
 #endif
 }
 

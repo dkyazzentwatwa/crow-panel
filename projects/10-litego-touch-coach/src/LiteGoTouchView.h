@@ -53,6 +53,8 @@ class LiteGoTouchView {
   void clearGhost();
   void setStatus(const String &message, bool warning = false);
   void setThinking(bool thinking);
+  // Parks a suggestion marker on the board (from HINT). kPass clears it.
+  void setHint(int8_t x, int8_t y);
 
   // Call once per loop(). Returns true when the user committed an action.
   bool tick(Action &action);
@@ -87,11 +89,21 @@ class LiteGoTouchView {
   // Ghost stone (preview) state
   int8_t ghostX_ = -1;
   int8_t ghostY_ = -1;
+  // Hint-suggestion marker (from HINT), distinct from the ghost.
+  int8_t hintX_ = -1;
+  int8_t hintY_ = -1;
   // Cell currently carrying the last-move marker, so it can be cleaned up when
   // the marker moves on.
   int8_t markerX_ = -1;
   int8_t markerY_ = -1;
+  // Ko-forbidden point for the side to move, recomputed per move (an 81-point
+  // scan), not per frame.
+  int16_t koPoint_ = -1;
   bool gameOverShown_ = false;
+  // Per-point area ownership shaded at game end; recomputed when the game
+  // finishes, not every frame.
+  bool territoryValid_ = false;
+  uint8_t territory_[LiteGoGame::kPointCount];
 
   // Touch state
   bool down_ = false;
@@ -119,7 +131,7 @@ class LiteGoTouchView {
   void drawScorePanel();
   void drawStatusPanel();
   void drawButtons();
-  void drawThinking();
+  void drawEvalStrip();  // opponent search progress, or the live lead bar
   void drawGameOver();
   void render();
 #endif
