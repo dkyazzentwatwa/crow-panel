@@ -1,4 +1,4 @@
-#include "HidKeycodes.h"
+#include "CrowHidKeycodes.h"
 
 uint8_t hidModifierByte(uint8_t mods) {
   uint8_t b = 0;
@@ -61,7 +61,7 @@ bool hidUsageForKey(uint8_t key, uint8_t &usage, bool &needsShift) {
     case '?': usage = 0x38; needsShift = true; return true;
   }
 
-  // Special keys (kKey* / Arduino KEY_* constants from HidTypes.h).
+  // Special keys (kKey* / Arduino KEY_* constants from CrowHidTypes.h).
   switch (key) {
     case kKeyReturn: usage = 0x28; return true;
     case kKeyEsc: usage = 0x29; return true;

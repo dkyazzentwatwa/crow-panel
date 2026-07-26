@@ -124,7 +124,8 @@ Per-project proof states in `docs/full-port-proof-matrix.md`: `compile-ready` �
 
 These are product constraints, not suggestions — do not add capabilities past them:
 
-- RF projects (11 CardRF, 13 SurveyOps, 17 littlehakr, 05 CypherDrive) are **passive/receive-only**: no TX, replay, jamming, injection, deauth, network joins, or credential capture.
+- RF projects (11 CardRF, 13 SurveyOps, 17 littlehakr) are **passive/receive-only**: no TX, replay, jamming, injection, deauth, network joins, or credential capture.
+- 05 CypherDrive is an **active** field tool — Wi-Fi active scan + join + client tools (captive-portal detection, mDNS, TCP connect sweep), on-panel BLE central scan/GATT, and USB/BLE HID output, all through the onboard C6. It still excludes the destructive/abusive end: **no** Wi-Fi deauth/jamming, **no** evil-twin/captive-portal credential capture (captive handling is detection only), and **no** unattended BadUSB autorun (HID is operator-driven — you tap, it types). Do not add those past this line.
 - Project 19 Starbeam is the one exception, and all transmit is arm-gated behind a **gitignored local `LabProfile.h`** (`STARBEAM_TX_CONFIRMED`), disarmed by default.
 - NFC (03, 07) is **UID-only / read-only APDU lab inspection** — demo-grade, not payment or credential work. Preserve the warnings in `docs/security-notes.md` and the BadgeOps docs.
 - Never commit secrets, Wi-Fi credentials, real coordinates, or `arduino-cli.yaml`. Per-machine config is gitignored (`**/config/WiFiSecrets.h`, `Pins.h`, `Location.h`, `LabProfile.h`, `Devices.h`, `CamSecrets.h`) — edit the `.example.h` template when adding a setting.

@@ -65,6 +65,32 @@
 #define USE_QR_PERSISTENCE 0
 #endif
 
+// Shared CrowHid stack (shared/CrowPanelShared/CrowHid*): USB + BLE HID output.
+// Used by project 21 (Cypher Keys) and project 05 (CypherDrive). Defaults off so
+// shared TUs and the flag matrix build the mock path. USE_USB_HID=1 needs an
+// USBMode=default FQBN to go live (else it falls back to MOCK with a #warning);
+// USE_BLE_HID=1 drives BLE HID over the onboard C6 (NimBLE) and builds under the
+// default hwcdc FQBN too.
+#ifndef USE_USB_HID
+#define USE_USB_HID 0
+#endif
+
+#ifndef USE_BLE_HID
+#define USE_BLE_HID 0
+#endif
+
+// Project 05 (CypherDrive) active field-tool paths. USE_WIFI_ACTIVE turns the
+// Wi-Fi scanner active (probe scan) and unlocks join + client tools through the
+// hosted C6 (also needs USE_WIFI so the shared CrowNetworkClient join/HTTP path
+// compiles). USE_BLE_C6 drives on-panel NimBLE central scan/GATT over the C6.
+#ifndef USE_WIFI_ACTIVE
+#define USE_WIFI_ACTIVE 0
+#endif
+
+#ifndef USE_BLE_C6
+#define USE_BLE_C6 0
+#endif
+
 #ifndef USE_SD_HIGHSCORES
 #define USE_SD_HIGHSCORES 0
 #endif

@@ -5,7 +5,9 @@
 namespace {
 
 LoopLibrary::LoopInfo gLoops[LoopLibrary::kMaxLoops];
+LoopLibrary::PackInfo gPacks[LoopLibrary::kMaxPacks];
 uint8_t gCount = 0;
+uint8_t gPackCount = 0;
 bool gScanned = false;
 
 void copyField(char *dst, size_t dstSize, const String &src) {
@@ -38,19 +40,15 @@ String nextField(String &line) {
 
 namespace LoopLibrary {
 
-uint8_t begin() {
-  if (gScanned) {
-    return gCount;
-  }
-  gScanned = true;
-  gCount = 0;
-  if (!WavLoader::beginSd()) {
-    return 0;
-  }
-  File manifest = SD_MMC.open(String(CYPHER_TUNE_LOOP_DIR) + "/loops.txt", FILE_READ);
+// Reads one pack directory's manifest into the flat loop table. Returns how
+// many loops it contributed.
+uint8_t scanPack(const String &dirName, uint8_t packIndex) {
+  String dir = String(CYPHER_TUNE_LOOP_DIR) + "/" + dirName;
+  File manifest = SD_MMC.open(dir + "/loops.txt", FILE_READ);
   if (!manifest) {
     return 0;
   }
+  uint8_t added = 0;
   while (manifest.available() && gCount < kMaxLoops) {
     String line = manifest.readStringUntil('\n');
     line.trim();
@@ -63,6 +61,7 @@ uint8_t begin() {
     slot.bpmTenths = (uint16_t)(nextField(line).toFloat() * 10.0f + 0.5f);
     slot.bars = (uint8_t)nextField(line).toInt();
     slot.frames = (uint32_t)nextField(line).toInt();
+    slot.pack = packIndex;
     // bars is what the tempo lock divides by, so a malformed row is skipped
     // rather than allowed to produce a zero-length step.
     if (slot.name[0] != '\0' && slot.bars > 0 && slot.frames > 0) {
@@ -70,9 +69,63 @@ uint8_t begin() {
         copyField(slot.title, sizeof(slot.title), String(slot.name));
       }
       gCount++;
+      added++;
     }
   }
   manifest.close();
+  return added;
+}
+
+uint8_t begin() {
+  if (gScanned) {
+    return gCount;
+  }
+  gScanned = true;
+  gCount = 0;
+  gPackCount = 0;
+  if (!WavLoader::beginSd()) {
+    return 0;
+  }
+  File root = SD_MMC.open(CYPHER_TUNE_LOOP_DIR);
+  if (!root || !root.isDirectory()) {
+    return 0;
+  }
+  File entry = root.openNextFile();
+  while (entry && gPackCount < kMaxPacks && gCount < kMaxLoops) {
+    if (entry.isDirectory()) {
+      const char *path = entry.name();
+      const char *leaf = strrchr(path, '/');
+      String dirName = leaf ? String(leaf + 1) : String(path);
+      entry.close();
+
+      PackInfo &pk = gPacks[gPackCount];
+      copyField(pk.name, sizeof(pk.name), dirName);
+      pk.firstLoop = gCount;
+      uint8_t added = scanPack(dirName, gPackCount);
+      if (added > 0) {
+        pk.count = added;
+        // Display title from pack.txt; fall back to the directory name so a
+        // pack dropped in by hand still shows up sensibly.
+        File pf = SD_MMC.open(String(CYPHER_TUNE_LOOP_DIR) + "/" + dirName + "/pack.txt",
+                              FILE_READ);
+        String title;
+        if (pf) {
+          title = pf.readStringUntil('\n');
+          title.trim();
+          pf.close();
+        }
+        copyField(pk.title, sizeof(pk.title), title.length() ? title : dirName);
+        gPackCount++;
+      }
+    } else {
+      entry.close();
+    }
+    entry = root.openNextFile();
+  }
+  if (entry) {
+    entry.close();
+  }
+  root.close();
   return gCount;
 }
 
@@ -80,7 +133,9 @@ uint32_t loadLoop(uint8_t index, int16_t **pcmOut) {
   if (index >= gCount || pcmOut == nullptr || !WavLoader::beginSd()) {
     return 0;
   }
-  String path = String(CYPHER_TUNE_LOOP_DIR) + "/" + gLoops[index].name + ".wav";
+  const LoopInfo &loop = gLoops[index];
+  const char *packDir = loop.pack < gPackCount ? gPacks[loop.pack].name : "";
+  String path = String(CYPHER_TUNE_LOOP_DIR) + "/" + packDir + "/" + loop.name + ".wav";
   File file = SD_MMC.open(path, FILE_READ);
   if (!file) {
     return 0;
@@ -148,6 +203,20 @@ uint8_t count() { return gCount; }
 const LoopInfo &info(uint8_t index) {
   static const LoopInfo kEmpty;
   return index < gCount ? gLoops[index] : kEmpty;
+}
+
+uint8_t packCount() { return gPackCount; }
+
+const PackInfo &pack(uint8_t index) {
+  static const PackInfo kEmpty;
+  return index < gPackCount ? gPacks[index] : kEmpty;
+}
+
+int8_t loopInPack(uint8_t packIndex, uint8_t slot) {
+  if (packIndex >= gPackCount || slot >= gPacks[packIndex].count) {
+    return -1;
+  }
+  return (int8_t)(gPacks[packIndex].firstLoop + slot);
 }
 
 int8_t indexOfName(const char *name) {

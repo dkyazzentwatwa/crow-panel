@@ -4,12 +4,12 @@
 #include "HardwareProfile.h"
 #include "Logger.h"
 
-#if (USE_WIFI || USE_WIFI_SCAN || USE_FLOCK_C6_WITNESS || USE_RF_LAB_C6_WIFI) && defined(CONFIG_IDF_TARGET_ESP32P4)
+#if (USE_WIFI || USE_WIFI_SCAN || USE_WIFI_ACTIVE || USE_FLOCK_C6_WITNESS || USE_RF_LAB_C6_WIFI) && defined(CONFIG_IDF_TARGET_ESP32P4)
 #include <WiFi.h>
 #endif
 
 bool configureCrowPanelHostedWiFiPins(const char *scope) {
-#if (USE_WIFI || USE_WIFI_SCAN || USE_FLOCK_C6_WITNESS || USE_RF_LAB_C6_WIFI) && defined(CONFIG_IDF_TARGET_ESP32P4)
+#if (USE_WIFI || USE_WIFI_SCAN || USE_WIFI_ACTIVE || USE_FLOCK_C6_WITNESS || USE_RF_LAB_C6_WIFI) && defined(CONFIG_IDF_TARGET_ESP32P4)
   static bool attempted = false;
   static bool configured = false;
 

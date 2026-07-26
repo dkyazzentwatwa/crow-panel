@@ -57,7 +57,7 @@ void HidDeck::begin(EventLog *events) {
   bootReason_ = String("rst:") + resetReasonLabel();
   Serial.print("[boot] reset reason: ");
   Serial.println(resetReasonLabel());
-  backend_.begin(&Serial, events);
+  backend_.begin(&Serial, events, CYPHER_KEYS_BLE_NAME, CYPHER_KEYS_NVS_NAMESPACE);
   presets_.begin();
   loadSettings();
   // The card is mounted BEFORE the MIPI-DSI framebuffer comes up: on this panel,

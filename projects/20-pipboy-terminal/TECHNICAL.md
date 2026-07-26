@@ -31,8 +31,11 @@ hardware, microphone, or sensors are required.
   uses a built-in exploration grid and markers.
 - **ITEMS** is a local four-item inspection catalog with generated original art.
 - **DATA** is an SD BMP gallery with built-in terminal art as a fallback.
-- **RADIO** lists SD holotape WAV files, plays them over I2S, and exposes a
-  generated speaker test when there is no card or track.
+- **RADIO** lists SD holotape WAV files and plays them over I2S using the same
+  raw `i2s_std` path as projects 09/21/22 (explicit DMA ring, silence pre-roll
+  before the active-low amp enable). With audio and SD enabled it auto-starts
+  the first holotape at boot and loops the playlist as background music until
+  `radio stop`; a generated speaker test covers the no-card case.
 - **Boot and motion** use a 3.2-second staged terminal start plus small,
   partial-refresh activity cues on every page. The panel never full-repaints
   merely to animate, avoiding the display flicker seen with periodic redraws.
@@ -82,20 +85,25 @@ CTAGS_WORKAROUND=1 EXTRA_FLAGS="-DUSE_DISPLAY=1 -DUSE_PIPBOY_SD=1" \
 CTAGS_WORKAROUND=1 EXTRA_FLAGS="-DUSE_DISPLAY=1 -DUSE_WIFI=1" \
 ./scripts/upload-project.sh projects/20-pipboy-terminal /dev/cu.usbmodemXXXX
 
-# Combined storage + Wi-Fi. Add USE_PIPBOY_AUDIO later, after the speaker path
-# has its own acceptance test.
+# Full build with background radio. The speaker path is the i2s_std recipe
+# already hardware-verified in projects 09/21/22; acceptance is the boot
+# auto-play of /pipboy/audio plus `radio stop` going silent.
 CTAGS_WORKAROUND=1 \
-EXTRA_FLAGS="-DUSE_DISPLAY=1 -DUSE_PIPBOY_SD=1 -DUSE_WIFI=1" \
+EXTRA_FLAGS="-DUSE_DISPLAY=1 -DUSE_PIPBOY_SD=1 -DUSE_PIPBOY_AUDIO=1 -DUSE_WIFI=1" \
 ./scripts/upload-project.sh projects/20-pipboy-terminal /dev/cu.usbmodemXXXX
 ```
 
 ## Proof state
 
 - `compile-ready`: baseline, display, SD, audio, Wi-Fi, and full rows compile.
-- `uploaded`: not claimed until the selected full build writes to a real panel.
-- `device-proven`: requires visible touch navigation, SD media discovery, an
-  audible speaker test and WAV playback, plus time/weather evidence when Wi-Fi
-  credentials are configured.
+- `uploaded` (2026-07-25): the full display+SD+audio+Wi-Fi build (1.26 MB)
+  flashed to a real panel and hash-verified.
+- `device-proven`, partially (2026-07-25): the panel booted, mounted the SD
+  card, and auto-played its nine-holotape playlist audibly from the speaker —
+  display, SD discovery, and WAV playback are proven. Still open: touch
+  navigation, the speaker-test tone, radio stop/volume from glass, and
+  time/weather evidence (USB serial drops once the app runs, so Wi-Fi state
+  was not observable this session).
 
 Pip-Boy, Fallout, Vault-Tec, and related marks are owned by their respective
 owners. This is an unofficial fan prop, not affiliated with or endorsed by

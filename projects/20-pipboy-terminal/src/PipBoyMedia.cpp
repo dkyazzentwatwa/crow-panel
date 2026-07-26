@@ -6,8 +6,12 @@
 #if USE_PIPBOY_SD
 #include <SD_MMC.h>
 #endif
-#if USE_PIPBOY_AUDIO && defined(ARDUINO_ARCH_ESP32)
-#include <ESP_I2S.h>
+// driver/i2s_std.h is an ESP-IDF core header, not an Arduino library, so the
+// __has_include linkage trap does not apply. The Arduino ESP_I2S wrapper's
+// hardcoded ~65 ms DMA ring is what made audio flaky before; projects 09/21/22
+// all use this raw i2s_std path and are hardware-verified with it.
+#if USE_PIPBOY_AUDIO && __has_include(<driver/i2s_std.h>)
+#include <driver/i2s_std.h>
 #define PIPBOY_HAS_I2S 1
 #endif
 #ifndef PIPBOY_HAS_I2S
@@ -19,7 +23,10 @@ namespace {
 File gWav;
 #endif
 #if PIPBOY_HAS_I2S
-I2SClass gI2s;
+// One DMA block is 16 ms at 16 kHz; 6 blocks ride out a slow UI frame while
+// keeping stop/volume changes responsive.
+constexpr uint16_t kBlockFrames = 256;
+constexpr int kDmaDesc = 6;
 #endif
 #if USE_PIPBOY_SD
 uint16_t u16(File &f) {
@@ -34,6 +41,10 @@ uint32_t u32(File &f) {
 bool suffix(const String &name, const char *ext) {
   String lower = name; lower.toLowerCase();
   return lower.endsWith(ext);
+}
+String baseName(const String &path) {
+  int slash = path.lastIndexOf('/');
+  return slash >= 0 ? path.substring(slash + 1) : path;
 }
 }
 
@@ -54,25 +65,62 @@ void PipBoyMedia::begin() {
 #endif
 #if PIPBOY_HAS_I2S
   const AudioPins &audio = activeHardwareProfile().audio;
+  // Park the amp OFF (IO30 is ACTIVE-LOW on this panel) until the bus is clean.
   pinMode(audio.control, OUTPUT);
-  digitalWrite(audio.control, audio.controlActiveHigh ? HIGH : LOW);
-  gI2s.setPins(audio.bclk, audio.lrclk, audio.sdata);
-  audioReady_ = gI2s.begin(I2S_MODE_STD, PIPBOY_AUDIO_SAMPLE_RATE,
-                           I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO);
+  digitalWrite(audio.control, audio.controlActiveHigh ? LOW : HIGH);
+
+  i2s_chan_config_t chanCfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
+  chanCfg.dma_desc_num = kDmaDesc;
+  chanCfg.dma_frame_num = kBlockFrames;
+  chanCfg.auto_clear = true;  // emit silence on underrun instead of stale audio
+  i2s_chan_handle_t tx = nullptr;
+  if (i2s_new_channel(&chanCfg, &tx, nullptr) == ESP_OK) {
+    i2s_std_config_t stdCfg = {
+        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG((uint32_t)PIPBOY_AUDIO_SAMPLE_RATE),
+        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT,
+                                                        I2S_SLOT_MODE_STEREO),
+        .gpio_cfg = {
+            .mclk = I2S_GPIO_UNUSED,  // NS4168 needs no MCLK
+            .bclk = (gpio_num_t)audio.bclk,
+            .ws = (gpio_num_t)audio.lrclk,
+            .dout = (gpio_num_t)audio.sdata,
+            .din = I2S_GPIO_UNUSED,
+            .invert_flags = {false, false, false},
+        },
+    };
+    if (i2s_channel_init_std_mode(tx, &stdCfg) == ESP_OK &&
+        i2s_channel_enable(tx) == ESP_OK) {
+      // Stream silence before raising the amp enable so it wakes to a clean
+      // bus instead of a pop.
+      int16_t silence[kBlockFrames * 2] = {};
+      for (int i = 0; i < 4; ++i) {
+        size_t written = 0;
+        i2s_channel_write(tx, silence, sizeof(silence), &written, pdMS_TO_TICKS(50));
+      }
+      digitalWrite(audio.control, audio.controlActiveHigh ? HIGH : LOW);
+      txChan_ = tx;
+      audioReady_ = true;
+    } else {
+      i2s_del_channel(tx);
+    }
+  }
   if (!audioReady_) {
     status_ = "speaker init failed; silent";
   } else {
     status_ += "; speaker ready";
   }
 #endif
+  // Background radio: boot straight into the first holotape and keep looping
+  // the playlist while the operator browses other tabs.
+  if (audioReady_ && trackCount_ > 0) playTrack(0);
 }
 
 bool PipBoyMedia::sdReady() const { return sdReady_; }
 String PipBoyMedia::status() const { return status_; }
 uint8_t PipBoyMedia::trackCount() const { return trackCount_; }
 uint8_t PipBoyMedia::imageCount() const { return imageCount_; }
-String PipBoyMedia::trackName(uint8_t index) const { return index < trackCount_ ? tracks_[index] : "NO HOLOTAPES"; }
-String PipBoyMedia::imageName(uint8_t index) const { return index < imageCount_ ? images_[index] : "NO SD IMAGE"; }
+String PipBoyMedia::trackName(uint8_t index) const { return index < trackCount_ ? baseName(tracks_[index]) : "NO HOLOTAPES"; }
+String PipBoyMedia::imageName(uint8_t index) const { return index < imageCount_ ? baseName(images_[index]) : "NO SD IMAGE"; }
 bool PipBoyMedia::playing() const { return playing_; }
 uint8_t PipBoyMedia::activeTrack() const { return activeTrack_; }
 void PipBoyMedia::setVolume(uint8_t volume) { volume_ = min<uint8_t>(volume, 100); }
@@ -85,8 +133,10 @@ void PipBoyMedia::indexDirectory_(const char *directory, const char *extension, 
   if (!folder || !folder.isDirectory()) return;
   File file = folder.openNextFile();
   while (file && count < kMaxFiles) {
+    // Core 3.x name() is the bare filename; store the full path so the entry
+    // can be reopened later.
     String name = file.name();
-    if (!file.isDirectory() && suffix(name, extension)) out[count++] = name;
+    if (!file.isDirectory() && suffix(name, extension)) out[count++] = String(directory) + "/" + name;
     file = folder.openNextFile();
   }
 #else
@@ -123,6 +173,7 @@ bool PipBoyMedia::openWav_(const String &path) {
 bool PipBoyMedia::playTrack(uint8_t index) {
   if (index >= trackCount_) return false;
   activeTrack_ = index;
+  autoplay_ = true;
   return openWav_(tracks_[index]);
 }
 void PipBoyMedia::closeWav_() {
@@ -131,7 +182,19 @@ void PipBoyMedia::closeWav_() {
 #endif
   playing_ = false;
 }
-void PipBoyMedia::stop() { closeWav_(); status_ = "radio stopped"; }
+void PipBoyMedia::stop() { closeWav_(); autoplay_ = false; status_ = "radio stopped"; }
+// End-of-track: keep the radio going by wrapping to the next holotape. Each
+// entry gets one attempt so a single bad WAV cannot wedge the playlist.
+void PipBoyMedia::advance_() {
+  closeWav_();
+  if (!autoplay_ || trackCount_ == 0) { status_ = "holotape complete"; return; }
+  for (uint8_t i = 0; i < trackCount_; ++i) {
+    uint8_t next = (activeTrack_ + 1 + i) % trackCount_;
+    if (openWav_(tracks_[next])) { activeTrack_ = next; return; }
+  }
+  autoplay_ = false;
+  status_ = "no playable holotapes";
+}
 void PipBoyMedia::speakerTest() {
 #if PIPBOY_HAS_I2S
   if (!audioReady_) { status_ = "speaker unavailable"; return; }
@@ -146,24 +209,29 @@ void PipBoyMedia::speakerTest() {
 void PipBoyMedia::tick() {
 #if PIPBOY_HAS_I2S
   if (!audioReady_) return;
-  constexpr uint16_t frames = 96;
-  int16_t stereo[frames * 2] = {};
-  int16_t mono[frames] = {};
+  int16_t stereo[kBlockFrames * 2] = {};
+  int16_t mono[kBlockFrames] = {};
+  bool fed = false;
 #if USE_PIPBOY_SD
   if (playing_) {
+    fed = true;
     size_t got = gWav.read(reinterpret_cast<uint8_t *>(mono), sizeof(mono));
-    if (got < sizeof(mono)) { closeWav_(); status_ = "holotape complete"; }
+    if (got < sizeof(mono)) advance_();  // rest of this block stays silent
   }
 #endif
   bool tone = millis() < toneUntilMs_;
-  if (!playing_ && !tone) return;
-  for (uint16_t i = 0; i < frames; ++i) {
+  if (!fed && !tone) return;
+  for (uint16_t i = 0; i < kBlockFrames; ++i) {
     int32_t sample = static_cast<int32_t>(mono[i]) * volume_ / 100;
     if (tone) sample += ((toneSample_++ / 10) % 2 ? 1 : -1) * 5000;
     stereo[i * 2] = constrain(sample, -32768, 32767);
     stereo[i * 2 + 1] = stereo[i * 2];
   }
-  gI2s.write(reinterpret_cast<uint8_t *>(stereo), sizeof(stereo));
+  // Blocking write paces playback: once the DMA ring is full this waits for a
+  // block to drain (~16 ms), which the 8 ms UI loop absorbs fine.
+  size_t written = 0;
+  i2s_channel_write((i2s_chan_handle_t)txChan_, stereo, sizeof(stereo), &written,
+                    pdMS_TO_TICKS(100));
 #endif
 }
 

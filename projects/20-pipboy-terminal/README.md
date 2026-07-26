@@ -14,11 +14,12 @@ sensors to add.
 
 ## Status
 
-Compile-ready across the display, SD, audio, Wi-Fi, and full builds. Nothing is
-claimed as uploaded until a full build is written to a real panel, and
-device-proven additionally needs visible touch navigation, SD media discovery, an
-audible speaker test and WAV playback, and time/weather when Wi-Fi is configured.
-See the [technical reference](TECHNICAL.md).
+Field-proven audio core (2026-07-25): the full display+SD+audio+Wi-Fi build was
+flashed to a real panel, which booted and auto-played its SD holotape playlist
+audibly through the speaker — proving display bringup, SD media discovery, and
+WAV playback. Still needing on-panel acceptance: touch navigation, the speaker
+test tone, radio controls from glass, and time/weather when Wi-Fi is
+configured. See the [technical reference](TECHNICAL.md).
 
 ## What you get
 
@@ -28,8 +29,9 @@ See the [technical reference](TECHNICAL.md).
 - **MAP** — an SD map image when present, otherwise a built-in exploration grid
 - **ITEMS** — a local four-item inspection catalog with original generated art
 - **DATA** — an SD BMP gallery with built-in terminal art as a fallback
-- **RADIO** — plays SD holotape WAV files over the speaker, with a generated
-  speaker test when no card or track is present
+- **RADIO** — background music: boots straight into the first SD holotape WAV
+  and loops the playlist while you browse other tabs, with a generated speaker
+  test when no card or track is present; `radio stop` silences it
 - Smooth partial-refresh activity cues that never full-repaint just to animate,
   avoiding the flicker of periodic full redraws
 

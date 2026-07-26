@@ -14,8 +14,8 @@ void ScanLog::recordWifi(const WifiNetworkRecord &record, const char *source) {
   push(kWifi, "wifi", summary, detail);
 }
 
-void ScanLog::recordBle(const BleAdvertisementRecord &record, const char *source) {
-  String summary = record.label.length() > 0 ? record.label : record.address;
+void ScanLog::recordBle(const BleDeviceRecord &record, const char *source) {
+  String summary = record.name.length() > 0 ? record.name : record.address;
   if (summary.length() == 0) summary = "(unnamed)";
   String detail = "addr=" + record.address + " rssi=" + String(record.rssi) +
                   " vendor=" + record.vendor + " source=" + String(source);
@@ -23,8 +23,12 @@ void ScanLog::recordBle(const BleAdvertisementRecord &record, const char *source
   push(kBle, "ble", summary, detail);
 }
 
-void ScanLog::recordQr(const String &url, bool persisted) {
-  push(kQr, "qr", "handoff-url", String(persisted ? "persisted " : "volatile ") + url);
+void ScanLog::recordNet(const String &summary, const String &detail) {
+  push(kNet, "net", summary, detail);
+}
+
+void ScanLog::recordHid(const String &summary, const String &detail) {
+  push(kHid, "hid", summary, detail);
 }
 
 void ScanLog::recordInfo(const String &category, const String &summary, const String &detail) {
@@ -108,8 +112,10 @@ const char *ScanLog::typeName(EntryType type) const {
       return "wifi";
     case kBle:
       return "ble";
-    case kQr:
-      return "qr";
+    case kNet:
+      return "net";
+    case kHid:
+      return "hid";
     case kInfo:
     default:
       return "info";

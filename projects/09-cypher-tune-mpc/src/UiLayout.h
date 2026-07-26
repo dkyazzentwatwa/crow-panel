@@ -112,7 +112,9 @@ constexpr int16_t kSetBackX = 24, kSetBackW = 110;
 constexpr int16_t kSetBackY = 14, kSetBackH = 36;
 // Rows: label on the left, [-]/[<] then a bar or name, then [+]/[>], value.
 constexpr int16_t kSetRow0Y = 92;
-constexpr int16_t kSetRowPitch = 76;
+// Pitch is tuned so all six rows plus the info block fit above y=600; adding a
+// row without shrinking this would push the last one under the info panel.
+constexpr int16_t kSetRowPitch = 68;
 constexpr int16_t kSetRowH = 52;
 constexpr int16_t kSetLabelX = 40;
 constexpr int16_t kSetMinusX = 250, kSetStepW = 76;
@@ -121,13 +123,37 @@ constexpr int16_t kSetPlusX = 792;
 constexpr int16_t kSetValueX = 1000;  // right-aligned
 constexpr uint8_t kSetRowBrightness = 0;
 constexpr uint8_t kSetRowVolume = 1;
-constexpr uint8_t kSetRowTheme = 2;
-constexpr uint8_t kSetRowKit = 3;
-constexpr uint8_t kSetRowIdleDim = 4;
-constexpr uint8_t kSetRowCount = 5;
-constexpr int16_t kSetInfoY = 480;
+constexpr uint8_t kSetRowLoopVol = 2;  // sits next to master so the two read together
+constexpr uint8_t kSetRowTheme = 3;
+constexpr uint8_t kSetRowKit = 4;
+constexpr uint8_t kSetRowIdleDim = 5;
+constexpr uint8_t kSetRowCount = 6;
+constexpr int16_t kSetInfoY = 505;
 
 inline int16_t setRowY(uint8_t row) { return kSetRow0Y + row * kSetRowPitch; }
+
+// --- Loops browser (full-screen view) ---
+// Packs down the left, that pack's loops in a 2x6 grid on the right. 12 cells
+// covers the largest pack (Revival, 11) without paging.
+constexpr int16_t kLoopPackX = 24, kLoopPackW = 286;
+constexpr int16_t kLoopPackY0 = 72, kLoopPackH = 48, kLoopPackPitch = 56;
+constexpr uint8_t kLoopPackRows = 8;      // visible pack slots
+constexpr int16_t kLoopCellX0 = 332, kLoopCellW = 330, kLoopCellGapX = 10;
+constexpr int16_t kLoopCellY0 = 72, kLoopCellH = 68, kLoopCellPitch = 76;
+constexpr uint8_t kLoopCellCols = 2, kLoopCellRows = 6;
+constexpr uint8_t kLoopCellsPerPage = kLoopCellCols * kLoopCellRows;
+constexpr int16_t kLoopNoneX = 332, kLoopNoneW = 200;
+constexpr int16_t kLoopNoneY = 540, kLoopNoneH = 46;
+
+inline int16_t loopPackY(uint8_t row) { return kLoopPackY0 + row * kLoopPackPitch; }
+inline int16_t loopCellX(uint8_t slot) {
+  return kLoopCellX0 + (slot % kLoopCellCols) * (kLoopCellW + kLoopCellGapX);
+}
+inline int16_t loopCellY(uint8_t slot) {
+  return kLoopCellY0 + (slot / kLoopCellCols) * kLoopCellPitch;
+}
+
+// hitTestLoops lives further down, after inRect() and the Control enum.
 
 constexpr int16_t kStatusY = 560;
 constexpr int16_t kStatusH = 40;
@@ -168,8 +194,14 @@ enum Control : int16_t {
   kControlIdleDim,
   kControlLoopPrev,
   kControlLoopNext,
-  kControlPadBase = 100,   // +0..15
-  kControlStepBase = 200,  // +0..15
+  kControlLoopVolMinus,
+  kControlLoopVolPlus,
+  kControlOpenLoops,
+  kControlLoopNone,
+  kControlPadBase = 100,    // +0..15
+  kControlStepBase = 200,   // +0..15
+  kLoopPackBase = 300,      // +0..kLoopPackRows-1 (loops browser)
+  kLoopCellBase = 400,      // +0..kLoopCellsPerPage-1
 };
 
 inline bool inRect(int16_t x, int16_t y, int16_t rx, int16_t ry, int16_t rw, int16_t rh) {
@@ -263,6 +295,8 @@ inline int16_t hitTest(int16_t x, int16_t y) {
   if (y >= kLoopY && y < kLoopY + kLoopH) {
     if (inRect(x, y, kLoopPrevX, kLoopY, kLoopArrowW, kLoopH)) return kControlLoopPrev;
     if (inRect(x, y, kLoopNextX, kLoopY, kLoopArrowW, kLoopH)) return kControlLoopNext;
+    // The name between the arrows opens the browser.
+    if (x > kLoopPrevX + kLoopArrowW && x < kLoopNextX) return kControlOpenLoops;
   }
   if (inRect(x, y, kSetBtnX, kSetBtnY, kSetBtnW, kSetBtnH)) {
     return kControlOpenSettings;
@@ -293,6 +327,10 @@ inline int16_t hitTestSettings(int16_t x, int16_t y) {
         if (minus) return kControlVolumeMinus;
         if (plus) return kControlVolumePlus;
         break;
+      case kSetRowLoopVol:
+        if (minus) return kControlLoopVolMinus;
+        if (plus) return kControlLoopVolPlus;
+        break;
       case kSetRowTheme:
         if (minus) return kControlThemePrev;
         if (plus) return kControlThemeNext;
@@ -311,6 +349,28 @@ inline int16_t hitTestSettings(int16_t x, int16_t y) {
         break;
     }
     return kControlNone;
+  }
+  return kControlNone;
+}
+
+// Loops view: returns kControlBack, kControlLoopNone, kLoopPackBase+i, or
+// kLoopCellBase+slot.
+inline int16_t hitTestLoops(int16_t x, int16_t y) {
+  if (inRect(x, y, kSetBackX, kSetBackY, kSetBackW, kSetBackH)) {
+    return kControlBack;
+  }
+  if (inRect(x, y, kLoopNoneX, kLoopNoneY, kLoopNoneW, kLoopNoneH)) {
+    return kControlLoopNone;
+  }
+  for (uint8_t i = 0; i < kLoopPackRows; i++) {
+    if (inRect(x, y, kLoopPackX, loopPackY(i), kLoopPackW, kLoopPackH)) {
+      return kLoopPackBase + i;
+    }
+  }
+  for (uint8_t s = 0; s < kLoopCellsPerPage; s++) {
+    if (inRect(x, y, loopCellX(s), loopCellY(s), kLoopCellW, kLoopCellH)) {
+      return kLoopCellBase + s;
+    }
   }
   return kControlNone;
 }

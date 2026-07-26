@@ -1,6 +1,6 @@
-#include "BleTransport.h"
+#include "CrowBleTransport.h"
 
-#include "HidKeycodes.h"
+#include "CrowHidKeycodes.h"
 
 #if USE_BLE_HID
 #include <WiFi.h>  // WiFi.setPins() configures the shared esp_hosted SDIO link
@@ -78,11 +78,15 @@ void sendConsumer(uint16_t usage) {
 }  // namespace
 #endif  // USE_BLE_HID
 
+void BleTransport::setDeviceName(const char *name) {
+  if (name != nullptr && name[0] != '\0') deviceName_ = name;
+}
+
 void BleTransport::begin() {
 #if USE_BLE_HID
   const HostedSdioPins &p = activeHardwareProfile().hostedSdio;
   WiFi.setPins(p.clk, p.cmd, p.d0, p.d1, p.d2, p.d3, p.reset);  // before init!
-  BLEDevice::init(CYPHER_KEYS_BLE_NAME);
+  BLEDevice::init(deviceName_);
 
   BLEServer *server = BLEDevice::createServer();
   server->setCallbacks(new ServerCallbacks());

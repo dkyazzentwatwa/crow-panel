@@ -5,6 +5,7 @@
 #include <Arduino.h>
 #include "SampleBank.h"
 #include "Sequencer.h"
+#include "LoopLibrary.h"
 #include "TouchTracker.h"
 #include "TuneThemes.h"
 #include "VisualVoices.h"
@@ -46,10 +47,11 @@ class TuneUi {
   // Master output volume 0-255, owned by the engine.
   typedef uint8_t (*VolumeGetFn)(void *ctx);
   typedef void (*VolumeSetFn)(void *ctx, uint8_t volume);
-  // Backing loop: step through the catalog (dir -1/+1, walking off the front
-  // means "no loop") and report the current one's title for the panel.
-  typedef void (*LoopStepFn)(void *ctx, int8_t dir);
-  typedef const char *(*LoopNameFn)(void *ctx);
+  // Backing loop. The UI reads the catalog straight from LoopLibrary (it is a
+  // plain data module), but loading is a callback because it touches SD and
+  // the audio engine. -1 selects "no loop".
+  typedef void (*LoopSelectFn)(void *ctx, int8_t loopIndex);
+  typedef int8_t (*LoopCurrentFn)(void *ctx);
 
   // Everything the UI needs from the sketch, in one bag. This started as a
   // parameter list and outgrew being readable; the struct also means adding a
@@ -63,8 +65,12 @@ class TuneUi {
     ScopeFn scope = nullptr;
     VolumeGetFn volumeGet = nullptr;
     VolumeSetFn volumeSet = nullptr;
-    LoopStepFn loopStep = nullptr;
-    LoopNameFn loopName = nullptr;
+    LoopSelectFn loopSelect = nullptr;
+    LoopCurrentFn loopCurrent = nullptr;
+    // Backing-loop level, so the bed can be balanced against the pads. Same
+    // shape as the master volume hooks.
+    VolumeGetFn loopVolGet = nullptr;
+    VolumeSetFn loopVolSet = nullptr;
     void *ctx = nullptr;
   };
 
@@ -108,7 +114,7 @@ class TuneUi {
   void noteActivity();                 // any touch or command wakes the panel
 
   // Which full-screen view is up.
-  enum View : uint8_t { kViewMain = 0, kViewSettings };
+  enum View : uint8_t { kViewMain = 0, kViewSettings, kViewLoops };
   View view() const { return view_; }
   void setView(View v);
 
@@ -148,6 +154,8 @@ class TuneUi {
   void drawSettings_();
   void drawSettingsRow_(Arduino_GFX *g, const TuneTheme &t, uint8_t row);
   void pressSettingsControl_(TouchTracker::Contact &c, uint32_t now);
+  void drawLoops_();
+  void pressLoopsControl_(TouchTracker::Contact &c, uint32_t now);
   void tickIdle_(uint32_t now);
   void drawTransport_();
   void drawSeqHeader_();
@@ -169,6 +177,7 @@ class TuneUi {
   uint16_t dirtyPads_ = 0;
   uint16_t dirtySteps_ = 0;
   uint16_t dirtySettingsRows_ = 0;
+  uint8_t browsePack_ = 0;  // pack whose loops the browser is showing
 
   // Mirrors for change detection (serial edits reach the screen for free).
   uint16_t mirrorBpm_ = 0;

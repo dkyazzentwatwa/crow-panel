@@ -12,12 +12,12 @@ namespace {
 
 using namespace UiLayout;
 
-// Phase lengths, ms. Total ~2.3 s: long enough to read, short enough that it
-// never feels like it is in the way of playing.
+// Phase lengths, ms. Total ~1.9 s: long enough to read, short enough that it
+// never feels like it is in the way of playing. The hold lets the finished
+// wordmark and waveform sit for a beat before the UI takes the screen.
 constexpr uint16_t kFadeMs = 520;
 constexpr uint16_t kSweepMs = 900;
-constexpr uint16_t kGridMs = 620;
-constexpr uint16_t kHoldMs = 260;
+constexpr uint16_t kHoldMs = 480;
 constexpr uint8_t kFrameMs = 16;  // ~60 fps pacing
 
 // Waveform band: centered under the wordmark, spanning most of the width.
@@ -119,25 +119,6 @@ void run(const TuneTheme &t, const char *subtitle) {
                   t.muted, Widgets::kCenter);
   }
   CrowDisplay::flush(0, kWaveY - kWaveAmp - 4, kScreenW, kWaveAmp * 2 + 100);
-
-  // Phase 3: the pad grid wipes in, one row at a time from the bottom, each
-  // row's cells staggered left to right - the instrument arriving under the
-  // waveform it just drew.
-  uint16_t perCell = kGridMs / 16;
-  if (perCell == 0) {
-    perCell = 1;
-  }
-  for (int8_t row = 3; row >= 0; row--) {
-    for (uint8_t col = 0; col < 4; col++) {
-      int16_t x = padX(col);
-      int16_t y = padY((uint8_t)row);
-      g->fillRoundRect(x, y, kPadCellW, kPadCellH, 10,
-                       (row % 2 == 0) ? t.padFill : t.padFillAlt);
-      g->drawRoundRect(x, y, kPadCellW, kPadCellH, 10, t.accent);
-      CrowDisplay::flush(x, y, kPadCellW, kPadCellH);
-      delay(perCell);
-    }
-  }
 
   delay(kHoldMs);
 }

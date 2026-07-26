@@ -1,6 +1,6 @@
 #include "Trackpad.h"
 
-#include "HidBackend.h"
+#include <CrowHidBackend.h>
 #include "KeysLayout.h"  // pad/scroll/button rects and the tap thresholds
 #include "KeysTouch.h"
 

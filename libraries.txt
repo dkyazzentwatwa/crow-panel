@@ -22,6 +22,17 @@
 # MFRC522                    1.4.12             USE_MFRC522_DRIVER
 # RF24                       1.6.1              optional nRF24-style socket module
 # NimBLE-Arduino             2.5.0              Cypher Flock ESP32 BLE aggregator
+# TinyGPSPlus                1.0.3              USE_GPS_DRIVER - NMEA parsing for the
+#                                               project 13 SurveyOps wardriver rows
+# SmartRC-CC1101-Driver-Lib  2.5.7              USE_STARBEAM_RADIOS - CC1101 sub-GHz on
+#                                               project 19; PINNED in install-libs.sh.
+#                                               The registry now offers 3.0.2, a major
+#                                               bump nothing here has compiled against.
+#
+# Both entries above gate rows in scripts/check-flag-matrix.sh (project 13 [gps] and
+# [survey-hardware-gated]; project 19 [radios] and [full]). Those rows SKIP rather than
+# FAIL when a library is absent, so leaving them out of this file meant a fresh clone
+# silently skipped four rows and still exited 0.
 #
 # Most mock sketches need only the bundled core. Project 16 also uses
 # ArduinoJson in mock mode so injected and UART events share one parser.

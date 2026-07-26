@@ -199,11 +199,20 @@ class VisionCamUi {
   String servingName_;
 
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
+  struct TouchProbeSample {
+    int16_t rawX = 0, rawY = 0;
+    int16_t mappedX = 0, mappedY = 0;
+    int16_t portraitX = 0, portraitY = 0;
+  };
+
   bool ready_ = false;
   bool chromeDirty_ = true;   // chrome only; the frame path never sets this
   uint32_t lastChromeMs_ = 0;
+  uint8_t touchProbeCount_ = 0;
+  TouchProbeSample touchProbeSamples_[5];
 
   CamEvent handleTouch_();
+  void drawTouchProbe_();
   void drawChrome_();
   void drawLive_(const CrowCamera::Frame *frame);
   void drawLiveHud_(const CrowCamera::Frame *frame);

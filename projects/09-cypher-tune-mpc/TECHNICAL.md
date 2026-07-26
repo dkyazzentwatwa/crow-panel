@@ -80,10 +80,15 @@ hardware or sample files.
   flags per region + per-cell bitmasks for pads/steps; region flushes are
   row-band `esp_cache_msync` calls. No offscreen canvas — every animated
   element draws once in final state, keeping internal SRAM free for audio.
-- Two full-screen views (`TuneUi::View`): the performance screen and a
-  settings screen, dispatched in both touch (`hitTest` vs `hitTestSettings`)
-  and render. Routing by view is what stops a stale pad rect from firing while
-  settings is up. SET (step-lane header) opens it, BACK returns.
+- Three full-screen views (`TuneUi::View`): performance, settings, and a loops
+  browser, dispatched in both touch (`hitTest` / `hitTestSettings` /
+  `hitTestLoops`) and render. Routing by view is what stops a stale pad rect
+  from firing while another screen is up. SET (step-lane header) opens
+  settings; tapping the loop name opens the browser; BACK returns.
+- Loops browser: sample packs down the left, that pack's loops in a 2x6 grid
+  (12 cells covers the largest pack without paging), NO LOOP button bottom
+  left. Stepping through 41 loops with the arrows is not a way to find one, so
+  the arrows stay for quick A/B of neighbours and the name became a button.
 - Performance layout: transport bar (y0-64: PLAY/STOP/REC, BPM, SWING, MET,
   patterns A-D), 4x4 pad grid left (126x114 px cells, pad 1 bottom-left), right
   column: step grid 2x8, pad-edit panel (VOL/PITCH sliders + choke chips),

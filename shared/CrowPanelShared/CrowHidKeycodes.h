@@ -1,7 +1,7 @@
-#ifndef CYPHER_KEYS_HID_KEYCODES_H
-#define CYPHER_KEYS_HID_KEYCODES_H
+#ifndef CROW_HID_KEYCODES_H
+#define CROW_HID_KEYCODES_H
 
-#include "HidTypes.h"
+#include "CrowHidTypes.h"
 #include <Arduino.h>
 
 // Translate one app key (ASCII or kKey*/KEY_* constant) to a USB HID usage and

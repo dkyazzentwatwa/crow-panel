@@ -1,12 +1,12 @@
-#ifndef CYPHER_KEYS_HID_TRANSPORT_H
-#define CYPHER_KEYS_HID_TRANSPORT_H
+#ifndef CROW_HID_TRANSPORT_H
+#define CROW_HID_TRANSPORT_H
 
 #include <Arduino.h>
 
-// One HID output path (USB or BLE). HidBackend builds semantic actions and
+// One HID output path (USB or BLE). CrowHidBackend builds semantic actions and
 // routes them to the active transport. `key` bytes are the same space the rest
 // of the app uses: ASCII (<0x80) or the kKey*/Arduino KEY_* constants (>=0x80).
-// UsbTransport consumes them via the Arduino Keyboard API; BleTransport
+// CrowUsbTransport consumes them via the Arduino Keyboard API; CrowBleTransport
 // translates them to raw HID usages. Mouse buttons are the MOUSE_LEFT/RIGHT
 // bitmask (1=left, 2=right).
 class HidTransport {

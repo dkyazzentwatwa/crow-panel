@@ -1,11 +1,17 @@
-#ifndef CYPHER_KEYS_BLE_TRANSPORT_H
-#define CYPHER_KEYS_BLE_TRANSPORT_H
+#ifndef CROW_HID_BLE_TRANSPORT_H
+#define CROW_HID_BLE_TRANSPORT_H
 
-#include "../config/ProjectConfig.h"
-#include "HidTransport.h"
+#include "AppConfig.h"
+#include "CrowHidTransport.h"
 
+// BLE HID peripheral over the onboard ESP32-C6 (NimBLE host on the P4,
+// esp_hosted VHCI to the C6 radio). Gated by USE_BLE_HID; a mock no-op when off.
 class BleTransport : public HidTransport {
  public:
+  // The advertised device name shown in the host's Bluetooth list. Call before
+  // begin(); ignored afterwards. Defaults to "CrowPanel HID".
+  void setDeviceName(const char *name);
+
   void begin() override;
   bool ready() const override;  // true only while a host is connected
   const char *name() const override { return "BLE"; }
@@ -22,6 +28,7 @@ class BleTransport : public HidTransport {
   void mouseWheel(int8_t wheel) override;
 
  private:
+  const char *deviceName_ = "CrowPanel HID";
   uint8_t mouseButtons_ = 0;    // held button bitmask for report assembly
 };
 

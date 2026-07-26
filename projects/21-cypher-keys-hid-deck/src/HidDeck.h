@@ -3,7 +3,7 @@
 
 #include "../config/ProjectConfig.h"
 #include "DeckThemes.h"
-#include "HidBackend.h"
+#include <CrowHidBackend.h>
 #include "HidKeyboard.h"
 #include "KeyAudio.h"
 #include "KeysTouch.h"

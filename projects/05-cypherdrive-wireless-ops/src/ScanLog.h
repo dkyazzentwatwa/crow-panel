@@ -8,7 +8,8 @@ class ScanLog {
   enum EntryType : uint8_t {
     kWifi,
     kBle,
-    kQr,
+    kNet,   // Wi-Fi client-tool / association events (join, captive, portscan, mdns)
+    kHid,   // HID actions emitted to a host
     kInfo
   };
 
@@ -18,8 +19,9 @@ class ScanLog {
   static const uint8_t kMaxDetailLen = 112;
 
   void recordWifi(const WifiNetworkRecord &record, const char *source);
-  void recordBle(const BleAdvertisementRecord &record, const char *source);
-  void recordQr(const String &url, bool persisted);
+  void recordBle(const BleDeviceRecord &record, const char *source);
+  void recordNet(const String &summary, const String &detail);
+  void recordHid(const String &summary, const String &detail);
   void recordInfo(const String &category, const String &summary, const String &detail);
 
   void print(Stream &out) const;

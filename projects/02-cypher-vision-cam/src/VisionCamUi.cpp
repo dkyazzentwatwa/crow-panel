@@ -325,6 +325,10 @@ uint32_t VisionCamUi::gallerySignature_() const {
 }
 
 void VisionCamUi::setOrientation(CamOrientation orientation, bool flipped) {
+  if (showTouchMark_) {
+    orientation = CamOrientation::Portrait;
+    flipped = false;
+  }
   orientation_ = orientation;
   portraitFlipped_ = flipped;
   const bool portrait = orientation == CamOrientation::Portrait;
@@ -346,8 +350,11 @@ void VisionCamUi::setOrientation(CamOrientation orientation, bool flipped) {
 
 void VisionCamUi::begin() {
   ready_ = CrowDisplay::canvas() != nullptr;
-  // Apply whatever orientation was set before begin(), and lay out either way.
-  setOrientation(orientation_);
+  // Temporary hardware-measurement build: boot directly into rotation 1 and
+  // keep every diagnostic on the panel because USB serial disappears at
+  // runtime on this board. Normal hit testing is suppressed by handleTouch_.
+  showTouchMark_ = true;
+  setOrientation(CamOrientation::Portrait, false);
   renderer_.begin();
   // Sized for the largest image this camera writes - a full-resolution still.
   viewer_.begin(Sc2336Sensor::kWidth, Sc2336Sensor::kHeight);
@@ -373,10 +380,20 @@ CamEvent VisionCamUi::handleTouch_() {
   mapTouch_(x, y);
 
   if (showTouchMark_) {
+    if (touchProbeCount_ < 5) {
+      TouchProbeSample &sample = touchProbeSamples_[touchProbeCount_++];
+      sample.rawX = touch_.rawX();
+      sample.rawY = touch_.rawY();
+      sample.mappedX = touch_.releaseX();
+      sample.mappedY = touch_.releaseY();
+      sample.portraitX = x;
+      sample.portraitY = y;
+    }
     markX_ = x;
     markY_ = y;
     markMs_ = millis();
     chromeDirty_ = true;
+    return event;
   }
 
   // A displayed photo is a modal state: it covers everything, so it must
@@ -583,6 +600,48 @@ void VisionCamUi::mapTouch_(int16_t &x, int16_t &y) const {
   } else {
     x = rawY;
     y = (int16_t)(kPanelW - 1 - rawX);
+  }
+}
+
+void VisionCamUi::drawTouchProbe_() {
+  Arduino_GFX *g = CrowDisplay::canvas();
+  if (g == nullptr) return;
+
+  static const int16_t kTargets[5][2] = {
+      {60, 120}, {540, 120}, {540, 860}, {60, 860}, {300, 490}};
+  static const char *const kNames[5] = {"TL", "TR", "BR", "BL", "CTR"};
+
+  g->fillScreen(kBg);
+  text(g, 20, 20, "PORTRAIT TOUCH MEASURE", fontL(), kAccent, kLeft);
+  text(g, 20, 58, "Tap the red target, then release", fontM(), kTextHi, kLeft);
+  text(g, 20, 88, "RAW = GT911   MAP = CrowTouch   P = current", fontS(), kTextMut, kLeft);
+
+  if (touchProbeCount_ < 5) {
+    const int16_t tx = kTargets[touchProbeCount_][0];
+    const int16_t ty = kTargets[touchProbeCount_][1];
+    g->drawFastHLine(tx - 28, ty, 56, kRed);
+    g->drawFastVLine(tx, ty - 28, 56, kRed);
+    g->drawCircle(tx, ty, 18, kRed);
+    char prompt[32];
+    snprintf(prompt, sizeof(prompt), "%u/5  %s  target=%d,%d",
+             (unsigned)(touchProbeCount_ + 1), kNames[touchProbeCount_], tx, ty);
+    text(g, 20, 910, prompt, fontM(), kRed, kLeft);
+  } else {
+    text(g, 20, 910, "DONE - photograph the five rows below", fontM(), kGreen, kLeft);
+  }
+
+  panel(g, 14, 950, 572, 60, 8, kSurface, 1, kLine);
+  text(g, 24, 970, "label  raw-x raw-y | map-x map-y | P-x P-y", fontS(), kTextHi, kLeft);
+
+  for (uint8_t i = 0; i < touchProbeCount_; i++) {
+    const TouchProbeSample &s = touchProbeSamples_[i];
+    char row[80];
+    snprintf(row, sizeof(row), "%s  %4d %4d | %4d %4d | %4d %4d",
+             kNames[i], s.rawX, s.rawY, s.mappedX, s.mappedY,
+             s.portraitX, s.portraitY);
+    const int16_t rowY = 690 + i * 40;
+    panel(g, 14, rowY, 572, 34, 6, kSurface, 1, kLine);
+    text(g, 24, rowY + 8, row, fontS(), kTextHi, kLeft);
   }
 }
 
@@ -971,6 +1030,13 @@ CamEvent VisionCamUi::tick(const CrowCamera::Frame *frame) {
   }
 
   event = handleTouch_();
+
+  if (showTouchMark_) {
+    drawTouchProbe_();
+    CrowDisplay::flush();
+    chromeDirty_ = false;
+    return event;
+  }
 
   // A displayed photo owns the whole screen. Drawing anything underneath would
   // paint over it, so every render path is skipped until it is dismissed.

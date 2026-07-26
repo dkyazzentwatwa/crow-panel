@@ -106,12 +106,15 @@ void TuneUi::handleTouch_(uint32_t now) {
       if (view_ == kViewSettings) {
         c.owner = hitTestSettings(c.downX, c.downY);
         pressSettingsControl_(c, now);
+      } else if (view_ == kViewLoops) {
+        c.owner = hitTestLoops(c.downX, c.downY);
+        pressLoopsControl_(c, now);
       } else {
         c.owner = hitTest(c.downX, c.downY);
         pressControl_(c, now);
       }
     } else if (c.active && c.owner != kControlNone) {
-      if (view_ == kViewSettings) {
+      if (view_ != kViewMain) {
         // Only the steppers repeat, and they are cheap enough to re-press.
         continue;
       }
@@ -144,6 +147,17 @@ void TuneUi::pressSettingsControl_(TouchTracker::Contact &c, uint32_t now) {
         cb_.volumeSet(cb_.ctx, (uint8_t)v);
       }
       dirtySettingsRows_ |= bit16(kSetRowVolume);
+      break;
+    case kControlLoopVolMinus:
+    case kControlLoopVolPlus:
+      if (cb_.loopVolGet != nullptr && cb_.loopVolSet != nullptr) {
+        int16_t v = (int16_t)cb_.loopVolGet(cb_.ctx) +
+                    (c.owner == kControlLoopVolPlus ? 16 : -16);
+        if (v < 0) v = 0;
+        if (v > 255) v = 255;
+        cb_.loopVolSet(cb_.ctx, (uint8_t)v);
+      }
+      dirtySettingsRows_ |= bit16(kSetRowLoopVol);
       break;
     case kControlThemePrev:
     case kControlThemeNext: {
@@ -265,14 +279,24 @@ void TuneUi::pressControl_(TouchTracker::Contact &c, uint32_t now) {
       }
       break;
     case kControlLoopPrev:
-    case kControlLoopNext:
-      if (cb_.loopStep != nullptr) {
-        cb_.loopStep(cb_.ctx, owner == kControlLoopNext ? 1 : -1);
-        // Loading a loop relocks the tempo, so the transport readout changes
-        // with it.
-        dirtyEdit_ = true;
-        dirtyTransport_ = true;
+    case kControlLoopNext: {
+      uint8_t total = LoopLibrary::count();
+      if (total == 0 || cb_.loopSelect == nullptr || cb_.loopCurrent == nullptr) {
+        break;
       }
+      // Walk the whole catalog, with "none" sitting just off the front.
+      int16_t next = cb_.loopCurrent(cb_.ctx) +
+                     (owner == kControlLoopNext ? 1 : -1);
+      if (next < -1) next = (int16_t)total - 1;
+      if (next >= (int16_t)total) next = -1;
+      cb_.loopSelect(cb_.ctx, (int8_t)next);
+      // Loading a loop relocks the tempo, so the transport readout changes too.
+      dirtyEdit_ = true;
+      dirtyTransport_ = true;
+      break;
+    }
+    case kControlOpenLoops:
+      setView(kViewLoops);
       break;
     case kControlOpenSettings:
       setView(kViewSettings);
@@ -446,6 +470,19 @@ void TuneUi::syncState_(uint32_t now) {
 // --- Rendering ---
 
 void TuneUi::render_(uint32_t now) {
+  if (view_ == kViewLoops) {
+    // The browser is static between taps, so it only ever needs a full paint.
+    if (!dirtyAll_) {
+      return;
+    }
+    uint32_t tL = micros();
+    drawLoops_();
+    CrowDisplay::flush();
+    dirtyAll_ = false;
+    lastRenderUs_ = micros() - tL;
+    renderCount_++;
+    return;
+  }
   if (view_ == kViewSettings) {
     if (!dirtyAll_ && dirtySettingsRows_ == 0) {
       return;
@@ -581,6 +618,7 @@ void TuneUi::drawSettingsRow_(Arduino_GFX *g, const TuneTheme &t, uint8_t row) {
   switch (row) {
     case kSetRowBrightness: label = "BRIGHTNESS"; break;
     case kSetRowVolume:     label = "MASTER VOL"; break;
+    case kSetRowLoopVol:    label = "LOOP VOL"; break;
     case kSetRowTheme:      label = "THEME"; break;
     case kSetRowKit:        label = "KIT"; break;
     case kSetRowIdleDim:    label = "IDLE DIM"; break;
@@ -615,6 +653,15 @@ void TuneUi::drawSettingsRow_(Arduino_GFX *g, const TuneTheme &t, uint8_t row) {
                     t.surface);
       Widgets::text(g, kSetValueX, y + 18,
                     cb_.volumeGet != nullptr ? String(vol).c_str() : "n/a",
+                    Widgets::fontM(), t.ink, Widgets::kRight);
+      break;
+    }
+    case kSetRowLoopVol: {
+      uint8_t vol = cb_.loopVolGet != nullptr ? cb_.loopVolGet(cb_.ctx) : 0;
+      Widgets::hBar(g, kSetBarX, y + 12, kSetBarW, 28, vol / 255.0f, t.good,
+                    t.surface);
+      Widgets::text(g, kSetValueX, y + 18,
+                    cb_.loopVolGet != nullptr ? String(vol).c_str() : "n/a",
                     Widgets::fontM(), t.ink, Widgets::kRight);
       break;
     }
@@ -682,6 +729,125 @@ void TuneUi::drawSettings_() {
   Widgets::text(g, kScreenW - kSetLabelX, kSetInfoY + 58,
                 "pads / steps / transport are on the main screen",
                 Widgets::fontS(), t.muted, Widgets::kRight);
+}
+
+void TuneUi::drawLoops_() {
+  Arduino_GFX *g = CrowDisplay::canvas();
+  if (g == nullptr) {
+    return;
+  }
+  const TuneTheme &t = theme();
+  g->fillScreen(t.bg);
+
+  Widgets::panel(g, kSetBackX, kSetBackY, kSetBackW, kSetBackH, 8, t.surface, 1,
+                 t.line);
+  Widgets::text(g, kSetBackX + kSetBackW / 2, kSetBackY + 11, "< BACK",
+                Widgets::fontS(), t.ink, Widgets::kCenter);
+  Widgets::text(g, kScreenW / 2, kSetBackY + 6, "LOOPS", Widgets::fontL(), t.ink,
+                Widgets::kCenter);
+  g->drawFastHLine(0, kSetHeaderH, kScreenW, t.line);
+
+  uint8_t packs = LoopLibrary::packCount();
+  int8_t current = cb_.loopCurrent != nullptr ? cb_.loopCurrent(cb_.ctx) : -1;
+  if (browsePack_ >= packs && packs > 0) {
+    browsePack_ = 0;
+  }
+
+  if (packs == 0) {
+    Widgets::text(g, kScreenW / 2, 250, "No loop packs found on SD",
+                  Widgets::fontL(), t.muted, Widgets::kCenter);
+    Widgets::text(g, kScreenW / 2, 290,
+                  "expected /mpc/loops/<pack>/loops.txt", Widgets::fontS(),
+                  t.muted, Widgets::kCenter);
+    return;
+  }
+
+  // Pack column.
+  for (uint8_t i = 0; i < packs && i < kLoopPackRows; i++) {
+    const LoopLibrary::PackInfo &pk = LoopLibrary::pack(i);
+    bool sel = i == browsePack_;
+    bool holdsCurrent = current >= 0 &&
+                        LoopLibrary::info((uint8_t)current).pack == i;
+    Widgets::panel(g, kLoopPackX, loopPackY(i), kLoopPackW, kLoopPackH, 8,
+                   sel ? t.surfaceHi : t.surface, sel ? 2 : 1,
+                   sel ? t.accent : t.line);
+    Widgets::text(g, kLoopPackX + 12, loopPackY(i) + 16, pk.title,
+                  Widgets::fontM(), sel ? t.ink : t.muted);
+    // A dot marks the pack the playing loop came from, so you can always find
+    // your way back to it.
+    Widgets::text(g, kLoopPackX + kLoopPackW - 12, loopPackY(i) + 18,
+                  (String(holdsCurrent ? "* " : "") + String(pk.count)).c_str(),
+                  Widgets::fontS(), holdsCurrent ? t.good : t.muted,
+                  Widgets::kRight);
+  }
+
+  // Loop cells for the selected pack.
+  const LoopLibrary::PackInfo &pk = LoopLibrary::pack(browsePack_);
+  for (uint8_t s = 0; s < kLoopCellsPerPage; s++) {
+    int16_t x = loopCellX(s);
+    int16_t y = loopCellY(s);
+    int8_t idx = LoopLibrary::loopInPack(browsePack_, s);
+    if (idx < 0) {
+      continue;  // pack has fewer loops than the grid has cells
+    }
+    const LoopLibrary::LoopInfo &l = LoopLibrary::info((uint8_t)idx);
+    bool active = idx == current;
+    Widgets::panel(g, x, y, kLoopCellW, kLoopCellH, 10,
+                   active ? t.accentDim : t.surface, active ? 2 : 1,
+                   active ? t.accent : t.line);
+    Widgets::text(g, x + 12, y + 12, l.title, Widgets::fontM(),
+                  active ? t.ink : t.ink);
+    String sub = String(l.bpmTenths / 10.0f, 1) + " BPM   " + String(l.bars) +
+                 " bars   " + String(l.frames / 22050.0f, 0) + "s";
+    Widgets::text(g, x + 12, y + 44, sub.c_str(), Widgets::fontS(), t.muted);
+    if (active) {
+      Widgets::text(g, x + kLoopCellW - 12, y + 44, "PLAYING", Widgets::fontS(),
+                    t.good, Widgets::kRight);
+    }
+  }
+  (void)pk;
+
+  Widgets::panel(g, kLoopNoneX, kLoopNoneY, kLoopNoneW, kLoopNoneH, 8,
+                 current < 0 ? t.accentDim : t.surface, 1, t.line);
+  Widgets::text(g, kLoopNoneX + kLoopNoneW / 2, kLoopNoneY + 14, "NO LOOP",
+                Widgets::fontM(), current < 0 ? t.ink : t.muted, Widgets::kCenter);
+  String status = current >= 0
+                      ? String("playing: ") + LoopLibrary::info((uint8_t)current).title
+                      : String("tempo unlocked - BPM buttons active");
+  Widgets::text(g, kLoopNoneX + kLoopNoneW + 24, kLoopNoneY + 14, status.c_str(),
+                Widgets::fontS(), t.muted);
+}
+
+void TuneUi::pressLoopsControl_(TouchTracker::Contact &c, uint32_t now) {
+  (void)now;
+  int16_t owner = c.owner;
+  if (owner == kControlBack) {
+    setView(kViewMain);
+    return;
+  }
+  if (owner == kControlLoopNone) {
+    if (cb_.loopSelect != nullptr) {
+      cb_.loopSelect(cb_.ctx, -1);
+    }
+    dirtyAll_ = true;
+    return;
+  }
+  if (owner >= kLoopPackBase && owner < kLoopPackBase + kLoopPackRows) {
+    uint8_t pack = (uint8_t)(owner - kLoopPackBase);
+    if (pack < LoopLibrary::packCount() && pack != browsePack_) {
+      browsePack_ = pack;
+      dirtyAll_ = true;  // the whole right-hand grid changes
+    }
+    return;
+  }
+  if (owner >= kLoopCellBase && owner < kLoopCellBase + kLoopCellsPerPage) {
+    int8_t idx = LoopLibrary::loopInPack(browsePack_,
+                                         (uint8_t)(owner - kLoopCellBase));
+    if (idx >= 0 && cb_.loopSelect != nullptr) {
+      cb_.loopSelect(cb_.ctx, idx);
+      dirtyAll_ = true;
+    }
+  }
 }
 
 void TuneUi::drawTransport_() {
@@ -916,15 +1082,23 @@ void TuneUi::drawEditPanel_() {
   // Backing loop: a performance control, so it stays on this screen rather
   // than moving to settings with the kit selector.
   Widgets::text(g, kEditLabelX, kLoopY + 12, "LOOP", Widgets::fontS(), t.muted);
-  bool haveLoops = cb_.loopStep != nullptr;
+  bool haveLoops = LoopLibrary::count() > 0 && cb_.loopSelect != nullptr;
+  int8_t current = cb_.loopCurrent != nullptr ? cb_.loopCurrent(cb_.ctx) : -1;
+  // Arrows step within the catalog for quick A/B of neighbours; the name is a
+  // button into the browser, because stepping through 41 loops is not a way to
+  // find one.
   Widgets::panel(g, kLoopPrevX, kLoopY, kLoopArrowW, kLoopH, 8, t.surface, 1, t.line);
   Widgets::text(g, kLoopPrevX + kLoopArrowW / 2, kLoopY + 9, "<", Widgets::fontL(),
                 haveLoops ? t.ink : t.line, Widgets::kCenter);
-  const char *loopName = cb_.loopName != nullptr ? cb_.loopName(cb_.ctx) : "no loops";
-  bool running = seq_->locked();
-  Widgets::text(g, (kLoopPrevX + kLoopArrowW + kLoopNextX) / 2, kLoopY + 10,
-                loopName, Widgets::fontM(), running ? t.accent : t.muted,
-                Widgets::kCenter);
+  int16_t nameX = kLoopPrevX + kLoopArrowW + 4;
+  int16_t nameW = kLoopNextX - nameX - 4;
+  Widgets::panel(g, nameX, kLoopY, nameW, kLoopH, 8,
+                 current >= 0 ? t.accentDim : t.surface, 1, t.line);
+  const char *label = current >= 0
+                          ? LoopLibrary::info((uint8_t)current).title
+                          : (haveLoops ? "-- none --" : "no loops on SD");
+  Widgets::text(g, nameX + nameW / 2, kLoopY + 10, label, Widgets::fontM(),
+                current >= 0 ? t.ink : t.muted, Widgets::kCenter);
   Widgets::panel(g, kLoopNextX, kLoopY, kLoopArrowW, kLoopH, 8, t.surface, 1, t.line);
   Widgets::text(g, kLoopNextX + kLoopArrowW / 2, kLoopY + 9, ">", Widgets::fontL(),
                 haveLoops ? t.ink : t.line, Widgets::kCenter);

@@ -205,6 +205,15 @@ bool selectLoop(int8_t index) {
     return false;
   }
   uint32_t stepFrames = LoopLibrary::stepFramesFor(info);
+  // Wrap the loop at exactly stepFrames * bars * 16 rather than at the file's
+  // full length. stepFrames is an integer division, so any remainder would
+  // leave the loop a few frames longer than the grid it drives - tiny, but it
+  // accumulates every cycle until the bed slides off the pattern. Trimming the
+  // remainder (at most 63 frames, under 3 ms) makes the lock exact forever.
+  uint32_t locked = stepFrames * (uint32_t)info.bars * 16;
+  if (locked > 0 && locked <= frames) {
+    frames = locked;
+  }
   currentLoop = index;
   audioEngine().stageLoop(pcm, frames);
   if (audioEngine().running()) {
@@ -221,24 +230,8 @@ bool selectLoop(int8_t index) {
   return true;
 }
 
-// Loop < > arrows: -1 walks off the front into "no loop".
-void uiLoopStep(void *, int8_t dir) {
-  uint8_t n = LoopLibrary::count();
-  if (n == 0) {
-    return;
-  }
-  int8_t next = currentLoop + dir;
-  if (next < -1) next = (int8_t)n - 1;
-  if (next >= (int8_t)n) next = -1;
-  selectLoop(next);
-}
-
-const char *uiLoopName(void *) {
-  if (currentLoop < 0) {
-    return LoopLibrary::count() ? "-- none --" : "no loops on SD";
-  }
-  return LoopLibrary::info((uint8_t)currentLoop).title;
-}
+void uiLoopSelect(void *, int8_t index) { selectLoop(index); }
+int8_t uiLoopCurrent(void *) { return currentLoop; }
 
 const char *currentLoopTitle() {
   if (currentLoop < 0) {
@@ -359,6 +352,8 @@ uint16_t uiScope(void *, int16_t *out, uint16_t max) {
 
 uint8_t uiVolumeGet(void *) { return audioEngine().masterVolume(); }
 void uiVolumeSet(void *, uint8_t v) { audioEngine().setMasterVolume(v); }
+uint8_t uiLoopVolGet(void *) { return audioEngine().loopVolume(); }
+void uiLoopVolSet(void *, uint8_t v) { audioEngine().setLoopVolume(v); }
 
 // --- Serial commands ---
 
@@ -537,16 +532,23 @@ void cmdLoop(const String &args) {
   if (arg.length() == 0) {
     uint8_t n = LoopLibrary::count();
     Serial.println(String("[loop] active=") + currentLoopTitle() +
-                   (seq.locked() ? " (tempo locked)" : "") + " available=" + String(n));
-    for (uint8_t i = 0; i < n; i++) {
-      const LoopLibrary::LoopInfo &l = LoopLibrary::info(i);
-      Serial.println(String("  ") + (i == (uint8_t)currentLoop ? "*" : " ") +
-                     l.name + "  " + l.title + "  " +
-                     String(l.bpmTenths / 10.0f, 1) + " BPM  " + String(l.bars) +
-                     " bars  " + String(l.frames / 22050.0f, 1) + "s");
+                   (seq.locked() ? " (tempo locked)" : "") + " loops=" + String(n) +
+                   " packs=" + String(LoopLibrary::packCount()));
+    for (uint8_t p = 0; p < LoopLibrary::packCount(); p++) {
+      const LoopLibrary::PackInfo &pk = LoopLibrary::pack(p);
+      Serial.println(String("  [") + pk.name + "] " + pk.title);
+      for (uint8_t s = 0; s < pk.count; s++) {
+        int8_t idx = LoopLibrary::loopInPack(p, s);
+        if (idx < 0) continue;
+        const LoopLibrary::LoopInfo &l = LoopLibrary::info((uint8_t)idx);
+        Serial.println(String("    ") + (idx == currentLoop ? "*" : " ") +
+                       l.name + "  " + l.title + "  " +
+                       String(l.bpmTenths / 10.0f, 1) + " BPM  " + String(l.bars) +
+                       " bars  " + String(l.frames / 22050.0f, 1) + "s");
+      }
     }
     if (n == 0) {
-      Serial.println(F("  (none; needs /mpc/loops/loops.txt on SD and USE_MPC_SD=1)"));
+      Serial.println(F("  (none; needs /mpc/loops/<pack>/loops.txt and USE_MPC_SD=1)"));
     }
     return;
   }
@@ -664,9 +666,13 @@ void setup() {
   uiCallbacks.scope = uiScope;
   uiCallbacks.volumeGet = uiVolumeGet;
   uiCallbacks.volumeSet = uiVolumeSet;
+  uiCallbacks.loopVolGet = uiLoopVolGet;
+  uiCallbacks.loopVolSet = uiLoopVolSet;
   if (LoopLibrary::begin() > 0) {
-    uiCallbacks.loopStep = uiLoopStep;
-    uiCallbacks.loopName = uiLoopName;
+    uiCallbacks.loopSelect = uiLoopSelect;
+    uiCallbacks.loopCurrent = uiLoopCurrent;
+    Serial.println(String("[loop] ") + String(LoopLibrary::count()) +
+                   " loops across " + String(LoopLibrary::packCount()) + " packs");
   }
   ui.begin(&bank, &seq, &voices, uiCallbacks);
   // Splash runs after the engine so its subtitle reports the real audio state

@@ -1,10 +1,10 @@
-#ifndef CYPHER_KEYS_HID_BACKEND_H
-#define CYPHER_KEYS_HID_BACKEND_H
+#ifndef CROW_HID_BACKEND_H
+#define CROW_HID_BACKEND_H
 
-#include "../config/ProjectConfig.h"
-#include "HidTypes.h"
-#include "UsbTransport.h"
-#include "BleTransport.h"
+#include "AppConfig.h"
+#include "CrowHidTypes.h"
+#include "CrowUsbTransport.h"
+#include "CrowBleTransport.h"
 #include <Arduino.h>
 
 class Print;
@@ -17,10 +17,15 @@ enum HidOutput : uint8_t { kOutputUsb = 0, kOutputBle = 1 };
 // Actions are routed to the active transport (USB or BLE). When the active
 // transport cannot deliver a report (MOCK / not connected) the action is still
 // logged to Serial and the event log so the whole deck is smoke-testable with
-// no host attached.
+// no host attached. Extracted from project 21 into the shared library so
+// project 05 (CypherDrive) and project 21 (Cypher Keys) share one HID stack.
 class HidBackend {
  public:
-  void begin(Print *log, EventLog *events);
+  // bleName is advertised in the host's Bluetooth list; nvsNamespace is where
+  // the persisted output selection is stored. Both are project identity, passed
+  // in because the shared library never sees a project's ProjectConfig.h.
+  void begin(Print *log, EventLog *events, const char *bleName = "CrowPanel HID",
+             const char *nvsNamespace = "crowhid");
 
   // Output selection.
   HidOutput output() const { return output_; }
@@ -75,6 +80,7 @@ class HidBackend {
 
   Print *log_ = nullptr;
   EventLog *events_ = nullptr;
+  const char *nvsNamespace_ = "crowhid";
   uint32_t reports_ = 0;
   uint32_t moves_ = 0;  // mouse-move count (kept out of reports_ so the status
                         // bar does not repaint on every trackpad move)

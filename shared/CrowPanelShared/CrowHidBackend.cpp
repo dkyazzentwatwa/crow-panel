@@ -1,4 +1,4 @@
-#include "HidBackend.h"
+#include "CrowHidBackend.h"
 
 #include <Preferences.h>
 #include <CrowPanelShared.h>  // EventLog
@@ -37,9 +37,14 @@ String hidKeyName(uint8_t key) {
   return "0x" + String(key, HEX);
 }
 
-void HidBackend::begin(Print *log, EventLog *events) {
+void HidBackend::begin(Print *log, EventLog *events, const char *bleName,
+                       const char *nvsNamespace) {
   log_ = log;
   events_ = events;
+  if (nvsNamespace != nullptr && nvsNamespace[0] != '\0') {
+    nvsNamespace_ = nvsNamespace;
+  }
+  ble_.setDeviceName(bleName);
   usb_.begin();
   ble_.begin();
   loadOutput();
@@ -53,7 +58,7 @@ void HidBackend::begin(Print *log, EventLog *events) {
 
 void HidBackend::loadOutput() {
   Preferences prefs;
-  if (prefs.begin(CYPHER_KEYS_NVS_NAMESPACE, true)) {
+  if (prefs.begin(nvsNamespace_, true)) {
     uint32_t v = prefs.getUInt("output", 0);
     prefs.end();
     if (v == kOutputBle) output_ = kOutputBle;
@@ -62,7 +67,7 @@ void HidBackend::loadOutput() {
 
 void HidBackend::persistOutput() const {
   Preferences prefs;
-  if (prefs.begin(CYPHER_KEYS_NVS_NAMESPACE, false)) {
+  if (prefs.begin(nvsNamespace_, false)) {
     prefs.putUInt("output", (uint32_t)output_);
     prefs.end();
   }

@@ -19,8 +19,9 @@ speaker test instead of external assets.
 
 ## Accepted media
 
-- Audio: PCM WAV, 16-bit, mono, 16 kHz. The Radio page lists the first eight
-  `.wav` files in `/pipboy/audio/` and loops no audio after a track ends.
+- Audio: PCM WAV, 16-bit, mono, 16 kHz. The Radio page lists the first sixteen
+  `.wav` files in `/pipboy/audio/`, auto-starts the first one at boot, and
+  loops through the playlist as background music until `radio stop`.
 - Images: uncompressed 24-bit BMP. Keep them at or below 590 x 370 pixels for
   the archive view, and at or below 676 x 402 pixels for `wasteland-map.bmp`.
 - Text logs are a ready-to-use SD convention for future DATA expansion. V1

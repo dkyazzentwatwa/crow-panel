@@ -39,8 +39,12 @@
 #endif
 
 // Per-pad sample length clamp (2 s at 48 kHz = 187.5 KB).
+// Per-pad length cap, 12.5 s at the engine rate. Kits mix one-shots with whole
+// loops played as pad chops, and the longest of those is 12.29 s - capping
+// shorter would cut a 4-bar loop mid-phrase. A realistic mixed kit lands near
+// 3.5 MB of PSRAM; the pathological all-pads-maxed case is 8.8 MB per bank.
 #ifndef CYPHER_TUNE_MAX_SAMPLE_FRAMES
-#define CYPHER_TUNE_MAX_SAMPLE_FRAMES 96000
+#define CYPHER_TUNE_MAX_SAMPLE_FRAMES 275625
 #endif
 
 // Master output volume 0-255.
