@@ -141,7 +141,7 @@ void PokedexCatalog::begin() {
 #if USE_SD_POKEDEX
 #if POKEDEX_HAS_SD_MMC
   if (!SD_MMC.begin("/sdcard", POKEDEX_SDMMC_1BIT != 0)) {
-    status_ = "SD_MMC mount failed; using mock catalog";
+    status_ = "SD MOUNT FAILED; using mock catalog";
     Logger::error("pokedex", status_);
     return;
   }
@@ -149,7 +149,7 @@ void PokedexCatalog::begin() {
   sdReady_ = true;
   indexReady_ = SD_MMC.exists(POKEDEX_INDEX_PATH);
   if (!indexReady_) {
-    status_ = String("missing ") + POKEDEX_INDEX_PATH + "; using mock catalog";
+    status_ = String("MISSING ") + POKEDEX_INDEX_PATH + "; using mock catalog";
     Logger::error("pokedex", status_);
     sdReady_ = false;
     totalRows_ = kMockPokemonCount;
@@ -157,13 +157,22 @@ void PokedexCatalog::begin() {
   }
 
   totalRows_ = countRows();
-  status_ = "SD catalog ready: " + String(totalRows_) + " entries";
+  if (totalRows_ == 0) {
+    status_ = String("EMPTY ") + POKEDEX_INDEX_PATH + "; using mock catalog";
+    Logger::error("pokedex", status_);
+    sdReady_ = false;
+    indexReady_ = false;
+    totalRows_ = kMockPokemonCount;
+    return;
+  }
+  status_ = "SD catalog // " + String(totalRows_) + " entries";
   Logger::info("pokedex", status_);
 #else
   status_ = "SD_MMC.h unavailable; using mock catalog";
   Logger::error("pokedex", status_);
 #endif
 #else
+  status_ = "SD disabled at build; using mock catalog";
   Logger::info("pokedex", status_);
 #endif
 }
@@ -221,7 +230,7 @@ uint8_t PokedexCatalog::search(const String &query, PokedexRow *outRows, uint8_t
   if (sdReady_ && indexReady_) {
     File index = SD_MMC.open(POKEDEX_INDEX_PATH, FILE_READ);
     if (!index) {
-      status_ = "index open failed; using mock catalog";
+      status_ = "SD INDEX OPEN FAILED; using mock catalog";
       Logger::error("pokedex", status_);
       sdReady_ = false;
       indexReady_ = false;
@@ -262,7 +271,7 @@ uint8_t PokedexCatalog::browse(uint16_t start, PokedexRow *outRows, uint8_t maxR
   if (sdReady_ && indexReady_) {
     File index = SD_MMC.open(POKEDEX_INDEX_PATH, FILE_READ);
     if (!index) {
-      status_ = "index open failed; using mock catalog";
+      status_ = "SD INDEX OPEN FAILED; using mock catalog";
       Logger::error("pokedex", status_);
       sdReady_ = false;
       indexReady_ = false;
@@ -303,7 +312,7 @@ bool PokedexCatalog::loadDetail(const PokedexRow &row, PokedexDetail &detail) {
     String path = String(POKEDEX_DATA_DIR) + row.file;
     File data = SD_MMC.open(path.c_str(), FILE_READ);
     if (!data) {
-      status_ = String("detail missing: ") + path;
+      status_ = String("SD DETAIL MISSING: ") + path;
       Logger::error("pokedex", status_);
       return loadMockDetail(row, detail);
     }
@@ -312,7 +321,7 @@ bool PokedexCatalog::loadDetail(const PokedexRow &row, PokedexDetail &detail) {
     DeserializationError err = deserializeJson(doc, data);
     data.close();
     if (err) {
-      status_ = String("bad detail json: ") + path;
+      status_ = String("SD DETAIL JSON INVALID: ") + path;
       Logger::error("pokedex", status_);
       return loadMockDetail(row, detail);
     }

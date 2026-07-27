@@ -18,11 +18,14 @@ WifiApRecord lastRows[kSurveyMaxRows];
 uint8_t lastRowCount = 0;
 uint16_t apCount = 0;
 String topAp = "StudioNet";
+SurveySessionStats sessionStats;
+constexpr uint32_t kAutoScanIntervalMs = 10000;
+uint32_t nextAutoScanMs = 0;
 
 void refreshSurvey(const String &banner) {
   GpsFix fix = gpsSource.latest();
   WigleStorageHealth health = wigleLogger.health();
-  surveyUi.update(fix, lastRows, lastRowCount, apCount, topAp, health, banner);
+  surveyUi.update(fix, lastRows, lastRowCount, apCount, topAp, sessionStats, health, banner);
 }
 
 String nextWord(String &line) {
@@ -101,7 +104,9 @@ void cmdScan(const String &) {
   for (uint8_t i = 0; i < lastRowCount; i++) {
     printApRow(lastRows[i]);
   }
-  apCount += lastRowCount;
+  apCount = lastRowCount;
+  sessionStats.scans++;
+  sessionStats.apRows += lastRowCount;
   updateTopAp(lastRows, lastRowCount);
 
   if (wigleLogger.enabled() && lastRowCount > 0) {
@@ -112,6 +117,7 @@ void cmdScan(const String &) {
   eventLog.add(lastRowCount > 0 ? "Passive Wi-Fi scan" : "Passive Wi-Fi scan empty");
   surveyUi.setDetail("Wi-Fi Scan", scanDetail(lastRows, lastRowCount));
   refreshSurvey(lastRowCount > 0 ? "passive scan complete" : "scan returned no rows");
+  nextAutoScanMs = millis() + kAutoScanIntervalMs;
 }
 
 void cmdLog(const String &args) {
@@ -201,6 +207,8 @@ void setup() {
   wigleLogger.begin();
   surveyUi.begin();
   refreshSurvey("survey dashboard ready");
+  cmdScan("");
+  nextAutoScanMs = millis() + kAutoScanIntervalMs;
   eventLog.add("SurveyOps booted");
   router.begin(Serial, "surveyops");
   router.on("status", "uptime, heap, profile, flags", cmdStatus);
@@ -216,7 +224,12 @@ void setup() {
 
 void loop() {
   gpsSource.poll();
+  if ((int32_t)(millis() - nextAutoScanMs) >= 0) {
+    cmdScan("");
+  }
   router.poll();
-  surveyUi.tick();
+  if (surveyUi.tick()) {
+    cmdScan("");
+  }
   delay(20);
 }

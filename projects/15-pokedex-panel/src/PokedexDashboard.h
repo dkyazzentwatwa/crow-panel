@@ -4,6 +4,7 @@
 #include "../config/ProjectConfig.h"
 #include <Arduino.h>
 #include "PokedexTypes.h"
+#include "PokedexTouchKeyboard.h"
 
 class PokedexDashboard {
  public:
@@ -13,6 +14,7 @@ class PokedexDashboard {
                 const String &status);
   void showDetail(const PokedexDetail &detail, uint8_t page, const String &source,
                   const String &status);
+  void beginSearch(const String &initial = "");
   bool tick(PokedexUiEvent &event);
   void requestRepaint();
   void printTouchDiagnostics(Print &out) const;
@@ -26,6 +28,9 @@ class PokedexDashboard {
   uint16_t totalRows_ = 0;
   PokedexDetail detail_;
   uint8_t detailPage_ = 0;
+  PokedexTouchKeyboard keyboard_;
+  String searchInput_;
+  uint16_t searchCursor_ = 0;
   String query_ = "browse";
   String source_ = "mock catalog";
   String status_ = "ready";
@@ -42,6 +47,7 @@ class PokedexDashboard {
   void draw();
   void drawList(class Arduino_GFX *g);
   void drawDetail(class Arduino_GFX *g);
+  void drawSearch(class Arduino_GFX *g);
   void drawHeader(class Arduino_GFX *g, const char *title);
   void drawFooter(class Arduino_GFX *g);
   int16_t calibrateX(int16_t rawX, int16_t rawY) const;

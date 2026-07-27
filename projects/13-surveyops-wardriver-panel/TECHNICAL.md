@@ -25,7 +25,8 @@ until the exact CrowPanel, wiring, upload, and runtime behavior are verified.
 The `USE_DISPLAY=1` path now uses a SurveyOps-specific full-screen UI rather
 than the shared generic tile grid: an animated passive survey scope, AP row
 list, GPS fix card, WiGLE/logging detail panel, touch row selection, and a
-footer that keeps the passive-only boundary visible on camera.
+compact footer with session scan, AP observation, logging, and rotation counts.
+The passive-only boundary remains documented here and in the README.
 
 This port is passive survey/logging only. It does not join networks, capture
 credentials, inject packets, deauth clients, or run active tests.
@@ -50,24 +51,28 @@ CSV state.
 
 ## Wiring And Storage Assumptions
 
-Project-local defaults are intentionally unconfigured:
+Project-local hardware defaults:
 
 ```cpp
-SURVEYOPS_GPS_RX_PIN=-1
-SURVEYOPS_GPS_TX_PIN=-1
-SURVEYOPS_SD_CS_PIN=-1
+SURVEYOPS_GPS_RX_PIN=52
+SURVEYOPS_GPS_TX_PIN=51
+SURVEYOPS_SDMMC_1BIT=1
 SURVEYOPS_GPS_SERIAL_BAUD=9600
 SURVEYOPS_WIGLE_FILE_PREFIX="/wigle"
 SURVEYOPS_WIGLE_ROTATE_ROWS=200
 ```
 
-When `USE_GPS_DRIVER=1`, TinyGPSPlus is used if the library is installed, but
-the hardware UART will not start until `SURVEYOPS_GPS_RX_PIN` is set. The `nmea`
+When `USE_GPS_DRIVER=1`, TinyGPSPlus reads `Serial1` with GPS TX connected to
+CrowPanel IO52 and GPS RX connected to CrowPanel IO51. The ESP32-P4 GPIO matrix
+can route UART signals to these pins, but IO51/IO52 are also used by other
+external-bus conventions in this repo. Confirm that no attached module uses
+those pins, and use common ground with a 3.3 V UART GPS module. The `nmea`
 Serial command can still smoke-test parsing without wiring a receiver.
 
-When `USE_SD_WIGLE_LOG=1`, the logger refuses to call `SD.begin()` until
-`SURVEYOPS_SD_CS_PIN` is set. This avoids driving guessed storage pins on the
-CrowPanel. The CSV header is WiGLE-style:
+When `USE_SD_WIGLE_LOG=1`, the logger mounts the internal CrowPanel card with
+`SD_MMC.begin("/sdcard", true)`, matching the proven 1-bit bring-up used by
+projects 22 and 09. It does not require a project-local CS pin. The CSV header
+is WiGLE-style:
 
 ```text
 WigleWifi-1.4,...
@@ -88,9 +93,12 @@ artifacts and avoid publishing them raw.
 - `storage`
 - `nmea <gps sentence>`
 
-With `USE_DISPLAY=1`, Serial remains the control surface. Touch selects AP rows
-or cycles the highlighted AP on the scope; it does not start scans, logging, or
-network actions.
+With `USE_DISPLAY=1`, the panel performs one passive scan during boot and
+rescans automatically every 10 seconds. The **SCAN NOW** button and the `scan`
+Serial command run the same scan pipeline. The AP list keeps up to 40 rows from
+each scan and presents four rows per page with **PREV** and **NEXT** controls.
+Touch also selects AP rows or cycles the highlighted AP on the scope; it does
+not start logging or any other network action.
 
 ## Serial Smoke Script
 
@@ -117,3 +125,7 @@ Expected proof language:
 - `uploaded`: the sketch was flashed to a detected CrowPanel port.
 - `field-proven`: GPS, passive scan, SD logging, and/or display behavior was
   observed on real hardware with the exact wiring and storage media documented.
+
+Current state: **compile-ready, not uploaded or field-proven**. The default GPS
+mapping and SD_MMC mount are configured, but this session has no captured GPS
+fix, passive scan rows, SD CSV, or display/touch observation.

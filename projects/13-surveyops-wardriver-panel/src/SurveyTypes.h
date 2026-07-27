@@ -4,7 +4,8 @@
 #include "../config/ProjectConfig.h"
 #include <Arduino.h>
 
-constexpr uint8_t kSurveyMaxRows = 8;
+// Keep a useful slice of a dense scan in RAM; the display paginates this list.
+constexpr uint8_t kSurveyMaxRows = 40;
 
 struct GpsFix {
   bool valid = false;
@@ -50,6 +51,11 @@ struct WigleStorageHealth {
   uint16_t rotations = 0;
   String activeFile = "mock";
   String detail = "mock storage";
+};
+
+struct SurveySessionStats {
+  uint16_t scans = 0;
+  uint32_t apRows = 0;
 };
 
 #endif

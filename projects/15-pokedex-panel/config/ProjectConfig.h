@@ -7,10 +7,10 @@
 //   /pokemon/index.csv
 //   /pokemon/catalog_meta.json
 //   /pokemon/data/*.json
-// The default stays mock-first so compile and Serial demos never depend on a
-// mounted card. Storage hardware is not field-proven for this project yet.
+// Project 15 is SD-first. A missing card or incomplete catalog falls back to
+// the built-in entries with a visible reason, so the demo remains usable.
 #ifndef USE_SD_POKEDEX
-#define USE_SD_POKEDEX 0
+#define USE_SD_POKEDEX 1
 #endif
 
 #ifndef POKEDEX_SDMMC_1BIT

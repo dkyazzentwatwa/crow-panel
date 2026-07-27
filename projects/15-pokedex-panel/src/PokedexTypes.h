@@ -40,7 +40,8 @@ struct PokedexDetail {
 
 enum PokedexUiMode {
   kPokedexUiList,
-  kPokedexUiDetail
+  kPokedexUiDetail,
+  kPokedexUiSearch
 };
 
 enum PokedexUiEventType {
@@ -50,12 +51,16 @@ enum PokedexUiEventType {
   kPokedexUiNextPage,
   kPokedexUiPrevPage,
   kPokedexUiBrowsePrev,
-  kPokedexUiBrowseNext
+  kPokedexUiBrowseNext,
+  kPokedexUiOpenSearch,
+  kPokedexUiSearchSubmit,
+  kPokedexUiSearchCancel
 };
 
 struct PokedexUiEvent {
   PokedexUiEventType type = kPokedexUiNone;
   uint8_t row = 0;
+  String text;
 };
 
 #endif

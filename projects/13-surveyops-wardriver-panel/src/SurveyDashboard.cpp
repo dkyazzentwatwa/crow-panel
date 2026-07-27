@@ -24,9 +24,18 @@ constexpr int16_t kScopeR = 142;
 constexpr int16_t kPanelX = 496;
 constexpr int16_t kPanelW = 496;
 constexpr int16_t kListY = 94;
+constexpr int16_t kScanButtonX = kPanelX + kPanelW - 154;
+constexpr int16_t kScanButtonY = kListY + 8;
+constexpr int16_t kScanButtonW = 136;
+constexpr int16_t kScanButtonH = 34;
 constexpr int16_t kRowsTop = 136;
 constexpr int16_t kRowH = 50;
-constexpr uint8_t kVisibleRows = 5;
+constexpr uint8_t kVisibleRows = 4;
+constexpr int16_t kPageButtonY = 342;
+constexpr int16_t kPageButtonW = 112;
+constexpr int16_t kPageButtonH = 32;
+constexpr int16_t kPrevButtonX = kPanelX + 18;
+constexpr int16_t kNextButtonX = kPanelX + kPanelW - 18 - kPageButtonW;
 constexpr int16_t kGpsY = 446;
 constexpr int16_t kCardH = 88;
 constexpr int16_t kDetailY = 404;
@@ -83,14 +92,23 @@ String shortBssid(const String &bssid) {
   if (bssid.length() <= 8) return bssid;
   return bssid.substring(bssid.length() - 8);
 }
+
+const GFXfont *uiTitleFont() {
+  return fontS();
+}
+
+const GFXfont *uiValueFont() {
+  return fontS();
+}
 }  // namespace
 
 void SurveyDashboard::begin() {
-  ready_ = CrowDisplay::begin(activeHardwareProfile(), "SurveyOps Wardriver Panel") &&
+  ready_ = CrowDisplay::begin(activeHardwareProfile(), "SurveyOps Wardriver Panel", true) &&
            (CrowDisplay::canvas() != nullptr);
   if (!ready_) return;
   lastFrameMs_ = millis();
   drawFull_();
+  CrowDisplay::flush();
   dirty_ = false;
 }
 
@@ -100,14 +118,20 @@ void SurveyDashboard::update(const SurveyDashboardState &state) {
   if (selectedRow_ >= (int8_t)state_.rowCount) {
     selectedRow_ = state_.rowCount > 0 ? 0 : -1;
   }
+  if (pageStart_ >= state_.rowCount && state_.rowCount > 0) {
+    pageStart_ = (uint8_t)(((state_.rowCount - 1) / kVisibleRows) * kVisibleRows);
+  }
+  if (state_.rowCount == 0) {
+    pageStart_ = 0;
+  }
   if (selectedRow_ < 0 && state_.rowCount > 0) {
     selectedRow_ = 0;
   }
   dirty_ = true;
 }
 
-void SurveyDashboard::tick() {
-  if (!ready_) return;
+bool SurveyDashboard::tick() {
+  if (!ready_) return false;
   handleTouch_();
 
   uint32_t now = millis();
@@ -118,16 +142,30 @@ void SurveyDashboard::tick() {
 
   if (dirty_) {
     drawFull_();
+    CrowDisplay::flush();
     dirty_ = false;
-    return;
+    return takeScanRequest();
   }
+  bool drew = false;
   if (frameGate_.ready()) {
     drawScope_();
+    drew = true;
   }
   if (footerGate_.ready()) {
     drawHeader_();
     drawFooter_();
+    drew = true;
   }
+  if (drew) {
+    CrowDisplay::flush();
+  }
+  return takeScanRequest();
+}
+
+bool SurveyDashboard::takeScanRequest() {
+  bool requested = scanRequested_;
+  scanRequested_ = false;
+  return requested;
 }
 
 void SurveyDashboard::handleTouch_() {
@@ -181,6 +219,33 @@ void SurveyDashboard::handleTouch_() {
 }
 
 bool SurveyDashboard::handleTouchAt_(int16_t tx, int16_t ty, const char *mapping) {
+  if (tx >= kScanButtonX && tx <= kScanButtonX + kScanButtonW &&
+      ty >= kScanButtonY && ty <= kScanButtonY + kScanButtonH) {
+    requestScan_(mapping);
+    return true;
+  }
+
+  if (tx >= kPrevButtonX && tx <= kPrevButtonX + kPageButtonW &&
+      ty >= kPageButtonY && ty <= kPageButtonY + kPageButtonH) {
+    if (pageStart_ >= kVisibleRows) {
+      pageStart_ -= kVisibleRows;
+      selectedRow_ = pageStart_;
+      dirty_ = true;
+    }
+    Logger::info("touch", String("map=") + mapping + " action=page-prev");
+    return true;
+  }
+  if (tx >= kNextButtonX && tx <= kNextButtonX + kPageButtonW &&
+      ty >= kPageButtonY && ty <= kPageButtonY + kPageButtonH) {
+    if (pageStart_ + kVisibleRows < state_.rowCount) {
+      pageStart_ += kVisibleRows;
+      selectedRow_ = pageStart_;
+      dirty_ = true;
+    }
+    Logger::info("touch", String("map=") + mapping + " action=page-next");
+    return true;
+  }
+
   int8_t hit = hitTestRow_(tx, ty);
   if (hit >= 0) {
     selectedRow_ = hit;
@@ -200,12 +265,18 @@ bool SurveyDashboard::handleTouchAt_(int16_t tx, int16_t ty, const char *mapping
   return false;
 }
 
+void SurveyDashboard::requestScan_(const char *mapping) {
+  scanRequested_ = true;
+  dirty_ = true;
+  Logger::info("touch", String("map=") + mapping + " action=scan");
+}
+
 int8_t SurveyDashboard::hitTestRow_(int16_t tx, int16_t ty) const {
   if (tx < kPanelX || tx > kPanelX + kPanelW || ty < kRowsTop - 8) return -1;
   uint8_t rows = state_.rowCount < kVisibleRows ? state_.rowCount : kVisibleRows;
   for (uint8_t i = 0; i < rows; i++) {
     int16_t y = kRowsTop + i * kRowH;
-    if (ty >= y - 8 && ty <= y + kRowH - 2) return (int8_t)i;
+    if (ty >= y - 8 && ty <= y + kRowH - 2) return (int8_t)(pageStart_ + i);
   }
   return -1;
 }
@@ -215,8 +286,12 @@ void SurveyDashboard::cycleSelected_() {
     selectedRow_ = -1;
     return;
   }
-  uint8_t rows = state_.rowCount < kVisibleRows ? state_.rowCount : kVisibleRows;
-  selectedRow_ = (selectedRow_ + 1) % rows;
+  uint8_t pageEnd = pageStart_ + kVisibleRows;
+  if (pageEnd > state_.rowCount) pageEnd = state_.rowCount;
+  selectedRow_++;
+  if (selectedRow_ < (int8_t)pageStart_ || selectedRow_ >= (int8_t)pageEnd) {
+    selectedRow_ = pageStart_;
+  }
 }
 
 void SurveyDashboard::drawFull_() {
@@ -238,7 +313,7 @@ void SurveyDashboard::drawHeader_() {
   g->fillRect(0, kHeaderH - 2, kScreenW, 2, kAccent);
 
   towerIcon(g, 18, 18, kAccent);
-  text(g, 58, 10, "SURVEYOPS", fontL(), kTextHi, kLeft);
+  text(g, 58, 10, "SURVEYOPS", uiTitleFont(), kTextHi, kLeft);
   text(g, 58, 38, "PASSIVE GPS / WIFI / WIGLE PANEL", fontS(), kTextMut, kLeft);
 
   char up[18];
@@ -271,7 +346,7 @@ void SurveyDashboard::drawScope_() {
   if (!g) return;
 
   panel(g, kScopeX, kScopeY, kScopeW, kScopeH, 8, rgb(5, 12, 18), 1, kLine);
-  text(g, kScopeX + 18, kScopeY + 14, "SURVEY FIELD", fontL(), kTextHi, kLeft);
+  text(g, kScopeX + 18, kScopeY + 14, "SURVEY FIELD", uiTitleFont(), kTextHi, kLeft);
   text(g, kScopeX + kScopeW - 18, kScopeY + 18, state_.fix.valid ? "GPS FIX" : "WAITING",
        fontS(), state_.fix.valid ? kGreen : kAmber, kRight);
 
@@ -333,23 +408,30 @@ void SurveyDashboard::drawApList_() {
   Arduino_GFX *g = CrowDisplay::canvas();
   if (!g) return;
   panel(g, kPanelX, kListY, kPanelW, 294, 8, kBg, 1, kLine);
-  text(g, kPanelX + 18, kListY + 18, "PASSIVE AP ROWS", fontL(), kTextHi, kLeft);
+  text(g, kPanelX + 18, kListY + 18, "PASSIVE AP ROWS", uiTitleFont(), kTextHi, kLeft);
   char summary[32];
-  snprintf(summary, sizeof(summary), "%u total", (unsigned)state_.totalAps);
-  text(g, kPanelX + kPanelW - 18, kListY + 22, summary, fontS(), kTextMut, kRight);
+  uint8_t page = pageStart_ / kVisibleRows + 1;
+  uint8_t pages = state_.rowCount == 0 ? 1 : (state_.rowCount + kVisibleRows - 1) / kVisibleRows;
+  snprintf(summary, sizeof(summary), "%u total  page %u/%u", (unsigned)state_.totalAps,
+           (unsigned)page, (unsigned)pages);
+  touchButton(g, kScanButtonX, kScanButtonY, kScanButtonW, kScanButtonH, "SCAN NOW", false,
+              kAccent);
+  text(g, kPanelX + 18, kListY + 44, summary, fontS(), kTextMut, kLeft);
 
-  uint8_t rows = state_.rowCount < kVisibleRows ? state_.rowCount : kVisibleRows;
+  uint8_t rows = state_.rowCount > pageStart_ ? state_.rowCount - pageStart_ : 0;
+  if (rows > kVisibleRows) rows = kVisibleRows;
   for (uint8_t i = 0; i < rows; i++) {
-    const WifiApRecord &row = state_.rows[i];
+    uint8_t rowIndex = pageStart_ + i;
+    const WifiApRecord &row = state_.rows[rowIndex];
     int16_t y = kRowsTop + i * kRowH;
-    bool selected = selectedRow_ == (int8_t)i;
+    bool selected = selectedRow_ == (int8_t)rowIndex;
     if (selected) {
       g->fillRoundRect(kPanelX + 10, y - 5, kPanelW - 20, kRowH - 4, 6, kSurfaceHi);
       g->drawRoundRect(kPanelX + 10, y - 5, kPanelW - 20, kRowH - 4, 6, kAccent);
     }
 
     statusDot(g, kPanelX + 30, y + 18, 5, authColor(row.authMode));
-    text(g, kPanelX + 48, y, fitText(g, row.ssid, fontL(), 240).c_str(), fontL(), kTextHi, kLeft);
+    text(g, kPanelX + 48, y, fitText(g, row.ssid, uiValueFont(), 240).c_str(), uiValueFont(), kTextHi, kLeft);
 
     char meta[64];
     snprintf(meta, sizeof(meta), "ch%u  %ld dBm  %s", (unsigned)row.channel, (long)row.rssi,
@@ -362,11 +444,14 @@ void SurveyDashboard::drawApList_() {
   }
 
   if (state_.rowCount == 0) {
-    text(g, kPanelX + kPanelW / 2, kRowsTop + 48, "RUN scan OR feed ap", fontL(), kTextMut,
+    text(g, kPanelX + kPanelW / 2, kRowsTop + 48, "RUN scan OR feed ap", uiTitleFont(), kTextMut,
          kCenter);
     text(g, kPanelX + kPanelW / 2, kRowsTop + 88, "No active tests. No joins. No credential capture.",
          fontS(), kTextMut, kCenter);
   }
+  touchButton(g, kPrevButtonX, kPageButtonY, kPageButtonW, kPageButtonH, "PREV", false);
+  touchButton(g, kNextButtonX, kPageButtonY, kPageButtonW, kPageButtonH, "NEXT", false,
+              kAccent);
 }
 
 void SurveyDashboard::drawGpsCard_() {
@@ -375,8 +460,8 @@ void SurveyDashboard::drawGpsCard_() {
   panel(g, kScopeX, kGpsY, kScopeW, kCardH, 8, kSurface, 1, kLine);
   statusDot(g, kScopeX + 26, kGpsY + 34, 6, state_.fix.valid ? kGreen : kAmber);
   text(g, kScopeX + 46, kGpsY + 16, "GPS FIX", fontS(), kAccent, kLeft);
-  text(g, kScopeX + 46, kGpsY + 42, fitText(g, state_.fix.coordinateText(), fontM(), 240).c_str(),
-       fontM(), kTextHi, kLeft);
+  text(g, kScopeX + 46, kGpsY + 42, fitText(g, state_.fix.coordinateText(), uiValueFont(), 240).c_str(),
+       uiValueFont(), kTextHi, kLeft);
   text(g, kScopeX + kScopeW - 18, kGpsY + 16, state_.fix.source.c_str(), fontS(), kTextMut,
        kRight);
   text(g, kScopeX + kScopeW - 18, kGpsY + 46, fitText(g, state_.fix.qualityText(), fontS(), 170).c_str(),
@@ -391,7 +476,7 @@ void SurveyDashboard::drawDetailCard_() {
   if (selectedRow_ >= 0 && selectedRow_ < (int8_t)state_.rowCount) {
     const WifiApRecord &row = state_.rows[selectedRow_];
     text(g, kPanelX + 18, kDetailY + 16, "SELECTED AP", fontS(), kAccent, kLeft);
-    text(g, kPanelX + 18, kDetailY + 44, fitText(g, row.ssid, fontL(), 260).c_str(), fontL(),
+    text(g, kPanelX + 18, kDetailY + 44, fitText(g, row.ssid, uiValueFont(), 260).c_str(), uiValueFont(),
          kTextHi, kLeft);
 
     char l1[80];
@@ -433,14 +518,18 @@ void SurveyDashboard::drawFooter_() {
   statusDot(g, 20, kFooterY + 26, 5, kAccent);
   text(g, 38, kFooterY + 18, fitText(g, state_.banner, fontS(), 520).c_str(), fontS(), kTextHi,
        kLeft);
-  text(g, kScreenW - 18, kFooterY + 18, "passive only: no join, inject, deauth, or capture", fontS(),
-       kTextMut, kRight);
+  char stats[96];
+  snprintf(stats, sizeof(stats), "session  %u scans  %lu APs  %lu logged  %u rotations",
+           (unsigned)state_.session.scans, (unsigned long)state_.session.apRows,
+           (unsigned long)state_.storage.rowsWritten, (unsigned)state_.storage.rotations);
+  text(g, kScreenW - 18, kFooterY + 18, stats, fontS(), kTextMut, kRight);
 }
 
 #else
 
 void SurveyDashboard::begin() {}
 void SurveyDashboard::update(const SurveyDashboardState &) {}
-void SurveyDashboard::tick() {}
+bool SurveyDashboard::tick() { return false; }
+bool SurveyDashboard::takeScanRequest() { return false; }
 
 #endif

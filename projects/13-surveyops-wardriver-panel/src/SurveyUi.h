@@ -8,10 +8,10 @@ class SurveyUi {
  public:
   void begin();
   void update(const GpsFix &fix, const WifiApRecord *rows, uint8_t rowCount,
-              uint16_t totalAps, const String &topAp, const WigleStorageHealth &storage,
-              const String &banner);
+              uint16_t totalAps, const String &topAp, const SurveySessionStats &session,
+              const WigleStorageHealth &storage, const String &banner);
   void setDetail(const String &title, const String &body);
-  void tick();
+  bool tick();
 
  private:
   SurveyDashboard dashboard_;

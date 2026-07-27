@@ -1,15 +1,14 @@
 #include "WigleCsvLogger.h"
 
-// Include SD.h directly under the flag - do NOT wrap it in __has_include.
-// arduino-cli decides which libraries to link by preprocessing sources before
-// SD is on the include path, so a __has_include guard evaluates false during
-// discovery, the library never gets linked, and the logger silently compiles
-// out even with USE_SD_WIGLE_LOG=1.
+// Include SD_MMC.h directly under the flag - do NOT wrap it in __has_include.
+// arduino-cli discovers libraries by preprocessing sources before the library
+// is on the include path, so a __has_include guard can silently compile out
+// the logger.
 #if USE_SD_WIGLE_LOG
-#include <SD.h>
-#define SURVEYOPS_HAS_SD_DRIVER 1
+#include <SD_MMC.h>
+#define SURVEYOPS_HAS_SDMMC_DRIVER 1
 #else
-#define SURVEYOPS_HAS_SD_DRIVER 0
+#define SURVEYOPS_HAS_SDMMC_DRIVER 0
 #endif
 
 namespace {
@@ -36,19 +35,20 @@ String wigleTypeFor(const WifiApRecord &row) {
 void WigleCsvLogger::begin() {
   activeFile_ = nextFileName();
 #if USE_SD_WIGLE_LOG
-#if SURVEYOPS_HAS_SD_DRIVER
-  if (SURVEYOPS_SD_CS_PIN < 0) {
-    detail_ = "SD CS pin not configured";
-    Logger::error("wigle", "set SURVEYOPS_SD_CS_PIN before SD logging bring-up");
-    return;
-  }
-  if (!SD.begin(SURVEYOPS_SD_CS_PIN)) {
-    detail_ = "SD.begin failed";
+#if SURVEYOPS_HAS_SDMMC_DRIVER
+  bool alreadyMounted = SD_MMC.cardType() != CARD_NONE;
+  if (!alreadyMounted && !SD_MMC.begin("/sdcard", SURVEYOPS_SDMMC_1BIT != 0)) {
+    detail_ = "SD_MMC mount failed";
     Logger::error("wigle", detail_);
     return;
   }
-  ready_ = true;
-  detail_ = "SD ready";
+  ready_ = SD_MMC.cardType() != CARD_NONE;
+  if (!ready_) {
+    detail_ = "SD_MMC card not present";
+    Logger::error("wigle", detail_);
+    return;
+  }
+  detail_ = String("SD_MMC ready ") + (SURVEYOPS_SDMMC_1BIT ? "1-bit" : "4-bit");
   if (!ensureHeader()) {
     ready_ = false;
     Logger::error("wigle", detail_);
@@ -56,8 +56,8 @@ void WigleCsvLogger::begin() {
   }
   Logger::info("wigle", String("SD WiGLE logger ready file=") + activeFile_);
 #else
-  detail_ = "SD.h not available";
-  Logger::error("wigle", "USE_SD_WIGLE_LOG=1 but SD.h was not found");
+  detail_ = "SD_MMC.h not available";
+  Logger::error("wigle", "USE_SD_WIGLE_LOG=1 but SD_MMC.h was not found");
 #endif
 #else
   ready_ = true;
@@ -90,14 +90,14 @@ bool WigleCsvLogger::logRows(const WifiApRecord *rows, uint8_t count, const GpsF
   }
 
 #if USE_SD_WIGLE_LOG
-#if SURVEYOPS_HAS_SD_DRIVER
+#if SURVEYOPS_HAS_SDMMC_DRIVER
   if (!ready_) {
     return false;
   }
   if (!ensureHeader()) {
     return false;
   }
-  File file = SD.open(activeFile_.c_str(), FILE_WRITE);
+  File file = SD_MMC.open(activeFile_.c_str(), FILE_WRITE);
   if (!file) {
     detail_ = String("open failed ") + activeFile_;
     return false;
@@ -154,7 +154,7 @@ bool WigleCsvLogger::rotate() {
   rowsInActive_ = 0;
   activeFile_ = nextFileName();
 #if USE_SD_WIGLE_LOG
-#if SURVEYOPS_HAS_SD_DRIVER
+#if SURVEYOPS_HAS_SDMMC_DRIVER
   return ensureHeader();
 #else
   return false;
@@ -174,10 +174,10 @@ WigleStorageHealth WigleCsvLogger::health() const {
   h.rotations = rotations_;
   h.activeFile = activeFile_;
   h.detail = detail_;
-#if USE_SD_WIGLE_LOG && SURVEYOPS_HAS_SD_DRIVER
+#if USE_SD_WIGLE_LOG && SURVEYOPS_HAS_SDMMC_DRIVER
   if (ready_) {
-    h.detail += String(" total=") + String((uint32_t)(SD.totalBytes() / 1024)) +
-                "KB used=" + String((uint32_t)(SD.usedBytes() / 1024)) + "KB";
+    h.detail += String(" total=") + String((uint32_t)(SD_MMC.totalBytes() / 1024)) +
+                "KB used=" + String((uint32_t)(SD_MMC.usedBytes() / 1024)) + "KB";
   }
 #endif
   return h;
@@ -208,12 +208,12 @@ String WigleCsvLogger::nextFileName() const {
 
 #if USE_SD_WIGLE_LOG
 bool WigleCsvLogger::ensureHeader() {
-#if SURVEYOPS_HAS_SD_DRIVER
+#if SURVEYOPS_HAS_SDMMC_DRIVER
   if (!ready_) {
     return false;
   }
-  bool exists = SD.exists(activeFile_.c_str());
-  File file = SD.open(activeFile_.c_str(), FILE_WRITE);
+  bool exists = SD_MMC.exists(activeFile_.c_str());
+  File file = SD_MMC.open(activeFile_.c_str(), FILE_WRITE);
   if (!file) {
     detail_ = String("header open failed ") + activeFile_;
     return false;

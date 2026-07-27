@@ -1,6 +1,7 @@
 #include "PokedexDashboard.h"
 
 #include <CrowPanelShared.h>
+#include "PokedexText.h"
 
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
 #include <Arduino_GFX_Library.h>
@@ -38,6 +39,14 @@ void PokedexDashboard::showDetail(const PokedexDetail &detail, uint8_t page, con
   source_ = source;
   status_ = status;
   mode_ = kPokedexUiDetail;
+  dirty_ = true;
+}
+
+void PokedexDashboard::beginSearch(const String &initial) {
+  searchInput_ = initial;
+  searchCursor_ = searchInput_.length();
+  keyboard_.reset();
+  mode_ = kPokedexUiSearch;
   dirty_ = true;
 }
 
@@ -148,12 +157,12 @@ int16_t mapAxis(int16_t value, int16_t inMin, int16_t inMax, int16_t outMax) {
   return clampCoord(mapped, outMax);
 }
 
-String fitText(Arduino_GFX *g, String text, int16_t maxW, const GFXfont *font) {
+String fitText(Arduino_GFX *g, String text, int16_t maxW, const uint8_t *font) {
   text.trim();
-  if (Widgets::textWidth(g, text.c_str(), font) <= maxW) {
+  if (PokedexText::width(g, text.c_str(), font) <= maxW) {
     return text;
   }
-  while (text.length() > 3 && Widgets::textWidth(g, (text + "...").c_str(), font) > maxW) {
+  while (text.length() > 3 && PokedexText::width(g, (text + "...").c_str(), font) > maxW) {
     text.remove(text.length() - 1);
   }
   text += "...";
@@ -161,7 +170,7 @@ String fitText(Arduino_GFX *g, String text, int16_t maxW, const GFXfont *font) {
 }
 
 void label(Arduino_GFX *g, int16_t x, int16_t y, const char *text) {
-  Widgets::text(g, x, y, text, Widgets::fontS(), kMuted, Widgets::kLeft);
+  PokedexText::draw(g, x, y, text, PokedexText::fontS(), kMuted, PokedexText::kLeft);
 }
 
 uint16_t typeColor(const char *type) {
@@ -190,21 +199,26 @@ uint16_t typeColor(const char *type) {
 void drawButton(Arduino_GFX *g, int16_t x, int16_t y, int16_t w, const char *text,
                 uint16_t fill = kCardHi) {
   Widgets::panel(g, x, y, w, 38, 8, fill, 1, kLine);
-  Widgets::text(g, x + w / 2, y + 9, text, Widgets::fontS(), kWhite, Widgets::kCenter);
+  PokedexText::draw(g, x + w / 2, y + 9, text, PokedexText::fontS(), kWhite,
+                    PokedexText::kCenter);
 }
 
 void drawTypeChip(Arduino_GFX *g, int16_t x, int16_t y, const char *type) {
   if (type == nullptr || type[0] == '\0') return;
-  Widgets::pill(g, x, y, type, Widgets::fontS(), kInk, typeColor(type));
+  int16_t textW = PokedexText::width(g, type, PokedexText::fontS());
+  int16_t w = textW + 28;
+  Widgets::panel(g, x, y, w, 34, 17, typeColor(type));
+  PokedexText::draw(g, x + w / 2, y + 8, type, PokedexText::fontS(), kInk,
+                    PokedexText::kCenter);
 }
 
 void drawWrapped(Arduino_GFX *g, String text, int16_t x, int16_t y, int16_t w, int16_t lineH,
-                 uint8_t maxLines, const GFXfont *font, uint16_t color) {
+                 uint8_t maxLines, const uint8_t *font, uint16_t color) {
   text.trim();
   if (text.length() == 0) text = "-";
   for (uint8_t line = 0; line < maxLines && text.length() > 0; line++) {
     String chunk = text;
-    while (chunk.length() > 0 && Widgets::textWidth(g, chunk.c_str(), font) > w) {
+    while (chunk.length() > 0 && PokedexText::width(g, chunk.c_str(), font) > w) {
       int split = chunk.lastIndexOf(' ');
       if (split <= 0) {
         chunk.remove(chunk.length() - 1);
@@ -220,7 +234,7 @@ void drawWrapped(Arduino_GFX *g, String text, int16_t x, int16_t y, int16_t w, i
       chunk.remove(chunk.length() - 3);
       chunk += "...";
     }
-    Widgets::text(g, x, y + line * lineH, chunk.c_str(), font, color, Widgets::kLeft);
+    PokedexText::draw(g, x, y + line * lineH, chunk.c_str(), font, color, PokedexText::kLeft);
     text.remove(0, chunk.length());
     text.trim();
   }
@@ -257,7 +271,7 @@ void statBar(Arduino_GFX *g, int16_t x, int16_t y, const char *labelText, uint16
   label(g, x, y, labelText);
   char buf[12];
   snprintf(buf, sizeof(buf), "%u", value);
-  Widgets::text(g, x + 74, y - 2, buf, Widgets::fontS(), kWhite, Widgets::kRight);
+  PokedexText::draw(g, x + 74, y - 2, buf, PokedexText::fontS(), kWhite, PokedexText::kRight);
   Widgets::hBar(g, x + 84, y + 4, 190, 12, min(1.0f, value / 350.0f), color,
                 Widgets::rgb(0x20, 0x2B, 0x38));
 }
@@ -270,11 +284,19 @@ void PokedexDashboard::drawHeader(Arduino_GFX *g, const char *title) {
   g->fillCircle(48, 42, 25, kWhite);
   g->fillCircle(48, 42, 17, kBlue);
   g->fillCircle(48, 42, 8, Widgets::rgb(0xA7, 0xF3, 0xD0));
-  Widgets::text(g, 92, 20, title, Widgets::fontL(), kWhite, Widgets::kLeft);
-  Widgets::text(g, 92, 52, source_.c_str(), Widgets::fontS(), Widgets::rgb(0xFE, 0xF3, 0xC7),
-                Widgets::kLeft);
-  Widgets::pill(g, 778, 27, status_.c_str(), Widgets::fontS(), kInk,
-                status_.indexOf("SD") >= 0 ? Widgets::kGreen : kGold);
+  PokedexText::draw(g, 92, 18, title, PokedexText::fontL(), kWhite, PokedexText::kLeft);
+  PokedexText::draw(g, 92, 51, source_.c_str(), PokedexText::fontS(),
+                    Widgets::rgb(0xFE, 0xF3, 0xC7), PokedexText::kLeft);
+  String headerStatus = fitText(g, status_, 190, PokedexText::fontS());
+  int16_t statusW = PokedexText::width(g, headerStatus.c_str(), PokedexText::fontS()) + 24;
+  int16_t statusX = kScreenW - 24 - statusW;
+  bool sdOk = status_.indexOf("SD catalog") >= 0;
+  bool sdError = status_.indexOf("FAILED") >= 0 || status_.indexOf("MISSING") >= 0 ||
+                 status_.indexOf("INVALID") >= 0;
+  Widgets::panel(g, statusX, 27, statusW, 30, 15,
+                 sdOk ? Widgets::kGreen : (sdError ? kDexRedDark : kGold));
+  PokedexText::draw(g, statusX + statusW / 2, 34, headerStatus.c_str(), PokedexText::fontS(),
+                    kInk, PokedexText::kCenter);
 }
 
 void PokedexDashboard::drawFooter(Arduino_GFX *g) {
@@ -282,15 +304,17 @@ void PokedexDashboard::drawFooter(Arduino_GFX *g) {
   if (mode_ == kPokedexUiList) {
     drawButton(g, 24, kFooterY, 126, "PREV");
     drawButton(g, 166, kFooterY, 126, "NEXT");
-    Widgets::text(g, 320, kFooterY + 8, "Tap a row to open. Serial: search, browse, open.",
-                  Widgets::fontS(), kMuted, Widgets::kLeft);
-  } else {
+    drawButton(g, 308, kFooterY, 136, "SEARCH", kDexRedDark);
+    PokedexText::draw(g, 468, kFooterY + 8, "Tap a row to open.", PokedexText::fontS(),
+                      kMuted, PokedexText::kLeft);
+  } else if (mode_ == kPokedexUiDetail) {
     drawButton(g, 24, kFooterY, 126, "LIST");
     drawButton(g, 764, kFooterY, 112, "PAGE -");
     drawButton(g, 892, kFooterY, 112, "PAGE +", kDexRedDark);
     char page[24];
     snprintf(page, sizeof(page), "Page %u/%u", detailPage_ + 1, POKEDEX_DETAIL_PAGE_COUNT);
-    Widgets::text(g, 512, kFooterY + 8, page, Widgets::fontS(), kMuted, Widgets::kCenter);
+    PokedexText::draw(g, 512, kFooterY + 8, page, PokedexText::fontS(), kMuted,
+                      PokedexText::kCenter);
   }
 }
 
@@ -305,20 +329,21 @@ void PokedexDashboard::drawTouchDot(Arduino_GFX *g) {
 void PokedexDashboard::drawList(Arduino_GFX *g) {
   drawHeader(g, "POKEDEX PANEL");
   Widgets::panel(g, kListX, kListY, kListW, kListH, 8, kCard, 1, kLine);
-  Widgets::text(g, kListX + 20, kListY + 18, "CATALOG", Widgets::fontS(), kGold, Widgets::kLeft);
+  PokedexText::draw(g, kListX + 20, kListY + 18, "CATALOG", PokedexText::fontS(), kGold,
+                    PokedexText::kLeft);
 
   char range[48];
   uint16_t end = (rowCount_ == 0) ? 0 : (browseStart_ + rowCount_);
   snprintf(range, sizeof(range), "%u-%u of %u", (rowCount_ == 0) ? 0 : browseStart_ + 1, end,
            totalRows_);
-  Widgets::text(g, kListX + kListW - 20, kListY + 18, range, Widgets::fontS(), kMuted,
-                Widgets::kRight);
+  PokedexText::draw(g, kListX + kListW - 20, kListY + 18, range, PokedexText::fontS(), kMuted,
+                    PokedexText::kRight);
 
   if (rowCount_ == 0) {
-    Widgets::text(g, kListX + 24, kListY + 88, "No matches", Widgets::fontL(), kWhite,
-                  Widgets::kLeft);
-    drawWrapped(g, "Try a name, dex number, type, or variant tag from Serial.",
-                kListX + 24, kListY + 134, kListW - 48, 28, 4, Widgets::fontS(), kMuted);
+    PokedexText::draw(g, kListX + 24, kListY + 88, "No matches", PokedexText::fontL(), kWhite,
+                      PokedexText::kLeft);
+    drawWrapped(g, "Try SEARCH or use the Serial command: search <query>.",
+                kListX + 24, kListY + 134, kListW - 48, 28, 4, PokedexText::fontS(), kMuted);
   }
 
   for (uint8_t i = 0; i < rowCount_; i++) {
@@ -329,30 +354,31 @@ void PokedexDashboard::drawList(Arduino_GFX *g) {
                    active ? typeColor(rows_[i].type1) : kLine);
     char dex[12];
     snprintf(dex, sizeof(dex), "#%s", rows_[i].dex);
-    Widgets::text(g, kListX + 30, y + 9, dex, Widgets::fontS(), typeColor(rows_[i].type1),
-                  Widgets::kLeft);
-    String name = fitText(g, rows_[i].name, 165, Widgets::fontS());
-    Widgets::text(g, kListX + 91, y + 9, name.c_str(), Widgets::fontS(), kWhite, Widgets::kLeft);
-    Widgets::text(g, kListX + kListW - 32, y + 9, rows_[i].type1, Widgets::fontS(), kMuted,
-                  Widgets::kRight);
+    PokedexText::draw(g, kListX + 30, y + 9, dex, PokedexText::fontS(),
+                      typeColor(rows_[i].type1), PokedexText::kLeft);
+    String name = fitText(g, rows_[i].name, 165, PokedexText::fontS());
+    PokedexText::draw(g, kListX + 91, y + 9, name.c_str(), PokedexText::fontS(), kWhite,
+                      PokedexText::kLeft);
+    PokedexText::draw(g, kListX + kListW - 32, y + 9, rows_[i].type1, PokedexText::fontS(),
+                      kMuted, PokedexText::kRight);
   }
 
   Widgets::panel(g, kHeroX, kHeroY, kHeroW, kHeroH, 8, kCard, 1, kLine);
-  Widgets::text(g, kHeroX + 28, kHeroY + 24, "READY TO SCAN", Widgets::fontS(), kGold,
-                Widgets::kLeft);
+  PokedexText::draw(g, kHeroX + 28, kHeroY + 24, "READY TO SCAN", PokedexText::fontS(), kGold,
+                    PokedexText::kLeft);
   drawPokeball(g, kHeroX + kHeroW / 2, kHeroY + 190, 112, kDexRed);
   drawWrapped(g, String("Query: ") + query_, kHeroX + 36, kHeroY + 332, kHeroW - 72, 30, 2,
-              Widgets::fontM(), kWhite);
+              PokedexText::fontM(), kWhite);
   drawWrapped(g, "Use search pikachu, search mega, browse 24, or open mewtwo.",
-              kHeroX + 36, kHeroY + 382, kHeroW - 72, 24, 2, Widgets::fontS(), kMuted);
+              kHeroX + 36, kHeroY + 382, kHeroW - 72, 24, 2, PokedexText::fontS(), kMuted);
 
   Widgets::panel(g, kSideX, kSideY, kSideW, kSideH, 8, kCard, 1, kLine);
-  Widgets::text(g, kSideX + 20, kSideY + 20, "PORT NOTES", Widgets::fontS(), kGold,
-                Widgets::kLeft);
+  PokedexText::draw(g, kSideX + 20, kSideY + 20, "PORT NOTES", PokedexText::fontS(), kGold,
+                    PokedexText::kLeft);
   drawWrapped(g, "Source: local esp32-pokedex. The original Cardputer keyboard and audio paths were replaced with touch and Serial controls.",
-              kSideX + 20, kSideY + 68, kSideW - 40, 26, 6, Widgets::fontS(), kMuted);
-  drawWrapped(g, "SD mode streams index.csv and per-Pokemon JSON. Mock mode keeps the demo live without a card.",
-              kSideX + 20, kSideY + 252, kSideW - 40, 26, 5, Widgets::fontS(), kWhite);
+              kSideX + 20, kSideY + 68, kSideW - 40, 26, 6, PokedexText::fontS(), kMuted);
+  drawWrapped(g, status_, kSideX + 20, kSideY + 252, kSideW - 40, 26, 5,
+              PokedexText::fontS(), kWhite);
   drawFooter(g);
   drawTouchDot(g);
 }
@@ -362,18 +388,19 @@ void PokedexDashboard::drawDetail(Arduino_GFX *g) {
   uint16_t primary = typeColor(detail_.type1);
 
   Widgets::panel(g, kListX, kListY, kListW, kListH, 8, kCard, 1, kLine);
-  Widgets::text(g, kListX + 24, kListY + 24, "ENTRY", Widgets::fontS(), kGold, Widgets::kLeft);
+  PokedexText::draw(g, kListX + 24, kListY + 24, "ENTRY", PokedexText::fontS(), kGold,
+                    PokedexText::kLeft);
   char title[96];
   snprintf(title, sizeof(title), "#%s %s", detail_.dex, detail_.name);
-  drawWrapped(g, title, kListX + 24, kListY + 72, kListW - 48, 36, 2, Widgets::fontL(), kWhite);
+  drawWrapped(g, title, kListX + 24, kListY + 72, kListW - 48, 36, 2, PokedexText::fontL(), kWhite);
   drawTypeChip(g, kListX + 24, kListY + 156, detail_.type1);
   drawTypeChip(g, kListX + 148, kListY + 156, detail_.type2);
   label(g, kListX + 24, kListY + 214, "TAGS");
-  drawWrapped(g, detail_.tags, kListX + 24, kListY + 246, kListW - 48, 24, 3, Widgets::fontS(),
+  drawWrapped(g, detail_.tags, kListX + 24, kListY + 246, kListW - 48, 24, 3, PokedexText::fontS(),
               kMuted);
   label(g, kListX + 24, kListY + 344, "SOURCE");
   drawWrapped(g, detail_.sourceFile, kListX + 24, kListY + 374, kListW - 48, 24, 2,
-              Widgets::fontS(), kMuted);
+              PokedexText::fontS(), kMuted);
 
   Widgets::panel(g, kHeroX, kHeroY, kHeroW, kHeroH, 8, kCard, 1, kLine);
   drawPokeball(g, kHeroX + kHeroW / 2, kHeroY + 150, 110, primary);
@@ -383,8 +410,8 @@ void PokedexDashboard::drawDetail(Arduino_GFX *g) {
   char buddy[64];
   snprintf(buddy, sizeof(buddy), "Buddy %ukm   2nd move %lu dust", detail_.buddyKm,
            (unsigned long)detail_.secondMoveStardust);
-  Widgets::text(g, kHeroX + kHeroW / 2, kHeroY + 402, buddy, Widgets::fontS(), kMuted,
-                Widgets::kCenter);
+  PokedexText::draw(g, kHeroX + kHeroW / 2, kHeroY + 402, buddy, PokedexText::fontS(), kMuted,
+                    PokedexText::kCenter);
 
   Widgets::panel(g, kSideX, kSideY, kSideW, kSideH, 8, kCard, 1, kLine);
   const char *section = "MATCHUP";
@@ -405,10 +432,29 @@ void PokedexDashboard::drawDetail(Arduino_GFX *g) {
     section = "MOVES";
     body = String("Fast: ") + detail_.fastMoves + "\nCharged: " + detail_.chargedMoves;
   }
-  Widgets::text(g, kSideX + 20, kSideY + 20, section, Widgets::fontS(), kGold, Widgets::kLeft);
-  drawWrapped(g, body, kSideX + 20, kSideY + 72, kSideW - 40, 28, 10, Widgets::fontS(), kWhite);
+  PokedexText::draw(g, kSideX + 20, kSideY + 20, section, PokedexText::fontS(), kGold,
+                    PokedexText::kLeft);
+  drawWrapped(g, body, kSideX + 20, kSideY + 72, kSideW - 40, 28, 10, PokedexText::fontS(), kWhite);
   drawFooter(g);
   drawTouchDot(g);
+}
+
+void PokedexDashboard::drawSearch(Arduino_GFX *g) {
+  drawHeader(g, "SEARCH CATALOG");
+  Widgets::panel(g, 42, 96, 940, 178, 14, kCard, 1, kLine);
+  PokedexText::draw(g, 72, 116, "QUERY", PokedexText::fontS(), kGold, PokedexText::kLeft);
+  String shown = searchInput_.length() ? searchInput_ : "Type a name, dex number, or type";
+  uint16_t color = searchInput_.length() ? kWhite : kMuted;
+  String fitted = fitText(g, shown, 860, PokedexText::fontXL());
+  PokedexText::draw(g, 72, 164, fitted, PokedexText::fontXL(), color, PokedexText::kLeft);
+  if (searchInput_.length()) {
+    int16_t caretX = 72 + PokedexText::width(g, fitted.c_str(), PokedexText::fontXL()) + 5;
+    if (caretX < 940) g->fillRect(caretX, 160, 3, 34, Widgets::rgb(0x16, 0xC2, 0xC9));
+  }
+  drawButton(g, 820, 112, 132, "CANCEL", kDexRedDark);
+  PokedexText::draw(g, 72, 232, "RETURN searches   BACK deletes   123 switches symbols", PokedexText::fontS(),
+                    kMuted, PokedexText::kLeft);
+  keyboard_.draw(g);
 }
 
 void PokedexDashboard::draw() {
@@ -417,6 +463,8 @@ void PokedexDashboard::draw() {
   g->fillScreen(Widgets::kBg);
   if (mode_ == kPokedexUiDetail && detail_.loaded) {
     drawDetail(g);
+  } else if (mode_ == kPokedexUiSearch) {
+    drawSearch(g);
   } else {
     drawList(g);
   }
@@ -438,6 +486,36 @@ int16_t PokedexDashboard::calibrateY(int16_t rawX, int16_t rawY) const {
 
 bool PokedexDashboard::handleTouchMapped(int16_t x, int16_t y, PokedexUiEvent &event) {
   event = PokedexUiEvent();
+  if (mode_ == kPokedexUiSearch) {
+    if (inside(x, y, 808, 104, 160, 70)) {
+      event.type = kPokedexUiSearchCancel;
+      return true;
+    }
+
+    PokedexKeyEvent key = keyboard_.hitTest(x, y);
+    if (key.action == kPokedexKeyNone) return false;
+    if (key.action == kPokedexKeyShift || key.action == kPokedexKeySymbols) {
+      keyboard_.applyModeAction(key.action);
+    } else if (key.action == kPokedexKeyText && searchInput_.length() < 64) {
+      searchInput_ = searchInput_.substring(0, searchCursor_) + key.text +
+                     searchInput_.substring(searchCursor_);
+      searchCursor_ += key.text.length();
+      if (keyboard_.shifted()) keyboard_.applyModeAction(kPokedexKeyShift);
+    } else if (key.action == kPokedexKeyBackspace && searchCursor_ > 0) {
+      searchInput_.remove(searchCursor_ - 1, 1);
+      --searchCursor_;
+    } else if (key.action == kPokedexKeyLeft && searchCursor_ > 0) {
+      --searchCursor_;
+    } else if (key.action == kPokedexKeyRight && searchCursor_ < searchInput_.length()) {
+      ++searchCursor_;
+    } else if (key.action == kPokedexKeyEnter) {
+      event.type = kPokedexUiSearchSubmit;
+      event.text = searchInput_;
+      return true;
+    }
+    dirty_ = true;
+    return true;
+  }
   if (mode_ == kPokedexUiList) {
     if (inside(x, y, 0, kFooterY - 20, 164, 76)) {
       event.type = kPokedexUiBrowsePrev;
@@ -445,6 +523,10 @@ bool PokedexDashboard::handleTouchMapped(int16_t x, int16_t y, PokedexUiEvent &e
     }
     if (inside(x, y, 152, kFooterY - 20, 164, 76)) {
       event.type = kPokedexUiBrowseNext;
+      return true;
+    }
+    if (inside(x, y, 292, kFooterY - 20, 164, 76)) {
+      event.type = kPokedexUiOpenSearch;
       return true;
     }
     for (uint8_t i = 0; i < rowCount_; i++) {

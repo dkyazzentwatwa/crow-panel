@@ -6,8 +6,8 @@ display.
 Browse or search a catalog on the left and get a large detail card on the right:
 generated Poke Ball art, type chips, stats, buddy distance, and second-move dust,
 plus extra pages for trainer notes, weaknesses, resistances, evolution, and
-moves. It ships with a built-in catalog, so it is useful the moment it boots with
-no SD card present.
+moves. It boots SD-first from the original project layout and visibly explains
+why it falls back to the built-in catalog when the card is absent or incomplete.
 
 This is a touch rebuild of a Cardputer app that ran on a keyboard and a small
 screen; here it becomes a 1024x600 touch dashboard.
@@ -24,18 +24,22 @@ evidence. See the [technical reference](TECHNICAL.md).
 ## What you get
 
 - A browse and search list covering names, dex numbers, types, and variants
+- A full-screen touch keyboard with QWERTY, shift, symbols, cursor controls,
+  backspace, space, Return, and cancel
 - A large detail card with generated art and type chips
 - Five detail pages per entry, paged by touch or by command
 - Touch controls: tap a row to open it, `LIST` to go back, `PAGE -` / `PAGE +`
-  to move through pages, `PREV` / `NEXT` to page the list
+  to move through pages, `PREV` / `NEXT` to page the list, and `SEARCH` to open
+  the keyboard
 - An offline mock catalog compiled into the sketch
-- Optional SD catalog streaming from the original project's card layout
+- SD catalog streaming from the original project's card layout by default
+- Crisp local U8g2 typography while Arduino_GFX continues to draw geometry
 
 ## Not yet ported
 
-Sprite BMP rendering and the original Cardputer audio. The display here is
-Arduino_GFX only, matching the rest of this repo, and the SD path reads the
-catalog index and detail JSON but not the sprites or audio files.
+Sprite BMP rendering and the original Cardputer audio. The display here keeps
+Arduino_GFX for geometry, with U8g2 used for measured text. The SD path reads
+the catalog index and detail JSON but not the sprites or audio files.
 
 ## Source boundary
 

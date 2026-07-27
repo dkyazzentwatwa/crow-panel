@@ -6,8 +6,8 @@
 
 // Project 15 - Pokedex Panel.
 // Port of the local esp32-pokedex Cardputer app into a CrowPanel-first surface:
-// touch + Serial navigation, SD-backed catalog when explicitly enabled, and a
-// mock catalog that keeps the demo useful with no card mounted.
+// touch + Serial navigation, SD-first catalog loading, and a mock fallback that
+// keeps the demo useful when a card is absent or incomplete.
 PokedexCatalog catalog;
 PokedexDashboard dashboard;
 SerialCommandRouter router;
@@ -92,7 +92,7 @@ void runSearch(const String &query) {
   Serial.println(totalMatches);
   printActiveRows();
   eventLog.add(String("Search ") + q + " -> " + totalMatches + " matches");
-  showCurrentList(String(rowCount) + "/" + totalMatches + " matches");
+  showCurrentList(catalog.status());
 }
 
 bool openRow(uint8_t rowIndex) {
@@ -105,7 +105,7 @@ bool openRow(uint8_t rowIndex) {
   activeDetailPage = 0;
   if (!catalog.loadDetail(rows[rowIndex], activeDetail)) {
     Serial.println(F("[pokedex] detail load failed"));
-    showCurrentList("detail load failed");
+    showCurrentList(catalog.status());
     return false;
   }
 
@@ -129,7 +129,8 @@ bool openRow(uint8_t rowIndex) {
   Serial.print(F(" hp="));
   Serial.println(activeDetail.hp);
   eventLog.add(String("Opened ") + activeDetail.name);
-  dashboard.showDetail(activeDetail, activeDetailPage, catalog.sourceLabel(), "detail ready");
+  const char *detailSource = activeDetail.fromSd ? catalog.sourceLabel() : "mock fallback";
+  dashboard.showDetail(activeDetail, activeDetailPage, detailSource, catalog.status());
   return true;
 }
 
@@ -143,7 +144,8 @@ void showDetailPage(uint8_t page) {
   Serial.print(activeDetailPage + 1);
   Serial.print(F("/"));
   Serial.println(POKEDEX_DETAIL_PAGE_COUNT);
-  dashboard.showDetail(activeDetail, activeDetailPage, catalog.sourceLabel(), "detail ready");
+  const char *detailSource = activeDetail.fromSd ? catalog.sourceLabel() : "mock fallback";
+  dashboard.showDetail(activeDetail, activeDetailPage, detailSource, catalog.status());
 }
 
 void cmdStatus(const String &) {
@@ -189,7 +191,7 @@ void cmdSelect(const String &args) {
   selectedRow = rowIndex;
   Serial.print(F("[pokedex] selected row "));
   Serial.println(selectedRow + 1);
-  showCurrentList("row selected");
+  showCurrentList(catalog.status());
 }
 
 void cmdOpen(const String &args) {
@@ -251,7 +253,7 @@ void cmdSource(const String &) {
   Serial.print(F("[pokedex] active source: "));
   Serial.println(catalog.sourceLabel());
   Serial.println(F("[pokedex] SD layout: /pokemon/index.csv + /pokemon/data/*.json"));
-  Serial.println(F("[pokedex] build with EXTRA_FLAGS=\"-DUSE_SD_POKEDEX=1\" to try SD_MMC"));
+  Serial.println(F("[pokedex] SD-first default: /pokemon/index.csv + /pokemon/data/*.json"));
 }
 
 void cmdTouch(const String &) {
@@ -263,7 +265,7 @@ void handleUiEvent(const PokedexUiEvent &event) {
     openRow(event.row);
   } else if (event.type == kPokedexUiBackToList) {
     detailOpen = false;
-    showCurrentList("list ready");
+    showCurrentList(catalog.status());
   } else if (event.type == kPokedexUiNextPage) {
     showDetailPage(activeDetailPage + 1);
   } else if (event.type == kPokedexUiPrevPage) {
@@ -283,6 +285,18 @@ void handleUiEvent(const PokedexUiEvent &event) {
       prev = total - POKEDEX_MAX_RESULTS;
     }
     loadBrowse(prev);
+  } else if (event.type == kPokedexUiOpenSearch) {
+    dashboard.beginSearch(activeQuery.startsWith("browse") ? "" : activeQuery);
+  } else if (event.type == kPokedexUiSearchCancel) {
+    showCurrentList(catalog.status());
+  } else if (event.type == kPokedexUiSearchSubmit) {
+    String query = event.text;
+    query.trim();
+    if (query.length() > 0) {
+      runSearch(query);
+    } else {
+      showCurrentList(catalog.status());
+    }
   }
 }
 
@@ -292,8 +306,15 @@ void setup() {
   printHardwareProfile(Serial, activeHardwareProfile());
 
   storage.begin("pokedex");
-  dashboard.begin();
+  // Mount SD before bringing up the DSI display, matching every other SD+
+  // display project in this repo (Cypher Tune MPC's LoopLibrary::begin(),
+  // Cypher Desk's DeskStorage::begin(), Cypher Boy's GbRomStore::begin() all
+  // run before their display init). Boot-probe instrumentation isolated a
+  // real black-screen bug to the reverse order: once the DSI panel claims
+  // whatever DMA/GPDMA resource the native SDMMC host also needs, SD_MMC's
+  // mount call in catalog.begin() never returns.
   catalog.begin();
+  dashboard.begin();
   loadBrowse(0);
   eventLog.add("Pokedex Panel booted");
 

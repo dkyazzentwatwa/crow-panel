@@ -12,6 +12,7 @@ struct SurveyDashboardState {
   uint8_t rowCount = 0;
   uint16_t totalAps = 0;
   String topAp = "StudioNet";
+  SurveySessionStats session;
   String banner = "survey dashboard ready";
   String detailTitle = "Survey Ready";
   String detailBody = "Run scan, feed ap, gps, log, storage, or rotate from Serial.";
@@ -25,12 +26,14 @@ class SurveyDashboard {
  public:
   void begin();
   void update(const SurveyDashboardState &state);
-  void tick();
+  bool tick();
+  bool takeScanRequest();
 
  private:
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
   void handleTouch_();
   bool handleTouchAt_(int16_t tx, int16_t ty, const char *mapping);
+  void requestScan_(const char *mapping);
   int8_t hitTestRow_(int16_t tx, int16_t ty) const;
   void cycleSelected_();
   void drawFull_();
@@ -45,6 +48,8 @@ class SurveyDashboard {
   bool ready_ = false;
   bool dirty_ = true;
   bool wasTouched_ = false;
+  bool scanRequested_ = false;
+  uint8_t pageStart_ = 0;
   int8_t selectedRow_ = -1;
   float sweepDeg_ = 0.0f;
   uint32_t lastFrameMs_ = 0;

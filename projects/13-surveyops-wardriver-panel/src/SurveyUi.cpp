@@ -17,8 +17,8 @@ void SurveyUi::begin() {
 }
 
 void SurveyUi::update(const GpsFix &fix, const WifiApRecord *rows, uint8_t rowCount,
-                      uint16_t totalAps, const String &topAp, const WigleStorageHealth &storage,
-                      const String &banner) {
+                      uint16_t totalAps, const String &topAp, const SurveySessionStats &session,
+                      const WigleStorageHealth &storage, const String &banner) {
   state_.fix = fix;
   state_.storage = storage;
   state_.rowCount = rows == nullptr ? 0 : (rowCount < kSurveyMaxRows ? rowCount : kSurveyMaxRows);
@@ -27,6 +27,7 @@ void SurveyUi::update(const GpsFix &fix, const WifiApRecord *rows, uint8_t rowCo
   }
   state_.totalAps = totalAps;
   state_.topAp = topAp;
+  state_.session = session;
   state_.banner = fitForLog(banner, 120);
   dashboard_.update(state_);
 
@@ -46,6 +47,6 @@ void SurveyUi::setDetail(const String &title, const String &body) {
   dashboard_.update(state_);
 }
 
-void SurveyUi::tick() {
-  dashboard_.tick();
+bool SurveyUi::tick() {
+  return dashboard_.tick();
 }
