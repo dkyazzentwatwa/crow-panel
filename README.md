@@ -1,8 +1,6 @@
-# CrowPanel AIoT Arduino Suite
-
+# CrowPanel App Suite
 ## A large-format touch platform for real embedded interfaces
 
-![CrowPanel running the CrowPanel app suite](docs/assets/crowpanel/01-surveyops.jpg)
 
 The [Elecrow CrowPanel Advanced 7-inch ESP32-P4 HMI AI Display](https://www.elecrow.com/crowpanel-advanced-7inch-esp32-p4-hmi-ai-display-1024x600-ips-touch-screen-with-wifi-6-compatible-with-arduino-lvgl-micropython.html) is a remarkably capable piece of hardware. This repository treats it like a product platform rather than a tiny demo screen.
 
