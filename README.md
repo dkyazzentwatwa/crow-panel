@@ -2,7 +2,7 @@
 ## A large-format touch platform for real embedded interfaces
 
 
-The [Elecrow CrowPanel Advanced 7-inch ESP32-P4 HMI AI Display](https://www.elecrow.com/crowpanel-advanced-7inch-esp32-p4-hmi-ai-display-1024x600-ips-touch-screen-with-wifi-6-compatible-with-arduino-lvgl-micropython.html) is a remarkably capable piece of hardware. This repository treats it like a product platform rather than a tiny demo screen.
+The [Elecrow CrowPanel Advanced 7-inch ESP32-P4 HMI AI Display]([https://www.elecrow.com/crowpanel-advanced-7inch-esp32-p4-hmi-ai-display-1024x600-ips-touch-screen-with-wifi-6-compatible-with-arduino-lvgl-micropython.html](https://www.awin1.com/cread.php?awinmid=82721&awinaffid=2977153&ued=https%3A%2F%2Fm.elecrow.com%2Fpages%2Fshop%2Fproduct%2Fdetails%3Fid%3D208494)) is a remarkably capable piece of hardware. This repository treats it like a product platform rather than a tiny demo screen.
 
 It is a collection of 20 standalone touch applications for field work, creative work, games, dashboards, and hardware experiments. The common thread is simple: give the device interfaces that feel made for a 7-inch screen.
 
