@@ -10,6 +10,32 @@ The result is a portable embedded desktop that can become a camera, groovebox, a
 
 The repository is Arduino CLI only. Detailed toolchain setup, hardware notes, feature flags, wiring, companion boards, safety boundaries, and proof requirements live in [TECHNICAL.md](TECHNICAL.md).
 
+## In the field
+
+The photos below show the suite running on the CrowPanel, including SurveyOps, Pokedex, Cypher Boy, CypherDrive, ADS-B Radar, LiteGo, Vision Cam, and Cypher Desk. They are illustrative device captures, not a replacement for the per-project proof record.
+
+<p align="center">
+  <img src="docs/assets/crowpanel/01-surveyops.jpg" alt="SurveyOps passive Wi-Fi and GPS panel" width="32%" />
+  <img src="docs/assets/crowpanel/02-pokedex.jpg" alt="Pokedex detail panel" width="32%" />
+  <img src="docs/assets/crowpanel/03-cypher-boy-zelda.jpg" alt="Cypher Boy running a Game Boy title" width="32%" />
+</p>
+<p align="center">
+  <img src="docs/assets/crowpanel/05-cypherdrive.jpg" alt="CypherDrive BLE device view" width="32%" />
+  <img src="docs/assets/crowpanel/06-adsb-radar.jpg" alt="ADS-B aircraft radar" width="32%" />
+  <img src="docs/assets/crowpanel/07-litego.jpg" alt="LiteGo Go board" width="32%" />
+</p>
+<p align="center">
+  <img src="docs/assets/crowpanel/09-cypher-boy-phantasy-star.jpg" alt="Cypher Boy running Phantasy Star IV" width="32%" />
+  <img src="docs/assets/crowpanel/10-visioncam-stream.jpg" alt="Cypher Vision Cam stream view" width="32%" />
+  <img src="docs/assets/crowpanel/11-cypher-desk.jpg" alt="Cypher Desk home screen" width="32%" />
+</p>
+<p align="center">
+  <img src="docs/assets/crowpanel/12-cypher-desk-writer.jpg" alt="Cypher Desk writer view" width="32%" />
+  <img src="docs/assets/crowpanel/04-board-detail.jpg" alt="CrowPanel board detail" width="32%" />
+  <img src="docs/assets/crowpanel/08-board-fan.jpg" alt="CrowPanel board cooling fan detail" width="32%" />
+</p>
+
+
 ## What this shows off
 
 - **A real embedded UI surface:** dashboards, touch controls, games, writing tools, maps, radars, catalogs, and media views designed around 1024×600
@@ -53,30 +79,6 @@ The repository is Arduino CLI only. Detailed toolchain setup, hardware notes, fe
 | Cypher Keys HID Deck | Touch keyboard, macros, launcher, and USB/Bluetooth HID | [21](projects/21-cypher-keys-hid-deck) |
 | Cypher Boy | SD-backed Game Boy, GBC, NES, and Mega Drive player | [22](projects/22-cypher-boy) |
 
-## In the field
-
-The photos below show the suite running on the CrowPanel, including SurveyOps, Pokedex, Cypher Boy, CypherDrive, ADS-B Radar, LiteGo, Vision Cam, and Cypher Desk. They are illustrative device captures, not a replacement for the per-project proof record.
-
-<p align="center">
-  <img src="docs/assets/crowpanel/01-surveyops.jpg" alt="SurveyOps passive Wi-Fi and GPS panel" width="32%" />
-  <img src="docs/assets/crowpanel/02-pokedex.jpg" alt="Pokedex detail panel" width="32%" />
-  <img src="docs/assets/crowpanel/03-cypher-boy-zelda.jpg" alt="Cypher Boy running a Game Boy title" width="32%" />
-</p>
-<p align="center">
-  <img src="docs/assets/crowpanel/05-cypherdrive.jpg" alt="CypherDrive BLE device view" width="32%" />
-  <img src="docs/assets/crowpanel/06-adsb-radar.jpg" alt="ADS-B aircraft radar" width="32%" />
-  <img src="docs/assets/crowpanel/07-litego.jpg" alt="LiteGo Go board" width="32%" />
-</p>
-<p align="center">
-  <img src="docs/assets/crowpanel/09-cypher-boy-phantasy-star.jpg" alt="Cypher Boy running Phantasy Star IV" width="32%" />
-  <img src="docs/assets/crowpanel/10-visioncam-stream.jpg" alt="Cypher Vision Cam stream view" width="32%" />
-  <img src="docs/assets/crowpanel/11-cypher-desk.jpg" alt="Cypher Desk home screen" width="32%" />
-</p>
-<p align="center">
-  <img src="docs/assets/crowpanel/12-cypher-desk-writer.jpg" alt="Cypher Desk writer view" width="32%" />
-  <img src="docs/assets/crowpanel/04-board-detail.jpg" alt="CrowPanel board detail" width="32%" />
-  <img src="docs/assets/crowpanel/08-board-fan.jpg" alt="CrowPanel board cooling fan detail" width="32%" />
-</p>
 
 ## Start here
 
