@@ -3,7 +3,8 @@
 
 #include <Arduino.h>
 
-constexpr uint8_t POKEDEX_MAX_RESULTS = 8;
+// Matches pokedex::kGridPageSize so one grid window fits in one result buffer.
+constexpr uint8_t POKEDEX_MAX_RESULTS = 18;
 constexpr uint8_t POKEDEX_DETAIL_PAGE_COUNT = 5;
 
 struct PokedexRow {

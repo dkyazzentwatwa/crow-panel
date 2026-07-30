@@ -15,6 +15,8 @@
 
 #include <CrowPanelShared.h>
 
+#include "PokedexSdSource.h"
+
 namespace {
 
 struct MockPokemon {
@@ -167,6 +169,7 @@ void PokedexCatalog::begin() {
   }
   status_ = "SD catalog // " + String(totalRows_) + " entries";
   Logger::info("pokedex", status_);
+  buildIndex();
 #else
   status_ = "SD_MMC.h unavailable; using mock catalog";
   Logger::error("pokedex", status_);
@@ -478,4 +481,124 @@ bool PokedexCatalog::rowMatches(const PokedexRow &row, const String &query) cons
   }
 
   return normalizedDex(String(row.dex)) == normalizedDex(query);
+}
+
+void PokedexCatalog::releaseIndex() {
+  if (indexRecords_ != nullptr) {
+    free(indexRecords_);
+    indexRecords_ = nullptr;
+  }
+  if (indexNameOrder_ != nullptr) {
+    free(indexNameOrder_);
+    indexNameOrder_ = nullptr;
+  }
+  indexRows_ = 0;
+}
+
+void PokedexCatalog::buildIndex() {
+#if USE_SD_POKEDEX && POKEDEX_HAS_SD_MMC
+  releaseIndex();
+  if (!sdReady_ || !indexReady_) return;
+
+  File file = SD_MMC.open(POKEDEX_INDEX_PATH, FILE_READ);
+  if (!file) {
+    Logger::warn("index", "cannot open index for indexing; using linear scan");
+    return;
+  }
+
+  // 2048 covers the shipped 1573-row catalog with headroom. 40 bytes per record.
+  const uint16_t capacity = 2048;
+  indexRecords_ = (pokedex::Record *)ps_malloc(sizeof(pokedex::Record) * capacity);
+  if (indexRecords_ == nullptr) {
+    file.close();
+    Logger::warn("index", "PSRAM index alloc failed; using linear scan");
+    return;
+  }
+
+  // The name-order array is optional: without it, A-Z ordering is unavailable
+  // but dex ordering still works.
+  indexNameOrder_ = (uint16_t *)ps_malloc(sizeof(uint16_t) * capacity);
+  if (indexNameOrder_ == nullptr) {
+    Logger::warn("index", "PSRAM name-order alloc failed; dex order only");
+  }
+
+  index_.attach(indexRecords_, capacity, indexNameOrder_);
+  PokedexSdSource source(file);
+  indexRows_ = index_.build(source);
+  file.close();
+
+  if (indexRows_ == 0) {
+    releaseIndex();
+    Logger::warn("index", "index build produced no rows; using linear scan");
+    return;
+  }
+  Logger::info("index", String("indexed ") + indexRows_ + " rows");
+#endif
+}
+
+bool PokedexCatalog::nameOrderActive() const {
+  return indexRows_ > 0 && index_.nameOrderAvailable();
+}
+
+uint16_t PokedexCatalog::countMatching(const pokedex::Filter &filter) const {
+  if (indexRows_ == 0) return totalRows_;
+  return index_.countMatching(filter);
+}
+
+uint32_t PokedexCatalog::ordinalOfLetter(char letter, const pokedex::Filter &filter) const {
+  if (indexRows_ == 0) return 0;
+  return index_.ordinalOfLetter(letter, filter);
+}
+
+bool PokedexCatalog::hasLetter(char letter, const pokedex::Filter &filter) const {
+  if (indexRows_ == 0) return false;
+  return index_.hasLetter(letter, filter);
+}
+
+uint32_t PokedexCatalog::ordinalOfDex(uint16_t dex, const pokedex::Filter &filter) const {
+  if (indexRows_ == 0) return 0;
+  return index_.ordinalOfDex(dex, filter);
+}
+
+bool PokedexCatalog::hasDexAtLeast(uint16_t dex, const pokedex::Filter &filter) const {
+  if (indexRows_ == 0) return false;
+  return index_.hasDexAtLeast(dex, filter);
+}
+
+uint32_t PokedexCatalog::clampOrdinal(uint32_t ordinal, const pokedex::Filter &filter) const {
+  if (indexRows_ == 0) return 0;
+  return index_.clampOrdinal(ordinal, filter);
+}
+
+uint8_t PokedexCatalog::window(uint32_t startOrdinal, pokedex::Order order,
+                               const pokedex::Filter &filter, PokedexRow *outRows,
+                               uint8_t maxRows) {
+  if (indexRows_ == 0) {
+    // Fallback: the pre-existing linear browse. It only understands a row start,
+    // which is what an ordinal is when nothing is filtered out.
+    return browse((uint16_t)startOrdinal, outRows, maxRows);
+  }
+#if USE_SD_POKEDEX && POKEDEX_HAS_SD_MMC
+  uint16_t rowIndices[pokedex::kGridPageSize];
+  const uint8_t found = index_.pageAtOrdinal(startOrdinal, order, filter, rowIndices);
+  if (found == 0) return 0;
+
+  // One open for the whole window: 18 seeks beat 18 open/close cycles.
+  File file = SD_MMC.open(POKEDEX_INDEX_PATH, FILE_READ);
+  if (!file) return 0;
+  uint8_t written = 0;
+  for (uint8_t i = 0; i < found && written < maxRows; i++) {
+    if (!file.seek(index_.record(rowIndices[i]).offset)) continue;
+    String line = file.readStringUntil('\n');
+    if (parseIndexLine(line, outRows[written])) written++;
+  }
+  file.close();
+  return written;
+#else
+  (void)order;
+  (void)filter;
+  (void)outRows;
+  (void)maxRows;
+  return 0;
+#endif
 }
