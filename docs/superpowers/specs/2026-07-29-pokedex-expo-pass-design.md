@@ -196,15 +196,26 @@ Decode path: read 4854-byte BMP -> validate header -> convert 24 bpp bottom-up
 to RGB565 top-down -> integer nearest-neighbour upscale.
 
 - 2x -> 80x80 grid tile
-- 8x -> 320x320 hero image (fits the existing 360 px hero panel width)
+- 7x -> 280x280 hero image, sized to fit the detail panel's vertical budget
+  above the ATK/DEF/HP stat bars without cropping (see below)
 
-PSRAM cache budget: 18 tiles x 80x80x2 B = ~230 KB, plus one 320x320x2 B = 205 KB
+PSRAM cache budget: 18 tiles x 80x80x2 B = ~230 KB, plus one 280x280x2 B = ~157 KB
 hero buffer. LRU eviction. Grid path constructs `/pokemon/sprites/<entry_id>.bmp`
 from the index; the detail path prefers the `"sprite"` field already present in
 the entry's JSON.
 
 A page turn decodes up to 18 sprites (~86 KB of SD reads). Repaint time is to be
 **measured on hardware and reported**, not predicted here.
+
+**7x, not 8x — a real layout conflict, not a round number.** `Arduino_GFX::
+draw16bitRGBBitmapWithTranColor` cannot rescale; it blits the source's `w*h`
+pixels 1:1. The detail panel's ATK/DEF/HP stat bars sit at fixed offsets
+leaving roughly 280px above them for the hero sprite. 8x (320px) was tried
+first and would need cropping to fit — measured against the real pack, 315 of
+1573 sprites have art reaching into what would be the cropped-off bottom rows,
+several all the way to the sprite's last row, so cropping chopped off feet and
+tails. 7x (280px) fits the budget with nothing cropped, and uses less PSRAM
+besides.
 
 Missing or malformed sprite falls back to the existing generic pokeball, so an
 incomplete card degrades visibly rather than crashing or rendering blank.
@@ -320,7 +331,7 @@ becomes grid area.
 
 Keep all five existing pages of data. Replace `PAGE -` / `PAGE +` stepping
 through anonymous pages with **named tabs**: `ENTRY`, `STATS`, `MOVES`,
-`MATCHUPS`, `EVO`. Any page is one tap away instead of up to four. The 320x320
+`MATCHUPS`, `EVO`. Any page is one tap away instead of up to four. The 280x280
 hero sprite replaces the generic pokeball.
 
 `POKEDEX_DETAIL_PAGE_COUNT` stays 5; only the navigation control changes.
