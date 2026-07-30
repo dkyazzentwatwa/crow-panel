@@ -21,6 +21,12 @@ struct Record {
   char name[kNameLength];
 };
 
+// Maps an index.csv type name ("Grass") to 0..17, or kTypeAny when unknown.
+uint8_t typeIdFromName(const char *name);
+
+// Reverse of typeIdFromName. Returns nullptr when id is out of range.
+const char *typeNameFromId(uint8_t id);
+
 }  // namespace pokedex
 
 #endif
