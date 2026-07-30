@@ -409,6 +409,8 @@ void handleUiEvent(const PokedexUiEvent &event) {
     showDetailPage(activeDetailPage + 1);
   } else if (event.type == kPokedexUiPrevPage) {
     showDetailPage(activeDetailPage == 0 ? POKEDEX_DETAIL_PAGE_COUNT - 1 : activeDetailPage - 1);
+  } else if (event.type == kPokedexUiSelectTab) {
+    showDetailPage(event.tab);
   } else if (event.type == kPokedexUiJumpTop) {
     loadGridWindow(0);
   } else if (event.type == kPokedexUiJumpLetter) {

@@ -38,13 +38,22 @@
 #define POKEDEX_SPRITE_DIR "/pokemon/sprites/"
 #endif
 
-// Grid tiles are 40x40 at 2x; the detail hero is 40x40 at 8x.
+// Grid tiles are 40x40 at 2x. The detail hero is 40x40 at 7x (280px): the
+// hero panel's vertical budget above the ATK/DEF/HP stat bars is ~280px
+// (kHeroY+8 to kHeroY+288 in PokedexDashboard::drawDetail), and
+// draw16bitRGBBitmapWithTranColor cannot rescale a bitmap - it blits pixels
+// 1:1 - so the cached resolution has to fit that budget exactly. 8x (320px)
+// was tried first and measured against the real sprite pack: 315 of 1573
+// sprites have art reaching into what would be the cropped-off bottom 6
+// native rows, several all the way to the sprite's last row, so cropping
+// visibly chopped off feet/tails on a fifth of the pack. 7x fits without
+// cropping anything.
 #ifndef POKEDEX_SPRITE_TILE_SCALE
 #define POKEDEX_SPRITE_TILE_SCALE 2
 #endif
 
 #ifndef POKEDEX_SPRITE_HERO_SCALE
-#define POKEDEX_SPRITE_HERO_SCALE 8
+#define POKEDEX_SPRITE_HERO_SCALE 7
 #endif
 
 // One page of tiles, so a full grid repaint never evicts a tile it still needs.

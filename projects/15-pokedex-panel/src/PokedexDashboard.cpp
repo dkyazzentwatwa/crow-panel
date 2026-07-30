@@ -385,13 +385,14 @@ void PokedexDashboard::drawFooter(Arduino_GFX *g) {
     PokedexText::draw(g, 1000, kFooterY + 8, range, PokedexText::fontS(), kMuted,
                       PokedexText::kRight);
   } else if (mode_ == kPokedexUiDetail) {
-    drawButton(g, 24, kFooterY, 126, "LIST");
-    drawButton(g, 764, kFooterY, 112, "PAGE -");
-    drawButton(g, 892, kFooterY, 112, "PAGE +", kDexRedDark);
-    char page[24];
-    snprintf(page, sizeof(page), "Page %u/%u", detailPage_ + 1, POKEDEX_DETAIL_PAGE_COUNT);
-    PokedexText::draw(g, 512, kFooterY + 8, page, PokedexText::fontS(), kMuted,
-                      PokedexText::kCenter);
+    drawButton(g, 24, kFooterY, 112, "LIST");
+    static const char *const kTabs[POKEDEX_DETAIL_PAGE_COUNT] = {
+        "ENTRY", "STATS", "MOVES", "MATCHUPS", "EVO"};
+    for (uint8_t i = 0; i < POKEDEX_DETAIL_PAGE_COUNT; i++) {
+      const int16_t x = 168 + i * 168;
+      drawButton(g, x, kFooterY, 158, kTabs[i],
+                 i == detailPage_ ? kDexRedDark : kCardHi);
+    }
   }
 }
 
@@ -516,7 +517,35 @@ void PokedexDashboard::drawDetail(Arduino_GFX *g) {
               PokedexText::fontS(), kMuted);
 
   Widgets::panel(g, kHeroX, kHeroY, kHeroW, kHeroH, 8, kCard, 1, kLine);
-  drawPokeball(g, kHeroX + kHeroW / 2, kHeroY + 150, 110, primary);
+  // Same colour-keying rationale as drawTile in the grid (Task 13): the well
+  // must be literal 0x0000, not any other "black-ish" colour, because a
+  // black-background sprite's interior outline pixels are also 0x0000 and are
+  // keyed identically to the background - only correct if what's underneath is
+  // the same 0x0000.
+  //
+  // Vertical budget: the ATK/DEF/HP stat bars below are drawn at fixed
+  // offsets kHeroY+288/328/368 (unchanged), so the sprite has ~280px above
+  // that to work with. draw16bitRGBBitmapWithTranColor cannot rescale a
+  // bitmap - it blits the source's w*h pixels 1:1 (see Arduino_GFX.cpp) - so
+  // rather than crop a larger cached bitmap to fit (measured against the real
+  // pack: 315 of 1573 sprites have art reaching into what would be the
+  // cropped-off bottom rows, several all the way to the last row, which
+  // visibly chops off feet/tails), POKEDEX_SPRITE_HERO_SCALE is 7 (280px),
+  // sized to fit this budget without cropping anything.
+  constexpr int16_t kHeroSpriteTop = 6;
+  uint16_t heroKey = 0;
+  const uint16_t *heroPixels =
+      (sprites_ != nullptr) ? sprites_->hero(detail_.entryId, &heroKey) : nullptr;
+  if (heroPixels != nullptr) {
+    const int16_t size = sprites_->heroSize();
+    const int16_t hx = kHeroX + (kHeroW - size) / 2;
+    const int16_t hy = kHeroY + kHeroSpriteTop;
+    g->fillRect(hx, hy, size, size, 0x0000);
+    g->draw16bitRGBBitmapWithTranColor(hx, hy, (uint16_t *)heroPixels, heroKey, size,
+                                       size);
+  } else {
+    drawPokeball(g, kHeroX + kHeroW / 2, kHeroY + kHeroSpriteTop + 140, 110, primary);
+  }
   statBar(g, kHeroX + 42, kHeroY + 288, "ATK", detail_.atk, kDexRed);
   statBar(g, kHeroX + 42, kHeroY + 328, "DEF", detail_.def, kBlue);
   statBar(g, kHeroX + 42, kHeroY + 368, "HP", detail_.hp, Widgets::kGreen);
@@ -694,22 +723,17 @@ bool PokedexDashboard::handleTouchMapped(int16_t x, int16_t y, PokedexUiEvent &e
       return false;
     }
   } else {
-    if (inside(x, y, 0, kFooterY - 20, 164, 76)) {
+    if (inside(x, y, 16, kFooterY - 20, 128, 76)) {
       event.type = kPokedexUiBackToList;
       return true;
     }
-    if (inside(x, y, 736, kFooterY - 20, 152, 76)) {
-      event.type = kPokedexUiPrevPage;
-      return true;
-    }
-    if (inside(x, y, 876, kFooterY - 20, 148, 76)) {
-      event.type = kPokedexUiNextPage;
-      return true;
-    }
-    if (inside(x, y, kSideX - 24, kSideY - 12, kSideW + 48, kSideH + 24) ||
-        inside(x, y, kHeroX, kHeroY, kHeroW, kHeroH)) {
-      event.type = kPokedexUiNextPage;
-      return true;
+    for (uint8_t i = 0; i < POKEDEX_DETAIL_PAGE_COUNT; i++) {
+      const int16_t x0 = 160 + i * 168;
+      if (inside(x, y, x0, kFooterY - 20, 174, 76)) {
+        event.type = kPokedexUiSelectTab;
+        event.tab = i;
+        return true;
+      }
     }
   }
   return false;
