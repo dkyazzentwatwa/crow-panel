@@ -2817,6 +2817,22 @@ git add projects/15-pokedex-panel/15-pokedex-panel.ino
 git commit -m "feat: wire Pokedex grid state and serial commands"
 ```
 
+**Amendment, found while implementing:** `PokedexDashboard::showList` forwards
+search results through the same grid renderer as normal browsing, with neutral
+chrome (offset 0, filter reset, rail disabled). Routing `kPokedexUiBackToList`
+straight to `showCurrentList()` unconditionally meant tapping LIST after
+browsing partway into the grid (e.g. ordinal 54, Grass-only, A-Z order) would
+silently reset the footer to `0-18 of 1573` with the wrong filter buttons, even
+though the visible rows were still correct — the primary "back" path would
+silently lie about where you were. Fixed with a `bool showingSearchResults` flag
+(true while `rows[]`/`rowCount` hold a one-off search/lookup result rather than
+the persistent browse window) and a `showPriorContext()` helper that restores
+whichever was actually active, used by `kPokedexUiBackToList`,
+`kPokedexUiSearchCancel`, and empty `kPokedexUiSearchSubmit`. Also fixed
+`showCurrentList` to pass `totalMatches` instead of `catalog.totalRows()` (a
+3-result search was showing "of 1573"), and `cmdSelect`'s stale `row 1-8` usage
+string. Landed in the same commit as the rest of Task 15.
+
 ---
 
 ### Task 16: Detail tabs
