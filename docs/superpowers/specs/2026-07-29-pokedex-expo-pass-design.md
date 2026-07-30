@@ -242,6 +242,17 @@ white out against the same black well and keep their outlines.
 
 The sampled key is cached per sprite alongside the pixels.
 
+Measured key distribution over the pack: 1290 key to black, 255 to white, 28 to
+something else (`maushold` `0xccb8`, `carbink` `0x8800`, `palkia_origin` `0x0107`).
+
+**A high transparent fraction is expected, not a defect.** On average 81% of a
+sprite's pixels match its own key, and 365 sprites exceed 90% — `roggenrola` hits
+96%. That is simply a small subject in a 40x40 frame: `roggenrola`'s art is 8x15
+px and `pikachu`'s is 16x19, both roughly centred, confirmed against an
+independent decoder. Do not add a "mostly transparent" fallback or auto-crop for
+these; uniform 2x/8x upscaling is deliberate so relative species size stays
+honest, and the subjects are centred well enough not to need repositioning.
+
 ### PokedexAudio
 
 Modelled directly on `projects/20-pipboy-terminal/src/PipBoyMedia.cpp`, which is
