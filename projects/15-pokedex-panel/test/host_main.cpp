@@ -35,6 +35,27 @@ int main() {
          strcmp(typeNameFromId(typeIdFromName("Grass")), "Grass") == 0);
   expect("typeNameFromId guards out of range", typeNameFromId(99) == nullptr);
 
+  expect("classifyVariant plain name is base",
+         classifyVariant("bulbasaur") == kVariantBase);
+  expect("classifyVariant shadow", classifyVariant("bulbasaur_shadow") == kVariantShadow);
+  expect("classifyVariant mega", classifyVariant("venusaur_mega") == kVariantMega);
+  expect("classifyVariant mega x keeps mega bit",
+         (classifyVariant("charizard_mega_x") & kVariantMega) != 0);
+  expect("classifyVariant alolan is regional",
+         classifyVariant("rattata_alolan") == kVariantRegional);
+  expect("classifyVariant galarian is regional",
+         classifyVariant("zigzagoon_galarian") == kVariantRegional);
+  expect("classifyVariant hisuian is regional",
+         classifyVariant("growlithe_hisuian") == kVariantRegional);
+  expect("classifyVariant alolan shadow composes both",
+         classifyVariant("rattata_alolan_shadow") ==
+             (uint8_t)(kVariantRegional | kVariantShadow));
+  expect("classifyVariant costume form is other",
+         classifyVariant("pikachu_pop_star") == kVariantOther);
+  expect("classifyVariant anniversary form is other",
+         classifyVariant("pikachu_5th_anniversary") == kVariantOther);
+  expect("classifyVariant null is base", classifyVariant(nullptr) == kVariantBase);
+
   printf("\n%u failure(s)\n", gFailures);
   return gFailures == 0 ? 0 : 1;
 }

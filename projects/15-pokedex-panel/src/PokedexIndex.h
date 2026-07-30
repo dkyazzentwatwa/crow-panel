@@ -13,6 +13,16 @@ constexpr uint8_t kTypeAny = 0xFF;
 constexpr uint8_t kGridPageSize = 18;
 constexpr uint8_t kNameLength = 32;
 
+// Variant markers parsed out of an entry_id. These COMPOSE — rattata_alolan_shadow
+// is both regional and shadow — so this is a bitmask, never an enum value.
+enum Variant : uint8_t {
+  kVariantBase = 0x01,
+  kVariantShadow = 0x02,
+  kVariantMega = 0x04,
+  kVariantRegional = 0x08,
+  kVariantOther = 0x10,
+};
+
 struct Record {
   uint32_t offset;
   uint16_t dex;
@@ -26,6 +36,10 @@ uint8_t typeIdFromName(const char *name);
 
 // Reverse of typeIdFromName. Returns nullptr when id is out of range.
 const char *typeNameFromId(uint8_t id);
+
+// Classifies an entry_id into a Variant bitmask. Every marker is tested; a form
+// carrying two markers gets both bits.
+uint8_t classifyVariant(const char *entryId);
 
 }  // namespace pokedex
 
