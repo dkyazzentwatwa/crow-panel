@@ -2139,12 +2139,19 @@ static_assert(kGridCols * kGridRows == POKEDEX_MAX_RESULTS,
 
 - [ ] **Step 3: Add the dashboard state and draw declarations**
 
+Browse is **offset-based**, not page-based (see Task 7's `PokedexCatalog::window`):
+a jump sets a row offset so the target lands at grid slot 0, rather than landing
+on the page containing it. Measured on the real catalog, page-based jumps put
+`Bagon` at slot 14 behind fourteen A-names — offsets fix that. The footer
+therefore shows a **range** (`51-68 of 1114`), not a page number.
+
 Add to the `PokedexDashboard` public section in `PokedexDashboard.h`:
 
 ```cpp
   // Grid browse state, owned by the sketch and pushed in with each repaint.
+  // startOrdinal is the offset of slot 0 in the filtered, ordered sequence.
   void showGrid(const PokedexRow *rows, uint8_t count, uint8_t selected,
-                uint16_t page, uint16_t pageCount, uint16_t totalMatching,
+                uint32_t startOrdinal, uint32_t totalMatching,
                 pokedex::Order order, const pokedex::Filter &filter,
                 const bool *railEnabled, const String &source, const String &status);
   void attachSprites(class PokedexSprites *sprites) { sprites_ = sprites; }
@@ -2153,9 +2160,8 @@ Add to the `PokedexDashboard` public section in `PokedexDashboard.h`:
 Add to the private section:
 
 ```cpp
-  uint16_t page_ = 0;
-  uint16_t pageCount_ = 1;
-  uint16_t totalMatching_ = 0;
+  uint32_t startOrdinal_ = 0;
+  uint32_t totalMatching_ = 0;
   pokedex::Order order_ = pokedex::kOrderDex;
   pokedex::Filter filter_;
   bool railEnabled_[kRailSlotsMax] = {false};
@@ -2209,15 +2215,14 @@ Add to `PokedexDashboard.cpp`, next to `showList`:
 
 ```cpp
 void PokedexDashboard::showGrid(const PokedexRow *rows, uint8_t count, uint8_t selected,
-                                uint16_t page, uint16_t pageCount, uint16_t totalMatching,
+                                uint32_t startOrdinal, uint32_t totalMatching,
                                 pokedex::Order order, const pokedex::Filter &filter,
                                 const bool *railEnabled, const String &source,
                                 const String &status) {
   rowCount_ = min(count, (uint8_t)POKEDEX_MAX_RESULTS);
   for (uint8_t i = 0; i < rowCount_; i++) rows_[i] = rows[i];
   selected_ = (rowCount_ == 0) ? 0 : min(selected, (uint8_t)(rowCount_ - 1));
-  page_ = page;
-  pageCount_ = pageCount == 0 ? 1 : pageCount;
+  startOrdinal_ = startOrdinal;
   totalMatching_ = totalMatching;
   order_ = order;
   filter_ = filter;
@@ -2228,14 +2233,16 @@ void PokedexDashboard::showGrid(const PokedexRow *rows, uint8_t count, uint8_t s
   status_ = status;
   mode_ = kPokedexUiList;
   dirty_ = true;
-}
 ```
+
+Leave the `railCursor_` block (added below in Step 2) inside this function,
+before the closing brace.
 
 - [ ] **Step 1b: Keep showList working as a grid**
 
 `showList` is still called for **search results** (`cmdSearch` / `cmdOpen` paths),
-which are not a filtered catalog page and have no meaningful page number. Without
-this it would render a grid over stale paging state. Replace the body of
+which are not a filtered catalog window and have no meaningful offset. Without
+this it would render a grid over stale browse state. Replace the body of
 `showList` so it forwards to the grid with neutral chrome:
 
 ```cpp
@@ -2243,13 +2250,13 @@ void PokedexDashboard::showList(const PokedexRow *rows, uint8_t count, uint8_t s
                                 uint16_t browseStart, uint16_t totalRows,
                                 const String &query, const String &source,
                                 const String &status) {
-  // Search results are a one-off set, not a catalog page: report a single page
-  // and leave the rail disabled so nothing suggests a position in the catalog.
+  // Search results are a one-off set, not a catalog window: offset 0, and leave
+  // the rail disabled so nothing suggests a position in the catalog.
   (void)browseStart;
   query_ = query;
   pokedex::Filter neutral;
   neutral.showShadows = true;
-  showGrid(rows, count, selected, 0, 1, totalRows, order_, neutral, nullptr, source,
+  showGrid(rows, count, selected, 0, totalRows, order_, neutral, nullptr, source,
            status);
 }
 ```
@@ -2290,7 +2297,8 @@ void PokedexDashboard::drawRail(Arduino_GFX *g) {
 }
 ```
 
-`railCursor_` was declared in Task 12. Set it at the end of `showGrid`:
+`railCursor_` was declared in Task 12. Add this at the end of `showGrid`, still
+inside the function body, then close the function with `}`:
 
 ```cpp
   railCursor_ = 0;
@@ -2305,6 +2313,7 @@ void PokedexDashboard::drawRail(Arduino_GFX *g) {
       railCursor_ = bucket < kDexBuckets ? bucket : (uint8_t)(kDexBuckets - 1);
     }
   }
+}
 ```
 
 - [ ] **Step 3: Implement drawTile and drawGrid**
@@ -2324,14 +2333,27 @@ void PokedexDashboard::drawTile(Arduino_GFX *g, uint8_t slot, const PokedexRow &
   Widgets::panel(g, x + 4, y + 4, kGridCellW - 8, kGridCellH - 8, 6, fill,
                  active ? 2 : 1, border);
 
-  // Sprite, centred. A missing sprite falls back to the drawn pokeball so a
-  // partial card degrades visibly instead of leaving a hole.
+  // Sprite, centred. Sprite BMPs have no alpha, so the well MUST be filled with
+  // literal RGB565 0x0000 (not kInk or any other "black-ish" colour) and the
+  // blit keys out the sprite's own sampled background colour.
+  //
+  // Why the well has to be exactly 0x0000: a black-background sprite's interior
+  // outline/eye pixels are ALSO literal 0x0000 (1318 of 1573 sprites have such
+  // pixels), and the transparent-colour blit cannot distinguish "background
+  // black" from "outline black" - both get skipped identically. That only reads
+  // correctly if the pixels underneath are the same 0x0000, so the skipped
+  // outline pixels still show as black rather than as whatever tile colour was
+  // there. Any other well colour would punch the outlines out of those sprites.
   const int16_t artCx = x + kGridCellW / 2;
   const int16_t artCy = y + 12 + 40;
-  const uint16_t *pixels = (sprites_ != nullptr) ? sprites_->tile(row.entryId) : nullptr;
+  uint16_t key = 0;
+  const uint16_t *pixels =
+      (sprites_ != nullptr) ? sprites_->tile(row.entryId, &key) : nullptr;
   if (pixels != nullptr) {
     const int16_t size = sprites_->tileSize();
-    g->draw16bitRGBBitmap(artCx - size / 2, y + 12, (uint16_t *)pixels, size, size);
+    g->fillRect(artCx - size / 2, y + 12, size, size, 0x0000);
+    g->draw16bitRGBBitmapWithTranColor(artCx - size / 2, y + 12, (uint16_t *)pixels,
+                                       key, size, size);
   } else {
     drawPokeball(g, artCx, artCy, 56, typeColor(row.type1));
   }
@@ -2401,9 +2423,18 @@ Replace the `mode_ == kPokedexUiList` branch of `drawFooter`:
                    : pokedex::typeNameFromId(filter_.type1));
     drawButton(g, 728, kFooterY, 140,
                filter_.showShadows ? "SHADOWS ON" : "SHADOWS OFF");
-    char page[32];
-    snprintf(page, sizeof(page), "Page %u/%u", page_ + 1, pageCount_);
-    PokedexText::draw(g, 1000, kFooterY + 8, page, PokedexText::fontS(), kMuted,
+    // A range, not a page number: the window is offset-based and need not be
+    // page-aligned, so "Page n/m" would be meaningless after a rail jump.
+    char range[32];
+    if (rowCount_ == 0) {
+      snprintf(range, sizeof(range), "0 of %lu", (unsigned long)totalMatching_);
+    } else {
+      snprintf(range, sizeof(range), "%lu-%lu of %lu",
+               (unsigned long)(startOrdinal_ + 1),
+               (unsigned long)(startOrdinal_ + rowCount_),
+               (unsigned long)totalMatching_);
+    }
+    PokedexText::draw(g, 1000, kFooterY + 8, range, PokedexText::fontS(), kMuted,
                       PokedexText::kRight);
   } else if (mode_ == kPokedexUiDetail) {
 ```
@@ -2528,13 +2559,14 @@ prototype generation. Insert each function above its first caller.
 
 - [ ] **Step 1: Add the state globals**
 
-Near the existing `uint16_t browseStart = 0;`, add:
+Browse tracks an **ordinal**, not a page number — see Task 7/12's offset-based
+`PokedexCatalog::window`. Near the existing `uint16_t browseStart = 0;`, add:
 
 ```cpp
 PokedexSprites sprites;
 pokedex::Order browseOrder = pokedex::kOrderDex;
 pokedex::Filter browseFilter;
-uint16_t browsePage = 0;
+uint32_t browseOrdinal = 0;
 bool railEnabled[kRailSlotsMax] = {false};
 ```
 
@@ -2544,7 +2576,7 @@ Add the include beside the other project includes:
 #include "src/PokedexSprites.h"
 ```
 
-- [ ] **Step 2: Add the rail-state helper and the refresh function**
+- [ ] **Step 2: Add the rail-state helper and the window loader**
 
 Insert above the first function that calls it:
 
@@ -2564,13 +2596,15 @@ void refreshRailState() {
   }
 }
 
-void loadGridPage(uint16_t page) {
-  const uint16_t pages = catalog.pageCount(browseFilter);
-  browsePage = (pages == 0) ? 0 : min(page, (uint16_t)(pages - 1));
-  rowCount = catalog.page(browsePage, browseOrder, browseFilter, rows, POKEDEX_MAX_RESULTS);
+// Loads the kGridPageSize-row window starting at `ordinal` in the current order
+// and filter, clamped so it never runs off either end.
+void loadGridWindow(uint32_t ordinal) {
+  browseOrdinal = catalog.clampOrdinal(ordinal, browseFilter);
+  rowCount = catalog.window(browseOrdinal, browseOrder, browseFilter, rows,
+                            POKEDEX_MAX_RESULTS);
   selectedRow = 0;
   refreshRailState();
-  dashboard.showGrid(rows, rowCount, selectedRow, browsePage, pages,
+  dashboard.showGrid(rows, rowCount, selectedRow, browseOrdinal,
                      catalog.countMatching(browseFilter), browseOrder, browseFilter,
                      railEnabled, catalog.sourceLabel(), catalog.status());
 }
@@ -2582,13 +2616,13 @@ In the UI event switch in `loop()`, add:
 
 ```cpp
       case kPokedexUiJumpTop:
-        loadGridPage(0);
+        loadGridWindow(0);
         break;
       case kPokedexUiJumpLetter:
-        loadGridPage(catalog.jumpToLetter(event.letter, browseFilter));
+        loadGridWindow(catalog.ordinalOfLetter(event.letter, browseFilter));
         break;
       case kPokedexUiJumpDex:
-        loadGridPage(catalog.jumpToDex(event.dex, browseFilter));
+        loadGridWindow(catalog.ordinalOfDex(event.dex, browseFilter));
         break;
       case kPokedexUiToggleSort:
         // A-Z is only meaningful when the name-order buffer was allocated.
@@ -2597,11 +2631,11 @@ In the UI event switch in `loop()`, add:
         } else {
           browseOrder = pokedex::kOrderDex;
         }
-        loadGridPage(0);
+        loadGridWindow(0);
         break;
       case kPokedexUiToggleShadows:
         browseFilter.showShadows = !browseFilter.showShadows;
-        loadGridPage(0);
+        loadGridWindow(0);
         break;
       case kPokedexUiCycleType:
         if (browseFilter.type1 == pokedex::kTypeAny) {
@@ -2611,27 +2645,31 @@ In the UI event switch in `loop()`, add:
         } else {
           browseFilter.type1++;
         }
-        loadGridPage(0);
+        loadGridWindow(0);
         break;
       case kPokedexUiBrowsePrev:
-        loadGridPage(browsePage == 0 ? 0 : (uint16_t)(browsePage - 1));
+        // browseOrdinal is unsigned: guard against underflow rather than
+        // subtracting past 0.
+        loadGridWindow(browseOrdinal < pokedex::kGridPageSize
+                           ? 0
+                           : browseOrdinal - pokedex::kGridPageSize);
         break;
       case kPokedexUiBrowseNext:
-        loadGridPage((uint16_t)(browsePage + 1));
+        loadGridWindow(browseOrdinal + pokedex::kGridPageSize);
         break;
 ```
 
 Remove any pre-existing `kPokedexUiBrowsePrev` / `kPokedexUiBrowseNext` cases so
 they are not handled twice.
 
-- [ ] **Step 4: Attach sprites and load the first page in setup()**
+- [ ] **Step 4: Attach sprites and load the first window in setup()**
 
 In `setup()`, after `dashboard.begin();` and after `catalog.begin();`, add:
 
 ```cpp
   sprites.begin();
   dashboard.attachSprites(&sprites);
-  loadGridPage(0);
+  loadGridWindow(0);
 ```
 
 - [ ] **Step 5: Add the serial commands**
@@ -2640,12 +2678,14 @@ Add these command handlers above `setup()`, then register them:
 
 ```cpp
 void cmdGrid(const String &args) {
-  const uint16_t page = args.length() ? (uint16_t)args.toInt() : browsePage;
-  loadGridPage(page);
-  Serial.print(F("page "));
-  Serial.print(browsePage + 1);
-  Serial.print('/');
-  Serial.println(catalog.pageCount(browseFilter));
+  const uint32_t ordinal = args.length() ? (uint32_t)args.toInt() : browseOrdinal;
+  loadGridWindow(ordinal);
+  Serial.print(F("rows "));
+  Serial.print(browseOrdinal + 1);
+  Serial.print('-');
+  Serial.print(browseOrdinal + rowCount);
+  Serial.print(F(" of "));
+  Serial.println(catalog.countMatching(browseFilter));
   catalog.printRows(Serial, rows, rowCount);
 }
 
@@ -2659,7 +2699,7 @@ void cmdLetter(const String &args) {
     return;
   }
   browseOrder = pokedex::kOrderName;
-  loadGridPage(catalog.jumpToLetter(args[0], browseFilter));
+  loadGridWindow(catalog.ordinalOfLetter(args[0], browseFilter));
   catalog.printRows(Serial, rows, rowCount);
 }
 
@@ -2676,7 +2716,7 @@ void cmdSort(const String &args) {
     Serial.println(F("usage: sort [dex|name]"));
     return;
   }
-  loadGridPage(0);
+  loadGridWindow(0);
   Serial.print(F("order="));
   Serial.println(browseOrder == pokedex::kOrderName ? F("name") : F("dex"));
 }
@@ -2695,7 +2735,7 @@ void cmdFilter(const String &args) {
     }
     browseFilter.type1 = id;
   }
-  loadGridPage(0);
+  loadGridWindow(0);
   Serial.print(F("matching="));
   Serial.println(catalog.countMatching(browseFilter));
 }
@@ -2708,7 +2748,7 @@ void cmdShadows(const String &args) {
   } else {
     browseFilter.showShadows = !browseFilter.showShadows;
   }
-  loadGridPage(0);
+  loadGridWindow(0);
   Serial.print(F("shadows="));
   Serial.println(browseFilter.showShadows ? F("on") : F("off"));
 }
@@ -2718,18 +2758,20 @@ void cmdSprite(const String &args) {
     sprites.printDiagnostics(Serial);
     return;
   }
-  const uint16_t *pixels = sprites.tile(args.c_str());
+  uint16_t key = 0;
+  const uint16_t *pixels = sprites.tile(args.c_str(), &key);
   Serial.print(args);
   Serial.print(pixels != nullptr ? F(" decoded in ") : F(" failed after "));
   Serial.print(sprites.lastDecodeMicros());
-  Serial.println(F(" us"));
+  Serial.print(F(" us key=0x"));
+  Serial.println(key, HEX);
 }
 ```
 
 Register them in `setup()` beside the existing `router.on` calls:
 
 ```cpp
-  router.on("grid", "grid [page] - show a grid page", cmdGrid);
+  router.on("grid", "grid [ordinal] - show a grid window", cmdGrid);
   router.on("letter", "letter <a-z> - jump in A-Z order", cmdLetter);
   router.on("sort", "sort [dex|name] - set browse order", cmdSort);
   router.on("filter", "filter [type|none] - set the type filter", cmdFilter);
@@ -2834,12 +2876,20 @@ In `15-pokedex-panel.ino`, add to the UI event switch:
 In `drawDetail`, replace the `drawPokeball(...)` call with:
 
 ```cpp
+  // Same colour-keying rationale as drawTile in the grid (Task 13): the well
+  // must be literal 0x0000, not any other "black-ish" colour, because a
+  // black-background sprite's interior outline pixels are also 0x0000 and are
+  // keyed identically to the background.
+  uint16_t heroKey = 0;
   const uint16_t *heroPixels =
-      (sprites_ != nullptr) ? sprites_->hero(detail_.entryId) : nullptr;
+      (sprites_ != nullptr) ? sprites_->hero(detail_.entryId, &heroKey) : nullptr;
   if (heroPixels != nullptr) {
     const int16_t size = sprites_->heroSize();
-    g->draw16bitRGBBitmap(kHeroX + (kHeroW - size) / 2, kHeroY + 40,
-                          (uint16_t *)heroPixels, size, size);
+    const int16_t hx = kHeroX + (kHeroW - size) / 2;
+    const int16_t hy = kHeroY + 40;
+    g->fillRect(hx, hy, size, size, 0x0000);
+    g->draw16bitRGBBitmapWithTranColor(hx, hy, (uint16_t *)heroPixels, heroKey,
+                                       size, size);
   } else {
     drawPokeball(g, kHeroX + kHeroW / 2, kHeroY + 190, 112, kDexRed);
   }
