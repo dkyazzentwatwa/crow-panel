@@ -142,6 +142,54 @@ int main() {
     expect("header-only file parses to zero rows", index.build(header) == 0);
   }
 
+  {
+    Record records[16];
+    uint16_t nameOrder[16];
+    Index index;
+    index.attach(records, 16, nameOrder);
+    MemorySource source(kFixtureCsv);
+    index.build(source);
+
+    Filter all;
+    all.showShadows = true;
+    expect("countMatching with shadows shown", index.countMatching(all) == 8);
+
+    Filter noShadow;
+    noShadow.showShadows = false;
+    expect("countMatching hides 3 shadow rows", index.countMatching(noShadow) == 5);
+
+    Filter grass;
+    grass.showShadows = true;
+    grass.type1 = typeIdFromName("Grass");
+    expect("type filter counts Grass rows", index.countMatching(grass) == 3);
+
+    Filter grassNoShadow;
+    grassNoShadow.type1 = typeIdFromName("Grass");
+    expect("type and shadow filters compose", index.countMatching(grassNoShadow) == 2);
+
+    Filter none;
+    none.type1 = typeIdFromName("Steel");
+    expect("filter matching nothing counts zero", index.countMatching(none) == 0);
+    expect("pageCount is at least 1 when empty", index.pageCount(none) == 1);
+
+    uint16_t rows[kGridPageSize];
+    expect("empty filter yields an empty page",
+           index.pageAt(0, kOrderDex, none, rows) == 0);
+
+    uint8_t got = index.pageAt(0, kOrderDex, all, rows);
+    expect("dex page returns all 8 rows", got == 8);
+    expect("dex order preserves file order", rows[0] == 0 && rows[1] == 1 && rows[7] == 7);
+
+    got = index.pageAt(0, kOrderDex, noShadow, rows);
+    expect("filtered page skips shadows", got == 5);
+    expect("filtered page starts at bulbasaur", rows[0] == 0);
+    expect("filtered page second row is charmander", rows[1] == 2);
+
+    expect("page past the end is empty",
+           index.pageAt(9, kOrderDex, all, rows) == 0);
+    expect("pageCount for 8 rows at 18 per page is 1", index.pageCount(all) == 1);
+  }
+
   printf("\n%u failure(s)\n", gFailures);
   return gFailures == 0 ? 0 : 1;
 }

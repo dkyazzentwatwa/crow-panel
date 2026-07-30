@@ -31,6 +31,13 @@ struct Record {
   char name[kNameLength];
 };
 
+enum Order : uint8_t { kOrderDex = 0, kOrderName = 1 };
+
+struct Filter {
+  bool showShadows = false;
+  uint8_t type1 = kTypeAny;
+};
+
 // Maps an index.csv type name ("Grass") to 0..17, or kTypeAny when unknown.
 uint8_t typeIdFromName(const char *name);
 
@@ -65,6 +72,17 @@ class Index {
   bool nameOrderAvailable() const { return nameOrder_ != nullptr; }
   const Record &record(uint16_t rowIndex) const { return records_[rowIndex]; }
 
+  bool matches(uint16_t rowIndex, const Filter &filter) const;
+  uint16_t countMatching(const Filter &filter) const;
+
+  // Writes up to kGridPageSize row indices for `page` into outRows, which the
+  // caller must size to at least kGridPageSize. Returns how many were written.
+  uint8_t pageAt(uint16_t page, Order order, const Filter &filter,
+                 uint16_t *outRows) const;
+
+  // Always at least 1 so the UI can render "Page 1/1" for an empty filter.
+  uint16_t pageCount(const Filter &filter) const;
+
  private:
   Record *records_ = nullptr;
   uint16_t capacity_ = 0;
@@ -72,6 +90,7 @@ class Index {
   uint16_t rowCount_ = 0;
 
   void buildNameOrder();
+  uint16_t rowAtOrdinal(uint16_t ordinal, Order order) const;
 };
 
 }  // namespace pokedex

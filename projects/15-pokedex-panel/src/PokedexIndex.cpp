@@ -170,4 +170,45 @@ void Index::buildNameOrder() {
   for (uint16_t i = 0; i < rowCount_; i++) nameOrder_[i] = i;
 }
 
+uint16_t Index::rowAtOrdinal(uint16_t ordinal, Order order) const {
+  if (order == kOrderName && nameOrder_ != nullptr) return nameOrder_[ordinal];
+  return ordinal;  // index.csv is already in dex order.
+}
+
+bool Index::matches(uint16_t rowIndex, const Filter &filter) const {
+  if (rowIndex >= rowCount_) return false;
+  const Record &row = records_[rowIndex];
+  if (!filter.showShadows && (row.flags & kVariantShadow) != 0) return false;
+  if (filter.type1 != kTypeAny && row.type1 != filter.type1) return false;
+  return true;
+}
+
+uint16_t Index::countMatching(const Filter &filter) const {
+  uint16_t total = 0;
+  for (uint16_t i = 0; i < rowCount_; i++) {
+    if (matches(i, filter)) total++;
+  }
+  return total;
+}
+
+uint8_t Index::pageAt(uint16_t page, Order order, const Filter &filter,
+                      uint16_t *outRows) const {
+  const uint32_t skip = (uint32_t)page * kGridPageSize;
+  uint32_t seen = 0;
+  uint8_t written = 0;
+  for (uint16_t i = 0; i < rowCount_ && written < kGridPageSize; i++) {
+    const uint16_t row = rowAtOrdinal(i, order);
+    if (!matches(row, filter)) continue;
+    if (seen++ < skip) continue;
+    outRows[written++] = row;
+  }
+  return written;
+}
+
+uint16_t Index::pageCount(const Filter &filter) const {
+  const uint16_t total = countMatching(filter);
+  if (total == 0) return 1;
+  return (uint16_t)((total + kGridPageSize - 1) / kGridPageSize);
+}
+
 }  // namespace pokedex
