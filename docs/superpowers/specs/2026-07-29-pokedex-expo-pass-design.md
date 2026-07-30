@@ -209,6 +209,39 @@ A page turn decodes up to 18 sprites (~86 KB of SD reads). Repaint time is to be
 Missing or malformed sprite falls back to the existing generic pokeball, so an
 incomplete card degrades visibly rather than crashing or rendering blank.
 
+#### Sprite backgrounds are opaque, so tiles need colour keying
+
+BMP has no alpha, and measuring the shipped pack shows the backgrounds are real
+pixels that would draw as a box around every Pokemon:
+
+| Property of the 1573 sprites | Count |
+|---|---|
+| All four corners pure black | 1290 |
+| Entire 1 px border a single flat colour | 1514 |
+| **Pure-black pixels *inside* the art (outlines, eyes)** | **1318** |
+| Background white (`0xffff`) rather than black | e.g. `buzzwole`, `exeggutor_alolan` |
+
+That rules out the two obvious fixes. Replacing every black pixel with the tile
+colour would punch the outlines and eyes out of 1318 sprites. Hard-coding a black
+tile would put a white box around Buzzwole.
+
+The approach instead:
+
+1. **Sample the key** from the sprite's own border — `backgroundKey()` takes a
+   majority vote over the 1 px border, which is unambiguous for the 1514 flat
+   cases and picks the dominant colour for the other 59.
+2. **Draw the tile's sprite well in pure black.**
+3. **Blit with `draw16bitRGBBitmapWithTranColor(x, y, pixels, key, w, h)`** — a
+   colour-keyed blit already provided by Arduino_GFX, so no per-pixel work in
+   project code.
+
+Black-background sprites key their background out and reveal the black well —
+identical output. Their interior black outlines are keyed too, but also reveal
+black, so they still read correctly: **no artefact**. White-background sprites key
+white out against the same black well and keep their outlines.
+
+The sampled key is cached per sprite alongside the pixels.
+
 ### PokedexAudio
 
 Modelled directly on `projects/20-pipboy-terminal/src/PipBoyMedia.cpp`, which is
