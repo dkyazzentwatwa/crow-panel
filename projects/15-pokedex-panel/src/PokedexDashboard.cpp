@@ -630,30 +630,68 @@ bool PokedexDashboard::handleTouchMapped(int16_t x, int16_t y, PokedexUiEvent &e
     return true;
   }
   if (mode_ == kPokedexUiList) {
-    if (inside(x, y, 0, kFooterY - 20, 164, 76)) {
+    // Footer buttons. Regions are deliberately taller than the drawn button so
+    // a slightly low tap still lands.
+    if (inside(x, y, 16, kFooterY - 20, 112, 76)) {
+      event.type = kPokedexUiJumpTop;
+      return true;
+    }
+    if (inside(x, y, 120, kFooterY - 20, 120, 76)) {
       event.type = kPokedexUiBrowsePrev;
       return true;
     }
-    if (inside(x, y, 152, kFooterY - 20, 164, 76)) {
+    if (inside(x, y, 232, kFooterY - 20, 120, 76)) {
       event.type = kPokedexUiBrowseNext;
       return true;
     }
-    if (inside(x, y, 292, kFooterY - 20, 164, 76)) {
+    if (inside(x, y, 344, kFooterY - 20, 134, 76)) {
       event.type = kPokedexUiOpenSearch;
       return true;
     }
-    for (uint8_t i = 0; i < rowCount_; i++) {
-      int16_t rowY = kListY + 58 + i * kRowH;
-      if (inside(x, y, kListX, rowY - 8, kListW, kRowH)) {
-        event.type = kPokedexUiSelectRow;
-        event.row = i;
+    if (inside(x, y, 470, kFooterY - 20, 120, 76)) {
+      event.type = kPokedexUiToggleSort;
+      return true;
+    }
+    if (inside(x, y, 582, kFooterY - 20, 146, 76)) {
+      event.type = kPokedexUiCycleType;
+      return true;
+    }
+    if (inside(x, y, 720, kFooterY - 20, 156, 76)) {
+      event.type = kPokedexUiToggleShadows;
+      return true;
+    }
+
+    // Jump rail. Dimmed slots are not tappable.
+    if (inside(x, y, kRailX, kRailY, kRailW, kRailH)) {
+      const uint8_t slots = (order_ == pokedex::kOrderName) ? kRailSlots : kDexBuckets;
+      const int16_t slotH = kRailH / slots;
+      const int16_t hit = (y - kRailY) / slotH;
+      if (hit >= 0 && hit < (int16_t)slots && railEnabled_[hit]) {
+        if (order_ == pokedex::kOrderName) {
+          event.type = kPokedexUiJumpLetter;
+          event.letter = (char)('A' + hit);
+        } else {
+          event.type = kPokedexUiJumpDex;
+          event.dex = (uint16_t)(hit * 100);
+        }
         return true;
       }
+      return false;
     }
-    if (inside(x, y, kHeroX, kHeroY, kHeroW, kHeroH) && rowCount_ > 0) {
-      event.type = kPokedexUiSelectRow;
-      event.row = selected_;
-      return true;
+
+    // Grid tiles. The whole ~154x140 cell is the target, not just the sprite.
+    if (inside(x, y, kGridX, kGridY, kGridW, kGridH)) {
+      const int16_t col = (x - kGridX) / kGridCellW;
+      const int16_t rowIndex = (y - kGridY) / kGridCellH;
+      if (col >= 0 && col < kGridCols && rowIndex >= 0 && rowIndex < kGridRows) {
+        const uint8_t slot = (uint8_t)(rowIndex * kGridCols + col);
+        if (slot < rowCount_) {
+          event.type = kPokedexUiSelectRow;
+          event.row = slot;
+          return true;
+        }
+      }
+      return false;
     }
   } else {
     if (inside(x, y, 0, kFooterY - 20, 164, 76)) {
