@@ -75,8 +75,10 @@ Settled during brainstorming:
   them. Megas and regionals stay inline as their own rows — they are visually
   distinct and worth showing. Search still reaches shadows regardless of the
   toggle. Default browse count drops 1573 -> 1114.
-- **Browse is a sprite grid**, 6 columns x 3 rows = 18 tiles per page (62 pages),
-  not a row list. Sprites are the interface.
+- **Browse is a sprite grid**, 6 columns x 3 rows = 18 tiles per screen, not a row
+  list. Sprites are the interface. At the default 1114 entries that is ~62
+  screens, though the window is offset-based rather than page-aligned (see
+  "Browse is offset-based" below).
 - **One spec, four stages**, executed index -> sprites -> UI -> audio so each
   stage is verifiable on the board before the next begins.
 
@@ -153,19 +155,40 @@ ordering to mean anything. Both orders are therefore first-class (see
 
 Queries the index must answer:
 
-- `pageAt(pageIndex, order, filter)` -> up to 18 row handles
-- `jumpToLetter(char, filter)` -> page index containing the first name >= letter,
-  in name order only
-- `jumpToDex(hundreds, filter)` -> page index containing the first dex >= value,
-  in dex order only
-- `top(order, filter)` -> page 0
-- `countMatching(filter)` -> total, for the `n of m` header and page count
+- `pageAtOrdinal(startOrdinal, order, filter)` -> up to 18 row handles beginning
+  exactly at `startOrdinal` in the filtered, ordered sequence
+- `ordinalOfLetter(char, filter)` -> ordinal of the first name >= letter, name
+  order only
+- `ordinalOfDex(value, filter)` -> ordinal of the first dex >= value, dex order
+  only
+- `countMatching(filter)` -> total, for the range readout and clamping
 - `resolve(handle)` -> full `PokedexRow` via `seek()`
 
 `order` is `kOrderDex` or `kOrderName`. `filter` carries the shadow toggle state
 and the optional type selection. Filtering is independent of ordering — every
 combination of order and filter must page correctly, including a filter that
 matches zero rows.
+
+### Browse is offset-based, not page-based
+
+**Decided after measuring the alternative on real data.** Browse tracks a row
+*offset* into the filtered sequence, not a page number.
+
+A fixed 18-row page window can only ever land a jump on the page *containing* the
+target. Measured against the real catalog: tapping `B` returns the correct page,
+but the first B (`Bagon`) sits at **slot 14 of 18** behind fourteen A-names, and
+10 of the 11 dex buckets land mid-page the same way. For a jump rail whose entire
+purpose is reaching an entry fast, that is a failure.
+
+With an offset, tapping `B` sets the offset to `ordinalOfLetter('B')` and `Bagon`
+renders at slot 0. `PREV`/`NEXT` step the offset by 18 and clamp to
+`[0, countMatching-1]`. Because the window is no longer page-aligned, the footer
+shows a **range** (`51-68 of 1114`) rather than `Page 3/62` — which is more
+informative anyway, and is what the header already wanted for the filter count.
+
+Consequence for tests: an 18-row-or-smaller fixture cannot detect landing errors,
+because everything fits in the first window. Index fixtures must exercise more
+than one window's worth of rows.
 
 ### PokedexSprites
 
@@ -243,7 +266,8 @@ Replaces the current three-panel list screen.
   Each tile shows sprite, name, `#dex`. Selected tile gets a 2 px accent border
   in its type colour.
 - **Footer**: `↑ TOP`, `PREV`, `NEXT`, `SEARCH`, `TYPE`, `SHADOWS`, `SORT`, and a
-  `Page n/m` readout.
+  range readout (`51-68 of 1114`) — not a page number, since the window is
+  offset-based and need not be page-aligned.
 
 `PORT NOTES` and the on-screen serial-command hints are **deleted**. That space
 becomes grid area.
