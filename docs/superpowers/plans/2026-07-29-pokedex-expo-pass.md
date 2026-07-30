@@ -1782,13 +1782,16 @@ In `projects/15-pokedex-panel/config/ProjectConfig.h`, after the
 #define POKEDEX_SPRITE_DIR "/pokemon/sprites/"
 #endif
 
-// Grid tiles are 40x40 at 2x; the detail hero is 40x40 at 8x.
+// Grid tiles are 40x40 at 2x. The detail hero is 40x40 at 7x (280px), not 8x:
+// Task 16 found that 8x (320px) needs cropping to fit above the ATK/DEF/HP
+// stat bars, and that crops real content off 315 of 1573 sprites. 7x fits the
+// panel's vertical budget with nothing cropped.
 #ifndef POKEDEX_SPRITE_TILE_SCALE
 #define POKEDEX_SPRITE_TILE_SCALE 2
 #endif
 
 #ifndef POKEDEX_SPRITE_HERO_SCALE
-#define POKEDEX_SPRITE_HERO_SCALE 8
+#define POKEDEX_SPRITE_HERO_SCALE 7
 #endif
 
 // One page of tiles, so a full grid repaint never evicts a tile it still needs.
