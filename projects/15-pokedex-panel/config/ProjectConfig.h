@@ -29,6 +29,29 @@
 #define POKEDEX_META_PATH "/pokemon/catalog_meta.json"
 #endif
 
+// Sprites live beside the catalog on the same card. 40x40 24-bit BMP each.
+#ifndef USE_POKEDEX_SPRITES
+#define USE_POKEDEX_SPRITES 1
+#endif
+
+#ifndef POKEDEX_SPRITE_DIR
+#define POKEDEX_SPRITE_DIR "/pokemon/sprites/"
+#endif
+
+// Grid tiles are 40x40 at 2x; the detail hero is 40x40 at 8x.
+#ifndef POKEDEX_SPRITE_TILE_SCALE
+#define POKEDEX_SPRITE_TILE_SCALE 2
+#endif
+
+#ifndef POKEDEX_SPRITE_HERO_SCALE
+#define POKEDEX_SPRITE_HERO_SCALE 8
+#endif
+
+// One page of tiles, so a full grid repaint never evicts a tile it still needs.
+#ifndef POKEDEX_SPRITE_CACHE_SLOTS
+#define POKEDEX_SPRITE_CACHE_SLOTS 18
+#endif
+
 // GT911 touch calibration defaults for the CrowPanel 1024x600 surface. These
 // mirror the Arcade project so the Pokedex panel can be tuned with EXTRA_FLAGS
 // if a board revision reports raw touch in a different orientation.
