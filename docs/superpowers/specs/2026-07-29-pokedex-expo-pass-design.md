@@ -78,24 +78,54 @@ internal delegation to `PokedexIndex` when SD is live. The mock path stays fully
 intact so the project still boots and demos with every flag off, per the repo's
 mock-first rule.
 
+### Host-testability constraint
+
+`PokedexIndex` and the BMP decoder must be **free of `Arduino.h`, `String`, and
+`SD_MMC`** — `stdint.h` only — so the identical translation units that ship in
+the firmware also compile under plain `g++`. This follows the established pattern
+in `projects/10-litego-touch-coach/src/GoBoard.h` and its harness at
+`projects/10-litego-touch-coach/test/host_main.cpp`, driven by
+`scripts/test-litego.sh`. `arduino-cli` compiles only the sketch root and `src/`,
+so a `test/` directory never reaches the firmware.
+
+SD access is injected through a pure-virtual `PokedexByteSource` (`seek`, `read`,
+`size`). Firmware implements it over `File`; host tests implement it over an
+in-memory buffer. Buffer allocation is **caller-provided** rather than internal,
+which makes the PSRAM-failure fallback explicit at the call site and lets host
+tests use plain `malloc`.
+
 ### PokedexIndex
 
-One pass over `index.csv` at boot builds a fixed 32-byte record per row:
+One pass over `index.csv` at boot builds a fixed 40-byte record per row:
 
 | Field | Type | Purpose |
 |---|---|---|
 | `offset` | `uint32` | byte offset of the row in `index.csv`, for direct `seek()` |
-| `dex` | `uint16` | national dex number |
+| `dex` | `uint16` | national dex number (max observed 1019) |
 | `flags` | `uint8` | variant bitmask: base / shadow / mega / regional / other |
 | `type1` | `uint8` | index into the 18-type table |
-| `name` | `char[24]` | display name, for sort and letter-jump without touching SD |
+| `name` | `char[32]` | display name, for sort and letter-jump without touching SD |
 
-1573 x 32 B ~= 50 KB, allocated in PSRAM. After boot, `browse`, letter-jump and
+`name` is 32 bytes because the longest display name in `index.csv` is 28
+characters (`Thundurus (Incarnate) Shadow`); anything shorter silently truncates
+and corrupts A-Z ordering at the tail.
+
+1573 x 40 B ~= 63 KB, allocated in PSRAM. After boot, `browse`, letter-jump and
 filtering are pure RAM arithmetic; loading one row is a single `seek()` plus one
 line read instead of up to 1573 sequential reads.
 
-The variant bitmask is what makes the shadow toggle a bit test rather than a
-string compare on every row.
+`flags` is a genuine bitmask, not an enum, because **variants compose**:
+`rattata_alolan_shadow` is regional *and* shadow, and `charizard_mega_x` /
+`charizard_mega_y` are distinct mega forms. 43 entries carry two or more variant
+markers. The classifier must test every marker against the `entry_id` rather than
+stopping at the first match. Costume forms (`pikachu_pop_star`,
+`pikachu_5th_anniversary`) classify as `other`.
+
+The bitmask is also what makes the shadow toggle a bit test rather than a string
+compare on every row.
+
+`index.csv` has no quoted fields, no embedded commas, and exactly 6 fields per
+row, so the parser is a plain comma splitter — no CSV quoting rules needed.
 
 Plus one order array: `uint16` row indices sorted by name, 1573 x 2 B = ~3 KB.
 `index.csv` is stored in dex order, so an alphabetical A-Z rail needs this second
@@ -291,7 +321,7 @@ Host-side, no board required:
   combination, a filter matching zero rows, letter jump for a letter with no
   entries, dex jump past the highest dex, first and last page, shadow filter
   counts, and a name-order jump while the type filter is active.
-- BMP decode fixture: one known-good sprite decoded and compared to expected
+- BMP decode fixture (synthesised in test code, no binary fixture file): one known-good sprite decoded and compared to expected
   RGB565 output; one truncated and one wrong-bpp file must be rejected without
   reading past the buffer.
 
