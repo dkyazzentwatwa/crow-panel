@@ -36,6 +36,53 @@ bool containsToken(const char *haystack, const char *needle) {
 
 bool hasUnderscore(const char *text) { return containsToken(text, "_"); }
 
+// Copies field `index` (0-based, comma separated) out of `line` into `out`.
+// index.csv has no quoted fields and no embedded commas, so a plain splitter is
+// correct here.
+bool fieldAt(const char *line, uint8_t index, char *out, uint16_t outSize) {
+  uint8_t field = 0;
+  const char *start = line;
+  for (const char *p = line;; p++) {
+    if (*p != ',' && *p != '\0') continue;
+    if (field == index) {
+      uint16_t len = (uint16_t)(p - start);
+      if (len > outSize - 1) len = outSize - 1;
+      for (uint16_t i = 0; i < len; i++) out[i] = start[i];
+      out[len] = '\0';
+      return true;
+    }
+    if (*p == '\0') return false;
+    field++;
+    start = p + 1;
+  }
+}
+
+uint16_t parseDex(const char *text) {
+  uint32_t value = 0;
+  for (const char *p = text; *p >= '0' && *p <= '9'; p++) {
+    value = value * 10 + (uint32_t)(*p - '0');
+    if (value > 65535) return 0;
+  }
+  return (uint16_t)value;
+}
+
+// Returns false for the header row, which parses to dex 0 and is thus rejected
+// without a special case.
+bool parseLine(const char *line, uint32_t offset, Record &out) {
+  char field[72];
+  if (!fieldAt(line, 0, field, sizeof(field))) return false;
+  uint16_t dex = parseDex(field);
+  if (dex == 0) return false;
+  out.dex = dex;
+  out.offset = offset;
+  if (!fieldAt(line, 1, field, sizeof(field))) return false;
+  out.flags = classifyVariant(field);
+  if (!fieldAt(line, 2, out.name, kNameLength)) return false;
+  if (!fieldAt(line, 3, field, sizeof(field))) return false;
+  out.type1 = typeIdFromName(field);
+  return true;
+}
+
 }  // namespace
 
 uint8_t typeIdFromName(const char *name) {
@@ -63,6 +110,64 @@ uint8_t classifyVariant(const char *entryId) {
   }
   if (flags != 0) return flags;
   return hasUnderscore(entryId) ? kVariantOther : kVariantBase;
+}
+
+void Index::attach(Record *records, uint16_t capacity, uint16_t *nameOrder) {
+  records_ = records;
+  capacity_ = capacity;
+  nameOrder_ = nameOrder;
+  rowCount_ = 0;
+}
+
+uint16_t Index::build(ByteSource &source) {
+  rowCount_ = 0;
+  if (records_ == nullptr || capacity_ == 0) return 0;
+  if (!source.seek(0)) return 0;
+
+  uint8_t chunk[512];
+  char line[256];
+  uint32_t chunkLen = 0;
+  uint32_t chunkPos = 0;
+  uint32_t absolute = 0;
+  uint32_t lineStart = 0;
+  uint16_t lineLen = 0;
+
+  for (;;) {
+    if (chunkPos >= chunkLen) {
+      chunkLen = source.read(chunk, sizeof(chunk));
+      chunkPos = 0;
+      if (chunkLen == 0) break;
+    }
+    char c = (char)chunk[chunkPos++];
+    absolute++;
+    if (c == '\r') continue;
+    if (c != '\n') {
+      if (lineLen < sizeof(line) - 1) line[lineLen++] = c;
+      continue;
+    }
+    line[lineLen] = '\0';
+    if (lineLen > 0 && rowCount_ < capacity_ &&
+        parseLine(line, lineStart, records_[rowCount_])) {
+      rowCount_++;
+    }
+    lineLen = 0;
+    lineStart = absolute;
+    if (rowCount_ >= capacity_) break;
+  }
+
+  // A final row with no trailing newline still counts.
+  if (lineLen > 0 && rowCount_ < capacity_) {
+    line[lineLen] = '\0';
+    if (parseLine(line, lineStart, records_[rowCount_])) rowCount_++;
+  }
+
+  buildNameOrder();
+  return rowCount_;
+}
+
+void Index::buildNameOrder() {
+  if (nameOrder_ == nullptr) return;
+  for (uint16_t i = 0; i < rowCount_; i++) nameOrder_[i] = i;
 }
 
 }  // namespace pokedex

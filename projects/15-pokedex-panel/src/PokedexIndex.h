@@ -41,6 +41,39 @@ const char *typeNameFromId(uint8_t id);
 // carrying two markers gets both bits.
 uint8_t classifyVariant(const char *entryId);
 
+// Injected byte reader. Firmware implements this over an SD_MMC File; host tests
+// implement it over a memory buffer. Keeps SD_MMC out of this translation unit.
+class ByteSource {
+ public:
+  virtual ~ByteSource() {}
+  virtual bool seek(uint32_t offset) = 0;
+  virtual uint32_t read(uint8_t *dest, uint32_t length) = 0;
+  virtual uint32_t size() const = 0;
+};
+
+class Index {
+ public:
+  // records/capacity and nameOrder are caller-owned. Passing nullptr for
+  // nameOrder leaves name ordering unavailable, which is the documented
+  // fallback when the PSRAM allocation for it fails.
+  void attach(Record *records, uint16_t capacity, uint16_t *nameOrder);
+
+  // Single pass over the CSV. Returns the number of rows parsed.
+  uint16_t build(ByteSource &source);
+
+  uint16_t rowCount() const { return rowCount_; }
+  bool nameOrderAvailable() const { return nameOrder_ != nullptr; }
+  const Record &record(uint16_t rowIndex) const { return records_[rowIndex]; }
+
+ private:
+  Record *records_ = nullptr;
+  uint16_t capacity_ = 0;
+  uint16_t *nameOrder_ = nullptr;
+  uint16_t rowCount_ = 0;
+
+  void buildNameOrder();
+};
+
 }  // namespace pokedex
 
 #endif
