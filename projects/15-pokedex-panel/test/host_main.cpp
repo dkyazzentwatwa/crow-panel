@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "../src/PokedexIndex.h"
+#include "../src/PokedexBmp.h"
 
 using namespace pokedex;
 
@@ -98,6 +99,51 @@ const char *const kFixtureCsv =
     "42,snorlax,Snorlax,Normal,,snorlax.json\n"
     "43,dragonite,Dragonite,Dragon,Flying,dragonite.json\n"
     "44,thundurus_incarnate_shadow,Thundurus (Incarnate) Shadow,Electric,Flying,x.json\n";
+
+// Builds a valid 24bpp Windows 3.x BMP of the given size, bottom-up, with a
+// deterministic per-pixel colour so decode output can be checked exactly.
+// Real sprites are 40x40, where a row is 120 bytes and needs no padding.
+void writeLe32(uint8_t *p, uint32_t v) {
+  p[0] = (uint8_t)(v & 0xFF);
+  p[1] = (uint8_t)((v >> 8) & 0xFF);
+  p[2] = (uint8_t)((v >> 16) & 0xFF);
+  p[3] = (uint8_t)((v >> 24) & 0xFF);
+}
+
+void writeLe16(uint8_t *p, uint16_t v) {
+  p[0] = (uint8_t)(v & 0xFF);
+  p[1] = (uint8_t)((v >> 8) & 0xFF);
+}
+
+uint32_t makeBmp(uint8_t *out, uint32_t outSize, int32_t w, int32_t h, uint16_t bpp) {
+  const uint32_t stride = (uint32_t)(((w * (bpp / 8)) + 3) & ~3);
+  const uint32_t pixels = stride * (uint32_t)(h < 0 ? -h : h);
+  const uint32_t total = 54 + pixels;
+  if (total > outSize) return 0;
+  memset(out, 0, total);
+  out[0] = 'B';
+  out[1] = 'M';
+  writeLe32(out + 2, total);
+  writeLe32(out + 10, 54);
+  writeLe32(out + 14, 40);
+  writeLe32(out + 18, (uint32_t)w);
+  writeLe32(out + 22, (uint32_t)h);
+  writeLe16(out + 26, 1);
+  writeLe16(out + 28, bpp);
+  writeLe32(out + 34, pixels);
+  // Bottom-up rows: file row 0 is image row h-1. Paint B=x, G=y, R=0 so the
+  // decoder's row flip is observable.
+  for (int32_t y = 0; y < (h < 0 ? -h : h); y++) {
+    uint8_t *row = out + 54 + stride * (uint32_t)y;
+    const int32_t imageY = (h > 0) ? ((h - 1) - y) : y;
+    for (int32_t x = 0; x < w; x++) {
+      row[x * 3 + 0] = (uint8_t)x;
+      row[x * 3 + 1] = (uint8_t)imageY;
+      row[x * 3 + 2] = 0;
+    }
+  }
+  return total;
+}
 
 }  // namespace
 
@@ -337,6 +383,71 @@ int main() {
     expect("jumpToLetter is page 0 without a name order",
            index.jumpToLetter('T', all) == 0);
     expect("hasLetter is false without a name order", !index.hasLetter('B', all));
+  }
+
+  {
+    static uint8_t bmp[8192];
+    static uint16_t out[40 * 40];
+
+    const uint32_t len = makeBmp(bmp, sizeof(bmp), 40, 40, 24);
+    expect("fixture BMP is the real 4854-byte size", len == 4854);
+
+    BmpInfo info;
+    expect("readBmpInfo accepts a 40x40 24bpp BMP", readBmpInfo(bmp, len, info));
+    expect("readBmpInfo reports width", info.width == 40);
+    expect("readBmpInfo reports height", info.height == 40);
+    expect("readBmpInfo reports pixel offset", info.pixelOffset == 54);
+    expect("readBmpInfo reports no padding for 40px", info.stride == 120);
+
+    expect("decodeBmp fills the target", decodeBmp(bmp, len, out, 40 * 40));
+    // Row flip: image row 0 must carry G=0, and the last row G=39.
+    const uint16_t topLeft = out[0];
+    const uint16_t bottomLeft = out[39 * 40];
+    expect("decode flips bottom-up rows", topLeft != bottomLeft);
+    // RGB565 green field of image row 0 is 0; of row 39 is nonzero.
+    expect("top row green channel is zero", ((topLeft >> 5) & 0x3F) == 0);
+    expect("bottom row green channel is nonzero", ((bottomLeft >> 5) & 0x3F) != 0);
+
+    expect("decodeBmp rejects a small target", !decodeBmp(bmp, len, out, 10));
+
+    // Truncated file must be rejected without reading past the buffer.
+    expect("readBmpInfo rejects truncation", !readBmpInfo(bmp, 53, info));
+    expect("decodeBmp rejects truncated pixels", !decodeBmp(bmp, 100, out, 40 * 40));
+
+    // Wrong bit depth must be rejected.
+    const uint32_t len8 = makeBmp(bmp, sizeof(bmp), 40, 40, 8);
+    expect("readBmpInfo rejects 8bpp", !readBmpInfo(bmp, len8, info));
+
+    // Not a BMP at all.
+    bmp[0] = 'X';
+    expect("readBmpInfo rejects a bad magic", !readBmpInfo(bmp, len, info));
+  }
+
+  {
+    // Prove BGR channel order is honoured, not just row flip: a pixel whose
+    // file bytes are pure blue-channel-only (B=0xFF, G=0, R=0) must decode to
+    // an RGB565 value with the blue field set and red/green fields zero. If
+    // the decoder swapped R and B, this would come out as pure red instead.
+    static uint8_t bmp[8192];
+    static uint16_t out[4 * 4];
+    const uint32_t len = makeBmp(bmp, sizeof(bmp), 4, 4, 24);
+    expect("BGR fixture BMP built", len > 0);
+
+    // Overwrite pixel data directly: file is bottom-up, so file row 0 is the
+    // only row for this check; set every pixel's bytes to B=0xFF,G=0,R=0.
+    uint8_t *pixels = bmp + 54;
+    for (int i = 0; i < 4 * 4; i++) {
+      pixels[i * 3 + 0] = 0xFF;  // B
+      pixels[i * 3 + 1] = 0x00;  // G
+      pixels[i * 3 + 2] = 0x00;  // R
+    }
+
+    expect("decodeBmp decodes the BGR fixture", decodeBmp(bmp, len, out, 4 * 4));
+    const uint16_t px = out[0];
+    const uint8_t r5 = (uint8_t)((px >> 11) & 0x1F);
+    const uint8_t g6 = (uint8_t)((px >> 5) & 0x3F);
+    const uint8_t b5 = (uint8_t)(px & 0x1F);
+    expect("BGR byte order decodes to blue, not red", b5 == 0x1F && r5 == 0 && g6 == 0);
   }
 
   printf("\n%u failure(s)\n", gFailures);
