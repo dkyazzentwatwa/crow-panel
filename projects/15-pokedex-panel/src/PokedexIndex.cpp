@@ -228,13 +228,17 @@ uint16_t Index::countMatching(const Filter &filter) const {
 
 uint8_t Index::pageAt(uint16_t page, Order order, const Filter &filter,
                       uint16_t *outRows) const {
-  const uint32_t skip = (uint32_t)page * kGridPageSize;
+  return pageAtOrdinal((uint32_t)page * kGridPageSize, order, filter, outRows);
+}
+
+uint8_t Index::pageAtOrdinal(uint32_t startOrdinal, Order order, const Filter &filter,
+                             uint16_t *outRows) const {
   uint32_t seen = 0;
   uint8_t written = 0;
   for (uint16_t i = 0; i < rowCount_ && written < kGridPageSize; i++) {
     const uint16_t row = rowAtOrdinal(i, order);
     if (!matches(row, filter)) continue;
-    if (seen++ < skip) continue;
+    if (seen++ < startOrdinal) continue;
     outRows[written++] = row;
   }
   return written;
@@ -247,19 +251,7 @@ uint16_t Index::pageCount(const Filter &filter) const {
 }
 
 uint16_t Index::jumpToLetter(char letter, const Filter &filter) const {
-  if (nameOrder_ == nullptr) return 0;
-  const char want = upperChar(letter);
-  uint32_t ordinal = 0;
-  for (uint16_t i = 0; i < rowCount_; i++) {
-    const uint16_t row = nameOrder_[i];
-    if (!matches(row, filter)) continue;
-    if (upperChar(records_[row].name[0]) >= want) {
-      return (uint16_t)(ordinal / kGridPageSize);
-    }
-    ordinal++;
-  }
-  if (ordinal == 0) return 0;
-  return (uint16_t)((ordinal - 1) / kGridPageSize);
+  return (uint16_t)(ordinalOfLetter(letter, filter) / kGridPageSize);
 }
 
 bool Index::hasLetter(char letter, const Filter &filter) const {
@@ -274,14 +266,7 @@ bool Index::hasLetter(char letter, const Filter &filter) const {
 }
 
 uint16_t Index::jumpToDex(uint16_t dex, const Filter &filter) const {
-  uint32_t ordinal = 0;
-  for (uint16_t i = 0; i < rowCount_; i++) {
-    if (!matches(i, filter)) continue;
-    if (records_[i].dex >= dex) return (uint16_t)(ordinal / kGridPageSize);
-    ordinal++;
-  }
-  if (ordinal == 0) return 0;
-  return (uint16_t)((ordinal - 1) / kGridPageSize);
+  return (uint16_t)(ordinalOfDex(dex, filter) / kGridPageSize);
 }
 
 bool Index::hasDexAtLeast(uint16_t dex, const Filter &filter) const {
@@ -289,6 +274,36 @@ bool Index::hasDexAtLeast(uint16_t dex, const Filter &filter) const {
     if (matches(i, filter) && records_[i].dex >= dex) return true;
   }
   return false;
+}
+
+uint32_t Index::ordinalOfLetter(char letter, const Filter &filter) const {
+  if (nameOrder_ == nullptr) return 0;
+  const char want = upperChar(letter);
+  uint32_t ordinal = 0;
+  for (uint16_t i = 0; i < rowCount_; i++) {
+    const uint16_t row = nameOrder_[i];
+    if (!matches(row, filter)) continue;
+    if (upperChar(records_[row].name[0]) >= want) return ordinal;
+    ordinal++;
+  }
+  return ordinal;  // one past the end: nothing matched
+}
+
+uint32_t Index::ordinalOfDex(uint16_t dex, const Filter &filter) const {
+  uint32_t ordinal = 0;
+  for (uint16_t i = 0; i < rowCount_; i++) {
+    if (!matches(i, filter)) continue;
+    if (records_[i].dex >= dex) return ordinal;
+    ordinal++;
+  }
+  return ordinal;  // one past the end: nothing matched
+}
+
+uint32_t Index::clampOrdinal(uint32_t ordinal, const Filter &filter) const {
+  const uint16_t total = countMatching(filter);
+  if (total == 0) return 0;
+  if (ordinal > (uint32_t)(total - 1)) return (uint32_t)(total - 1);
+  return ordinal;
 }
 
 }  // namespace pokedex

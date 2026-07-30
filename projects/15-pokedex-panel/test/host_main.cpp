@@ -46,17 +46,58 @@ class MemorySource : public ByteSource {
 };
 
 // Mirrors the real index.csv shape: header, dex order, empty type2 allowed,
-// composing variants, and the longest observed 28-character name.
+// composing variants, and the longest observed 28-character name. 44 data
+// rows on purpose -- more than kGridPageSize (18) -- with 23 of them starting
+// with 'A' so the first 'B' (Bagon, ordinal 23) lands past the first window.
+// That is precisely the case the old 8-row fixture could not exercise: a
+// page-aligned window can only land on the page containing a jump target, not
+// on the target itself.
 const char *const kFixtureCsv =
     "dex,entry_id,name,type1,type2,file\n"
-    "1,bulbasaur,Bulbasaur,Grass,Poison,bulbasaur.json\n"
-    "1,bulbasaur_shadow,Bulbasaur Shadow,Grass,Poison,bulbasaur_shadow.json\n"
-    "4,charmander,Charmander,Fire,,charmander.json\n"
-    "6,charizard_mega_x,Charizard Mega X,Fire,Dragon,charizard_mega_x.json\n"
-    "19,rattata_alolan_shadow,Rattata Alolan Shadow,Dark,Normal,rattata_alolan_shadow.json\n"
-    "25,pikachu,Pikachu,Electric,,pikachu.json\n"
-    "43,oddish,Oddish,Grass,Poison,oddish.json\n"
-    "641,thundurus_incarnate_shadow,Thundurus (Incarnate) Shadow,Electric,Flying,x.json\n";
+    "1,abra,Abra,Psychic,,abra.json\n"
+    "2,abra_shadow,Abra Shadow,Psychic,,abra_shadow.json\n"
+    "3,aerodactyl,Aerodactyl,Rock,Flying,aerodactyl.json\n"
+    "4,aggron,Aggron,Steel,Rock,aggron.json\n"
+    "5,alakazam,Alakazam,Psychic,,alakazam.json\n"
+    "6,altaria,Altaria,Dragon,Flying,altaria.json\n"
+    "7,ampharos,Ampharos,Electric,,ampharos.json\n"
+    "8,anorith,Anorith,Rock,Bug,anorith.json\n"
+    "9,arbok,Arbok,Poison,,arbok.json\n"
+    "10,arcanine,Arcanine,Fire,,arcanine.json\n"
+    "11,arceus,Arceus,Normal,,arceus.json\n"
+    "12,archen,Archen,Rock,Flying,archen.json\n"
+    "13,ariados,Ariados,Bug,Poison,ariados.json\n"
+    "14,armaldo,Armaldo,Rock,Bug,armaldo.json\n"
+    "15,aron,Aron,Steel,Rock,aron.json\n"
+    "16,articuno,Articuno,Ice,Flying,articuno.json\n"
+    "17,audino,Audino,Normal,,audino.json\n"
+    "18,aurorus,Aurorus,Rock,Ice,aurorus.json\n"
+    "19,avalugg,Avalugg,Ice,,avalugg.json\n"
+    "20,axew,Axew,Dragon,,axew.json\n"
+    "21,azelf,Azelf,Psychic,,azelf.json\n"
+    "22,azumarill,Azumarill,Water,Fairy,azumarill.json\n"
+    "23,azurill,Azurill,Normal,Fairy,azurill.json\n"
+    "24,bagon,Bagon,Dragon,,bagon.json\n"
+    "25,banette,Banette,Ghost,,banette.json\n"
+    "26,bellsprout,Bellsprout,Grass,Poison,bellsprout.json\n"
+    "27,bagon_shadow,Bagon Shadow,Dragon,,bagon_shadow.json\n"
+    "28,charizard_mega_x,Charizard Mega X,Fire,Dragon,charizard_mega_x.json\n"
+    "29,rattata_alolan_shadow,Rattata Alolan Shadow,Dark,Normal,rattata_alolan_shadow.json\n"
+    "30,growlithe_hisuian,Growlithe Hisuian,Fire,Rock,growlithe_hisuian.json\n"
+    "31,zigzagoon_galarian,Zigzagoon Galarian,Dark,Normal,zigzagoon_galarian.json\n"
+    "32,charmander,Charmander,Fire,,charmander.json\n"
+    "33,pikachu,Pikachu,Electric,,pikachu.json\n"
+    "34,oddish,Oddish,Grass,Poison,oddish.json\n"
+    "35,oddish_shadow,Oddish Shadow,Grass,Poison,oddish_shadow.json\n"
+    "36,ekans,Ekans,Poison,,ekans.json\n"
+    "37,sandshrew,Sandshrew,Ground,,sandshrew.json\n"
+    "38,ninetales,Ninetales,Fire,,ninetales.json\n"
+    "39,vulpix,Vulpix,Fire,,vulpix.json\n"
+    "40,machop,Machop,Fighting,,machop.json\n"
+    "41,gengar,Gengar,Ghost,Poison,gengar.json\n"
+    "42,snorlax,Snorlax,Normal,,snorlax.json\n"
+    "43,dragonite,Dragonite,Dragon,Flying,dragonite.json\n"
+    "44,thundurus_incarnate_shadow,Thundurus (Incarnate) Shadow,Electric,Flying,x.json\n";
 
 }  // namespace
 
@@ -94,33 +135,33 @@ int main() {
   expect("classifyVariant null is base", classifyVariant(nullptr) == kVariantBase);
 
   {
-    Record records[16];
-    uint16_t nameOrder[16];
+    Record records[64];
+    uint16_t nameOrder[64];
     Index index;
-    index.attach(records, 16, nameOrder);
+    index.attach(records, 64, nameOrder);
     MemorySource source(kFixtureCsv);
     uint16_t parsed = index.build(source);
 
-    expect("build parses 8 data rows, skipping the header", parsed == 8);
-    expect("build reports rowCount", index.rowCount() == 8);
+    expect("build parses 44 data rows, skipping the header", parsed == 44);
+    expect("build reports rowCount", index.rowCount() == 44);
     expect("first record dex", index.record(0).dex == 1);
-    expect("first record name", strcmp(index.record(0).name, "Bulbasaur") == 0);
-    expect("first record type1 is Grass", index.record(0).type1 == typeIdFromName("Grass"));
+    expect("first record name", strcmp(index.record(0).name, "Abra") == 0);
+    expect("first record type1 is Psychic", index.record(0).type1 == typeIdFromName("Psychic"));
     expect("first record is base", index.record(0).flags == kVariantBase);
     expect("second record is shadow", index.record(1).flags == kVariantShadow);
     expect("empty type2 does not break parse",
-           strcmp(index.record(2).name, "Charmander") == 0);
+           strcmp(index.record(31).name, "Charmander") == 0);
     expect("composing variant survives parse",
-           index.record(4).flags == (uint8_t)(kVariantRegional | kVariantShadow));
+           index.record(28).flags == (uint8_t)(kVariantRegional | kVariantShadow));
     expect("28-char name is not truncated",
-           strcmp(index.record(7).name, "Thundurus (Incarnate) Shadow") == 0);
+           strcmp(index.record(43).name, "Thundurus (Incarnate) Shadow") == 0);
     expect("nameOrder availability reported", index.nameOrderAvailable());
 
     // Offsets must point at the start of each row so resolve() can seek to it.
     expect("row 0 offset points past the header",
            index.record(0).offset == (uint32_t)(strlen("dex,entry_id,name,type1,type2,file\n")));
     const char *at = kFixtureCsv + index.record(3).offset;
-    expect("row 3 offset lands on its own line", strncmp(at, "6,charizard_mega_x", 18) == 0);
+    expect("row 3 offset lands on its own line", strncmp(at, "4,aggron", 8) == 0);
   }
 
   {
@@ -143,20 +184,22 @@ int main() {
   }
 
   {
-    Record records[16];
-    uint16_t nameOrder[16];
+    Record records[64];
+    uint16_t nameOrder[64];
     Index index;
-    index.attach(records, 16, nameOrder);
+    index.attach(records, 64, nameOrder);
     MemorySource source(kFixtureCsv);
     index.build(source);
 
     Filter all;
     all.showShadows = true;
-    expect("countMatching with shadows shown", index.countMatching(all) == 8);
+    // 5 shadow rows: abra_shadow, bagon_shadow, rattata_alolan_shadow,
+    // oddish_shadow, thundurus_incarnate_shadow.
+    expect("countMatching with shadows shown", index.countMatching(all) == 44);
 
     Filter noShadow;
     noShadow.showShadows = false;
-    expect("countMatching hides 3 shadow rows", index.countMatching(noShadow) == 5);
+    expect("countMatching hides 5 shadow rows", index.countMatching(noShadow) == 39);
 
     Filter grass;
     grass.showShadows = true;
@@ -168,7 +211,7 @@ int main() {
     expect("type and shadow filters compose", index.countMatching(grassNoShadow) == 2);
 
     Filter none;
-    none.type1 = typeIdFromName("Steel");
+    none.type1 = typeIdFromName("Fairy");  // never appears as type1 in the fixture.
     expect("filter matching nothing counts zero", index.countMatching(none) == 0);
     expect("pageCount is at least 1 when empty", index.pageCount(none) == 1);
 
@@ -177,24 +220,44 @@ int main() {
            index.pageAt(0, kOrderDex, none, rows) == 0);
 
     uint8_t got = index.pageAt(0, kOrderDex, all, rows);
-    expect("dex page returns all 8 rows", got == 8);
-    expect("dex order preserves file order", rows[0] == 0 && rows[1] == 1 && rows[7] == 7);
+    expect("dex page returns a full first page", got == kGridPageSize);
+    expect("dex order preserves file order", rows[0] == 0 && rows[1] == 1 && rows[17] == 17);
 
     got = index.pageAt(0, kOrderDex, noShadow, rows);
-    expect("filtered page skips shadows", got == 5);
-    expect("filtered page starts at bulbasaur", rows[0] == 0);
-    expect("filtered page second row is charmander", rows[1] == 2);
+    expect("filtered page skips shadows", got == kGridPageSize);
+    expect("filtered page starts at abra", rows[0] == 0);
+    expect("filtered page second row is aerodactyl (abra_shadow skipped)", rows[1] == 2);
 
     expect("page past the end is empty",
            index.pageAt(9, kOrderDex, all, rows) == 0);
-    expect("pageCount for 8 rows at 18 per page is 1", index.pageCount(all) == 1);
+    expect("pageCount for 44 rows at 18 per page is 3", index.pageCount(all) == 3);
+
+    // --- The offset-based primitive: this is what the original page-index
+    // paging could never do, since a page-aligned window can only land on the
+    // page containing a target, not on the target itself.
+    expect("pageAtOrdinal(0) matches pageAt(0)",
+           index.pageAtOrdinal(0, kOrderDex, all, rows) == kGridPageSize && rows[0] == 0);
+
+    uint8_t tailGot = index.pageAtOrdinal(40, kOrderDex, all, rows);
+    expect("pageAtOrdinal near the end returns a short window, not garbage",
+           tailGot == 4);  // 44 total, ordinal 40 leaves rows 40..43 = 4 rows.
+
+    expect("pageAtOrdinal(count) returns an empty window",
+           index.pageAtOrdinal(index.countMatching(all), kOrderDex, all, rows) == 0);
+
+    // Dex-ordinal jump: land exactly on the first row with dex >= 30.
+    const uint32_t dexOrdinal = index.ordinalOfDex(30, all);
+    expect("ordinalOfDex(30) is past the first window", dexOrdinal > kGridPageSize);
+    uint8_t dexJumpGot = index.pageAtOrdinal(dexOrdinal, kOrderDex, all, rows);
+    expect("dex ordinal jump lands the target at slot 0",
+           dexJumpGot > 0 && index.record(rows[0]).dex >= 30);
   }
 
   {
-    Record records[16];
-    uint16_t nameOrder[16];
+    Record records[64];
+    uint16_t nameOrder[64];
     Index index;
-    index.attach(records, 16, nameOrder);
+    index.attach(records, 64, nameOrder);
     MemorySource source(kFixtureCsv);
     index.build(source);
 
@@ -203,22 +266,33 @@ int main() {
 
     uint16_t rows[kGridPageSize];
     index.pageAt(0, kOrderName, all, rows);
-    // Alphabetical: Bulbasaur, Bulbasaur Shadow, Charizard Mega X, Charmander,
-    // Oddish, Pikachu, Rattata Alolan Shadow, Thundurus (Incarnate) Shadow.
-    expect("name order starts at Bulbasaur",
-           strcmp(index.record(rows[0]).name, "Bulbasaur") == 0);
-    expect("name order sorts Charizard before Charmander",
-           strcmp(index.record(rows[2]).name, "Charizard Mega X") == 0 &&
-               strcmp(index.record(rows[3]).name, "Charmander") == 0);
-    expect("name order ends at Thundurus",
-           strcmp(index.record(rows[7]).name, "Thundurus (Incarnate) Shadow") == 0);
+    // 23 names start with 'A' (ordinals 0..22), so the first name-ordered
+    // page of 18 is entirely 'A' names: Abra .. Aurorus.
+    expect("name order starts at Abra", strcmp(index.record(rows[0]).name, "Abra") == 0);
+    expect("name order slot 1 is Abra Shadow",
+           strcmp(index.record(rows[1]).name, "Abra Shadow") == 0);
+    expect("first page of 18 is entirely A names",
+           strcmp(index.record(rows[17]).name, "Aurorus") == 0);
 
     expect("hasLetter finds B", index.hasLetter('B', all));
     expect("hasLetter finds lowercase b", index.hasLetter('b', all));
-    expect("hasLetter rejects Z", !index.hasLetter('Z', all));
-    expect("jumpToLetter B is page 0", index.jumpToLetter('B', all) == 0);
-    expect("jumpToLetter P is page 0 for a short fixture",
-           index.jumpToLetter('P', all) == 0);
+    expect("hasLetter rejects Y (absent from the fixture)", !index.hasLetter('Y', all));
+
+    // This is the exact bug from the plan: Bagon is the 24th matching name
+    // (ordinal 23), well past the first 18-row window. The old page-index
+    // jumpToLetter('B') landed on page 1 with 14 A-names ahead of Bagon; the
+    // new ordinal primitive lands Bagon at slot 0 directly.
+    const uint32_t bOrdinal = index.ordinalOfLetter('B', all);
+    expect("ordinalOfLetter('B') is past the first window", bOrdinal == 23);
+    expect("jumpToLetter B is now page 1, not page 0", index.jumpToLetter('B', all) == 1);
+
+    uint8_t bGot = index.pageAtOrdinal(bOrdinal, kOrderName, all, rows);
+    expect("pageAtOrdinal(ordinalOfLetter('B')) puts Bagon at slot 0",
+           bGot > 0 && strcmp(index.record(rows[0]).name, "Bagon") == 0);
+
+    expect("ordinalOfLetter('P') finds Pikachu at ordinal 37",
+           index.ordinalOfLetter('P', all) == 37);
+    expect("jumpToLetter P is page 2", index.jumpToLetter('P', all) == 2);
 
     Filter noShadow;
     expect("hasLetter respects the shadow filter", !index.hasLetter('R', noShadow));
@@ -229,18 +303,29 @@ int main() {
     grass.type1 = typeIdFromName("Grass");
     expect("hasLetter respects the type filter", !index.hasLetter('P', grass));
     expect("hasLetter finds O under the Grass filter", index.hasLetter('O', grass));
+    expect("ordinalOfLetter('Z') under Grass filter is one past the end",
+           index.ordinalOfLetter('Z', grass) == index.countMatching(grass));
 
-    expect("hasDexAtLeast finds 600+", index.hasDexAtLeast(600, all));
-    expect("hasDexAtLeast rejects beyond the max", !index.hasDexAtLeast(2000, all));
+    expect("hasDexAtLeast finds 40+", index.hasDexAtLeast(40, all));
+    expect("hasDexAtLeast rejects beyond the max", !index.hasDexAtLeast(100, all));
     expect("jumpToDex 0 is page 0", index.jumpToDex(0, all) == 0);
+
+    // clampOrdinal: never runs past either end.
+    expect("clampOrdinal clamps above the count",
+           index.clampOrdinal(9999, all) == index.countMatching(all) - 1);
+    expect("clampOrdinal passes through an in-range value",
+           index.clampOrdinal(5, all) == 5);
+    Filter empty;
+    empty.type1 = typeIdFromName("Fairy");
+    expect("clampOrdinal returns 0 for an empty filter", index.clampOrdinal(3, empty) == 0);
   }
 
   {
     // With no name-order buffer, name order must degrade to dex order rather
     // than read a null pointer.
-    Record records[16];
+    Record records[64];
     Index index;
-    index.attach(records, 16, nullptr);
+    index.attach(records, 64, nullptr);
     MemorySource source(kFixtureCsv);
     index.build(source);
 

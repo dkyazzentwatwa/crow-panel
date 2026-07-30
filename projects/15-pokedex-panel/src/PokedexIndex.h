@@ -77,8 +77,16 @@ class Index {
 
   // Writes up to kGridPageSize row indices for `page` into outRows, which the
   // caller must size to at least kGridPageSize. Returns how many were written.
+  // Implemented as a thin delegation onto pageAtOrdinal.
   uint8_t pageAt(uint16_t page, Order order, const Filter &filter,
                  uint16_t *outRows) const;
+
+  // Writes up to kGridPageSize row indices beginning exactly at `startOrdinal`
+  // in the filtered, ordered sequence. Returns how many were written. This is
+  // the primitive the browse screen uses: a jump sets the offset so the target
+  // lands at slot 0, which a page-aligned window cannot do.
+  uint8_t pageAtOrdinal(uint32_t startOrdinal, Order order, const Filter &filter,
+                        uint16_t *outRows) const;
 
   // Always at least 1 so the UI can render "Page 1/1" for an empty filter.
   uint16_t pageCount(const Filter &filter) const;
@@ -91,6 +99,19 @@ class Index {
   // Dex-order jumps. Valid in either order buffer state.
   uint16_t jumpToDex(uint16_t dex, const Filter &filter) const;
   bool hasDexAtLeast(uint16_t dex, const Filter &filter) const;
+
+  // Ordinal of the first matching name >= letter in name order. Returns
+  // countMatching(filter) when nothing matches (i.e. one past the end), and 0
+  // when no name-order buffer was attached.
+  uint32_t ordinalOfLetter(char letter, const Filter &filter) const;
+
+  // Ordinal of the first matching dex >= value in dex order. Returns
+  // countMatching(filter) when nothing matches.
+  uint32_t ordinalOfDex(uint16_t dex, const Filter &filter) const;
+
+  // Clamps an arbitrary offset into [0, countMatching-1], or 0 when empty. The
+  // UI uses this for PREV/NEXT so stepping never runs off either end.
+  uint32_t clampOrdinal(uint32_t ordinal, const Filter &filter) const;
 
  private:
   Record *records_ = nullptr;
