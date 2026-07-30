@@ -78,4 +78,52 @@ bool upscaleNearest(const uint16_t *src, int32_t srcW, int32_t srcH, uint8_t sca
   return true;
 }
 
+uint16_t backgroundKey(const uint16_t *pixels, int32_t width, int32_t height) {
+  if (pixels == nullptr || width < 2 || height < 2) return 0;
+
+  // Covers up to a 320x320 hero image's border (2*320 + 2*318 = 1276 pixels).
+  // Anything larger is truncated rather than overflowing - the corners and
+  // most of two full edges still get sampled, which is enough for a majority
+  // vote on the kind of near-uniform borders this pack actually ships.
+  const int32_t kMaxBorderSamples = 1280;
+  uint16_t samples[kMaxBorderSamples];
+  int32_t n = 0;
+
+  // Top row, then bottom row, then the left/right columns *excluding* the
+  // corners already visited by the top/bottom rows - so no pixel is counted
+  // twice and the vote can't be skewed by corner weighting.
+  for (int32_t x = 0; x < width && n < kMaxBorderSamples; x++) {
+    samples[n++] = pixels[x];
+  }
+  for (int32_t x = 0; x < width && n < kMaxBorderSamples; x++) {
+    samples[n++] = pixels[(uint32_t)(height - 1) * (uint32_t)width + (uint32_t)x];
+  }
+  for (int32_t y = 1; y < height - 1 && n < kMaxBorderSamples; y++) {
+    samples[n++] = pixels[(uint32_t)y * (uint32_t)width];
+  }
+  for (int32_t y = 1; y < height - 1 && n < kMaxBorderSamples; y++) {
+    samples[n++] = pixels[(uint32_t)y * (uint32_t)width + (uint32_t)(width - 1)];
+  }
+
+  // O(n^2) majority vote over the border - at most 1280 samples, so at most
+  // ~1.6M comparisons, which is cheap and needs no hash map.
+  const uint16_t corner = pixels[0];
+  uint16_t bestColor = samples[0];
+  int32_t bestCount = 0;
+  for (int32_t i = 0; i < n; i++) {
+    int32_t count = 0;
+    for (int32_t j = 0; j < n; j++) {
+      if (samples[j] == samples[i]) count++;
+    }
+    // Tie-break rule: prefer pixels[0] (the top-left corner) among tied
+    // winners for determinism; otherwise keep the first tied winner found
+    // in scan order (top row, then bottom row, then left column, right).
+    if (count > bestCount || (count == bestCount && samples[i] == corner && bestColor != corner)) {
+      bestCount = count;
+      bestColor = samples[i];
+    }
+  }
+  return bestColor;
+}
+
 }  // namespace pokedex

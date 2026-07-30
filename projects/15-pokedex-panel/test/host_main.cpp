@@ -450,6 +450,69 @@ int main() {
     expect("BGR byte order decodes to blue, not red", b5 == 0x1F && r5 == 0 && g6 == 0);
   }
 
+  {
+    // 2x2 source, scale 2 -> 4x4 where each source pixel becomes a 2x2 block.
+    const uint16_t src[4] = {0x0001, 0x0002, 0x0003, 0x0004};
+    uint16_t dst[16];
+    expect("upscaleNearest 2x on a 2x2 source",
+           upscaleNearest(src, 2, 2, 2, dst, 16));
+    expect("upscale top-left block", dst[0] == 1 && dst[1] == 1 && dst[4] == 1 && dst[5] == 1);
+    expect("upscale top-right block", dst[2] == 2 && dst[3] == 2 && dst[6] == 2 && dst[7] == 2);
+    expect("upscale bottom-left block",
+           dst[8] == 3 && dst[9] == 3 && dst[12] == 3 && dst[13] == 3);
+    expect("upscale bottom-right block",
+           dst[10] == 4 && dst[11] == 4 && dst[14] == 4 && dst[15] == 4);
+
+    expect("scale 1 is a copy", upscaleNearest(src, 2, 2, 1, dst, 4));
+    expect("scale 1 preserves pixels", dst[0] == 1 && dst[3] == 4);
+
+    expect("upscale rejects a small target", !upscaleNearest(src, 2, 2, 2, dst, 15));
+    expect("upscale rejects scale 0", !upscaleNearest(src, 2, 2, 0, dst, 16));
+
+    // The two real target sizes must fit their documented buffers exactly.
+    expect("40x40 at 2x needs 6400 pixels", (40 * 2) * (40 * 2) == 6400);
+    expect("40x40 at 8x needs 102400 pixels", (40 * 8) * (40 * 8) == 102400);
+  }
+
+  {
+    // backgroundKey: solid borders resolve unambiguously.
+    uint16_t black16[16];
+    uint16_t white16[16];
+    for (int i = 0; i < 16; i++) {
+      black16[i] = 0x0000;
+      white16[i] = 0xffff;
+    }
+    expect("solid black border keys to black", backgroundKey(black16, 4, 4) == 0x0000);
+    expect("solid white border keys to white", backgroundKey(white16, 4, 4) == 0xffff);
+
+    // Border mostly white with a few black pixels: majority still wins, not
+    // the first pixel scanned (which is white here anyway, so also flip the
+    // corner to prove it's a vote and not "first sample").
+    uint16_t mostlyWhite[16] = {
+        0x0000, 0xffff, 0xffff, 0xffff,  // top row: one black pixel
+        0xffff, 0x1234, 0x1234, 0xffff,  // interior (not sampled)
+        0xffff, 0x1234, 0x1234, 0xffff,
+        0xffff, 0xffff, 0xffff, 0xffff,  // bottom row: all white
+    };
+    expect("border mostly white with a few black pixels keys to white",
+           backgroundKey(mostlyWhite, 4, 4) == 0xffff);
+
+    // Black border, bright interior: proves the border is sampled, not the
+    // whole image - this is exactly why interior outlines/eyes survive.
+    uint16_t blackBorderBrightInterior[16] = {
+        0x0000, 0x0000, 0x0000, 0x0000,
+        0x0000, 0xffff, 0xffff, 0x0000,
+        0x0000, 0xffff, 0xffff, 0x0000,
+        0x0000, 0x0000, 0x0000, 0x0000,
+    };
+    expect("black border with bright interior still keys to black",
+           backgroundKey(blackBorderBrightInterior, 4, 4) == 0x0000);
+
+    expect("backgroundKey rejects width < 2", backgroundKey(black16, 1, 4) == 0);
+    expect("backgroundKey rejects height < 2", backgroundKey(black16, 4, 1) == 0);
+    expect("backgroundKey rejects a null buffer", backgroundKey(nullptr, 4, 4) == 0);
+  }
+
   printf("\n%u failure(s)\n", gFailures);
   return gFailures == 0 ? 0 : 1;
 }

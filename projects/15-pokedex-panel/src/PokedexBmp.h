@@ -31,6 +31,14 @@ bool decodeBmp(const uint8_t *bytes, uint32_t length, uint16_t *out, uint32_t ou
 bool upscaleNearest(const uint16_t *src, int32_t srcW, int32_t srcH, uint8_t scale,
                     uint16_t *out, uint32_t outPixels);
 
+// Samples the likely background colour of a decoded sprite by majority vote over
+// its 1 px border. Sprite BMPs have no alpha, so the caller keys this colour out
+// at blit time instead. A border vote is used rather than a single corner because
+// 59 of the 1573 shipped sprites have a non-uniform border, and rather than a
+// whole-image histogram because the subject itself may dominate the image.
+// Returns 0 when the image is too small to have a border.
+uint16_t backgroundKey(const uint16_t *pixels, int32_t width, int32_t height);
+
 }  // namespace pokedex
 
 #endif
