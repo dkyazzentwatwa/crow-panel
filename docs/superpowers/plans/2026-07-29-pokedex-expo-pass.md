@@ -1165,17 +1165,21 @@ Add to the `PokedexCatalog` public section:
 ```cpp
   // Index-backed queries. When the index is unavailable these fall back to the
   // pre-existing linear scan so the project stays usable.
+  //
+  // Browse is OFFSET-based, not page-based: a jump sets the offset so the target
+  // lands at grid slot 0. A page-aligned window cannot do that — measured on the
+  // real catalog, tapping "B" left Bagon at slot 14 behind fourteen A-names.
   bool indexActive() const { return indexRows_ > 0; }
   uint16_t indexRowCount() const { return indexRows_; }
   bool nameOrderActive() const;
   uint16_t countMatching(const pokedex::Filter &filter) const;
-  uint16_t pageCount(const pokedex::Filter &filter) const;
-  uint8_t page(uint16_t pageIndex, pokedex::Order order, const pokedex::Filter &filter,
-               PokedexRow *outRows, uint8_t maxRows);
-  uint16_t jumpToLetter(char letter, const pokedex::Filter &filter) const;
+  uint8_t window(uint32_t startOrdinal, pokedex::Order order,
+                 const pokedex::Filter &filter, PokedexRow *outRows, uint8_t maxRows);
+  uint32_t ordinalOfLetter(char letter, const pokedex::Filter &filter) const;
   bool hasLetter(char letter, const pokedex::Filter &filter) const;
-  uint16_t jumpToDex(uint16_t dex, const pokedex::Filter &filter) const;
+  uint32_t ordinalOfDex(uint16_t dex, const pokedex::Filter &filter) const;
   bool hasDexAtLeast(uint16_t dex, const pokedex::Filter &filter) const;
+  uint32_t clampOrdinal(uint32_t ordinal, const pokedex::Filter &filter) const;
 ```
 
 Add to the `PokedexCatalog` private section:
@@ -1264,18 +1268,9 @@ uint16_t PokedexCatalog::countMatching(const pokedex::Filter &filter) const {
   return index_.countMatching(filter);
 }
 
-uint16_t PokedexCatalog::pageCount(const pokedex::Filter &filter) const {
-  if (indexRows_ == 0) {
-    const uint16_t total = totalRows_;
-    if (total == 0) return 1;
-    return (uint16_t)((total + pokedex::kGridPageSize - 1) / pokedex::kGridPageSize);
-  }
-  return index_.pageCount(filter);
-}
-
-uint16_t PokedexCatalog::jumpToLetter(char letter, const pokedex::Filter &filter) const {
+uint32_t PokedexCatalog::ordinalOfLetter(char letter, const pokedex::Filter &filter) const {
   if (indexRows_ == 0) return 0;
-  return index_.jumpToLetter(letter, filter);
+  return index_.ordinalOfLetter(letter, filter);
 }
 
 bool PokedexCatalog::hasLetter(char letter, const pokedex::Filter &filter) const {
@@ -1283,9 +1278,14 @@ bool PokedexCatalog::hasLetter(char letter, const pokedex::Filter &filter) const
   return index_.hasLetter(letter, filter);
 }
 
-uint16_t PokedexCatalog::jumpToDex(uint16_t dex, const pokedex::Filter &filter) const {
+uint32_t PokedexCatalog::ordinalOfDex(uint16_t dex, const pokedex::Filter &filter) const {
   if (indexRows_ == 0) return 0;
-  return index_.jumpToDex(dex, filter);
+  return index_.ordinalOfDex(dex, filter);
+}
+
+uint32_t PokedexCatalog::clampOrdinal(uint32_t ordinal, const pokedex::Filter &filter) const {
+  if (indexRows_ == 0) return 0;
+  return index_.clampOrdinal(ordinal, filter);
 }
 
 bool PokedexCatalog::hasDexAtLeast(uint16_t dex, const pokedex::Filter &filter) const {
@@ -1319,15 +1319,16 @@ bool PokedexCatalog::resolveRow(uint16_t rowIndex, PokedexRow &out) {
 #endif
 }
 
-uint8_t PokedexCatalog::page(uint16_t pageIndex, pokedex::Order order,
-                             const pokedex::Filter &filter, PokedexRow *outRows,
-                             uint8_t maxRows) {
+uint8_t PokedexCatalog::window(uint32_t startOrdinal, pokedex::Order order,
+                               const pokedex::Filter &filter, PokedexRow *outRows,
+                               uint8_t maxRows) {
   if (indexRows_ == 0) {
-    // Fallback: the pre-existing linear browse, paged at the grid size.
-    return browse((uint16_t)(pageIndex * pokedex::kGridPageSize), outRows, maxRows);
+    // Fallback: the pre-existing linear browse. It only understands a row start,
+    // which is exactly what an ordinal is when nothing is filtered out.
+    return browse((uint16_t)startOrdinal, outRows, maxRows);
   }
   uint16_t rowIndices[pokedex::kGridPageSize];
-  const uint8_t found = index_.pageAt(pageIndex, order, filter, rowIndices);
+  const uint8_t found = index_.pageAtOrdinal(startOrdinal, order, filter, rowIndices);
   uint8_t written = 0;
   for (uint8_t i = 0; i < found && written < maxRows; i++) {
     if (resolveRow(rowIndices[i], outRows[written])) written++;
