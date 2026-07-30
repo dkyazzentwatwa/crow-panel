@@ -42,6 +42,12 @@ void PokedexDashboard::showDetail(const PokedexDetail &detail, uint8_t page, con
   dirty_ = true;
 }
 
+void PokedexDashboard::showGrid(const PokedexRow *, uint8_t, uint8_t, uint32_t,
+                                uint32_t, pokedex::Order, const pokedex::Filter &,
+                                const bool *, const String &, const String &) {
+  // Real implementation lands in Task 13.
+}
+
 void PokedexDashboard::beginSearch(const String &initial) {
   searchInput_ = initial;
   searchCursor_ = searchInput_.length();
@@ -129,6 +135,27 @@ constexpr int16_t kSideY = 104;
 constexpr int16_t kSideW = 236;
 constexpr int16_t kSideH = 420;
 constexpr int16_t kRowH = 46;
+
+// Grid browse geometry. The rail takes a fixed strip on the left; the remaining
+// width divides into 6 columns and 3 rows of 18 tiles total.
+constexpr int16_t kRailX = 24;
+constexpr int16_t kRailY = 104;
+constexpr int16_t kRailW = 40;
+constexpr int16_t kRailH = 420;
+constexpr uint8_t kRailSlots = 26;  // A-Z, or 11 dex buckets using the first 11.
+constexpr uint8_t kDexBuckets = 11;  // 0,100,...,1000
+
+constexpr int16_t kGridX = 76;
+constexpr int16_t kGridY = 104;
+constexpr int16_t kGridW = 924;
+constexpr int16_t kGridH = 420;
+constexpr uint8_t kGridCols = 6;
+constexpr uint8_t kGridRows = 3;
+constexpr int16_t kGridCellW = kGridW / kGridCols;   // 154
+constexpr int16_t kGridCellH = kGridH / kGridRows;   // 140
+
+static_assert(kGridCols * kGridRows == POKEDEX_MAX_RESULTS,
+              "grid must hold exactly one result page");
 
 constexpr uint16_t kDexRed = Widgets::rgb(0xD8, 0x28, 0x34);
 constexpr uint16_t kDexRedDark = Widgets::rgb(0x75, 0x15, 0x21);

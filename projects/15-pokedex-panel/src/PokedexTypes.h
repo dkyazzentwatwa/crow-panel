@@ -55,13 +55,23 @@ enum PokedexUiEventType {
   kPokedexUiBrowseNext,
   kPokedexUiOpenSearch,
   kPokedexUiSearchSubmit,
-  kPokedexUiSearchCancel
+  kPokedexUiSearchCancel,
+  kPokedexUiJumpTop,
+  kPokedexUiJumpLetter,
+  kPokedexUiJumpDex,
+  kPokedexUiToggleSort,
+  kPokedexUiToggleShadows,
+  kPokedexUiCycleType,
+  kPokedexUiSelectTab
 };
 
 struct PokedexUiEvent {
   PokedexUiEventType type = kPokedexUiNone;
   uint8_t row = 0;
   String text;
+  char letter = '\0';   // kPokedexUiJumpLetter
+  uint16_t dex = 0;     // kPokedexUiJumpDex
+  uint8_t tab = 0;      // kPokedexUiSelectTab
 };
 
 #endif

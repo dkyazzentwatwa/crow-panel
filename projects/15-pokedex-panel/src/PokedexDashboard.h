@@ -5,6 +5,10 @@
 #include <Arduino.h>
 #include "PokedexTypes.h"
 #include "PokedexTouchKeyboard.h"
+#include "PokedexIndex.h"
+
+// Upper bound on jump-rail entries so the enabled-state array is fixed size.
+constexpr uint8_t kRailSlotsMax = 26;
 
 class PokedexDashboard {
  public:
@@ -14,6 +18,13 @@ class PokedexDashboard {
                 const String &status);
   void showDetail(const PokedexDetail &detail, uint8_t page, const String &source,
                   const String &status);
+  // Grid browse state, owned by the sketch and pushed in with each repaint.
+  // startOrdinal is the offset of slot 0 in the filtered, ordered sequence.
+  void showGrid(const PokedexRow *rows, uint8_t count, uint8_t selected,
+                uint32_t startOrdinal, uint32_t totalMatching,
+                pokedex::Order order, const pokedex::Filter &filter,
+                const bool *railEnabled, const String &source, const String &status);
+  void attachSprites(class PokedexSprites *sprites) { sprites_ = sprites; }
   void beginSearch(const String &initial = "");
   bool tick(PokedexUiEvent &event);
   void requestRepaint();
@@ -42,12 +53,22 @@ class PokedexDashboard {
   int16_t lastRawY_ = 0;
   int16_t lastTouchX_ = 0;
   int16_t lastTouchY_ = 0;
+  uint32_t startOrdinal_ = 0;
+  uint32_t totalMatching_ = 0;
+  pokedex::Order order_ = pokedex::kOrderDex;
+  pokedex::Filter filter_;
+  bool railEnabled_[kRailSlotsMax] = {false};
+  uint8_t railCursor_ = 0;
+  class PokedexSprites *sprites_ = nullptr;
 
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
   void draw();
   void drawList(class Arduino_GFX *g);
   void drawDetail(class Arduino_GFX *g);
   void drawSearch(class Arduino_GFX *g);
+  void drawGrid(class Arduino_GFX *g);
+  void drawRail(class Arduino_GFX *g);
+  void drawTile(class Arduino_GFX *g, uint8_t slot, const PokedexRow &row, bool active);
   void drawHeader(class Arduino_GFX *g, const char *title);
   void drawFooter(class Arduino_GFX *g);
   int16_t calibrateX(int16_t rawX, int16_t rawY) const;
