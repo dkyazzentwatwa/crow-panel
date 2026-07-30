@@ -83,6 +83,22 @@ bool parseLine(const char *line, uint32_t offset, Record &out) {
   return true;
 }
 
+char upperChar(char c) {
+  if (c >= 'a' && c <= 'z') return (char)(c - 'a' + 'A');
+  return c;
+}
+
+// Case-insensitive compare so the A-Z rail groups names the way a reader
+// expects regardless of how index.csv capitalises them.
+int compareNames(const char *a, const char *b) {
+  for (;; a++, b++) {
+    const char ca = upperChar(*a);
+    const char cb = upperChar(*b);
+    if (ca != cb) return ca < cb ? -1 : 1;
+    if (ca == '\0') return 0;
+  }
+}
+
 }  // namespace
 
 uint8_t typeIdFromName(const char *name) {
@@ -168,6 +184,25 @@ uint16_t Index::build(ByteSource &source) {
 void Index::buildNameOrder() {
   if (nameOrder_ == nullptr) return;
   for (uint16_t i = 0; i < rowCount_; i++) nameOrder_[i] = i;
+
+  // Binary insertion sort. Deliberately dependency-free and stable; boot-time
+  // cost on 1573 rows must be measured on hardware, not assumed.
+  for (uint16_t i = 1; i < rowCount_; i++) {
+    const uint16_t value = nameOrder_[i];
+    uint16_t low = 0;
+    uint16_t high = i;
+    while (low < high) {
+      const uint16_t mid = (uint16_t)(low + (high - low) / 2);
+      const int cmp = compareNames(records_[value].name, records_[nameOrder_[mid]].name);
+      if (cmp < 0 || (cmp == 0 && records_[value].dex < records_[nameOrder_[mid]].dex)) {
+        high = mid;
+      } else {
+        low = (uint16_t)(mid + 1);
+      }
+    }
+    for (uint16_t j = i; j > low; j--) nameOrder_[j] = nameOrder_[j - 1];
+    nameOrder_[low] = value;
+  }
 }
 
 uint16_t Index::rowAtOrdinal(uint16_t ordinal, Order order) const {
@@ -209,6 +244,51 @@ uint16_t Index::pageCount(const Filter &filter) const {
   const uint16_t total = countMatching(filter);
   if (total == 0) return 1;
   return (uint16_t)((total + kGridPageSize - 1) / kGridPageSize);
+}
+
+uint16_t Index::jumpToLetter(char letter, const Filter &filter) const {
+  if (nameOrder_ == nullptr) return 0;
+  const char want = upperChar(letter);
+  uint32_t ordinal = 0;
+  for (uint16_t i = 0; i < rowCount_; i++) {
+    const uint16_t row = nameOrder_[i];
+    if (!matches(row, filter)) continue;
+    if (upperChar(records_[row].name[0]) >= want) {
+      return (uint16_t)(ordinal / kGridPageSize);
+    }
+    ordinal++;
+  }
+  if (ordinal == 0) return 0;
+  return (uint16_t)((ordinal - 1) / kGridPageSize);
+}
+
+bool Index::hasLetter(char letter, const Filter &filter) const {
+  if (nameOrder_ == nullptr) return false;
+  const char want = upperChar(letter);
+  for (uint16_t i = 0; i < rowCount_; i++) {
+    const uint16_t row = nameOrder_[i];
+    if (!matches(row, filter)) continue;
+    if (upperChar(records_[row].name[0]) == want) return true;
+  }
+  return false;
+}
+
+uint16_t Index::jumpToDex(uint16_t dex, const Filter &filter) const {
+  uint32_t ordinal = 0;
+  for (uint16_t i = 0; i < rowCount_; i++) {
+    if (!matches(i, filter)) continue;
+    if (records_[i].dex >= dex) return (uint16_t)(ordinal / kGridPageSize);
+    ordinal++;
+  }
+  if (ordinal == 0) return 0;
+  return (uint16_t)((ordinal - 1) / kGridPageSize);
+}
+
+bool Index::hasDexAtLeast(uint16_t dex, const Filter &filter) const {
+  for (uint16_t i = 0; i < rowCount_; i++) {
+    if (matches(i, filter) && records_[i].dex >= dex) return true;
+  }
+  return false;
 }
 
 }  // namespace pokedex

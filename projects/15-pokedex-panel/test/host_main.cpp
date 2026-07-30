@@ -190,6 +190,70 @@ int main() {
     expect("pageCount for 8 rows at 18 per page is 1", index.pageCount(all) == 1);
   }
 
+  {
+    Record records[16];
+    uint16_t nameOrder[16];
+    Index index;
+    index.attach(records, 16, nameOrder);
+    MemorySource source(kFixtureCsv);
+    index.build(source);
+
+    Filter all;
+    all.showShadows = true;
+
+    uint16_t rows[kGridPageSize];
+    index.pageAt(0, kOrderName, all, rows);
+    // Alphabetical: Bulbasaur, Bulbasaur Shadow, Charizard Mega X, Charmander,
+    // Oddish, Pikachu, Rattata Alolan Shadow, Thundurus (Incarnate) Shadow.
+    expect("name order starts at Bulbasaur",
+           strcmp(index.record(rows[0]).name, "Bulbasaur") == 0);
+    expect("name order sorts Charizard before Charmander",
+           strcmp(index.record(rows[2]).name, "Charizard Mega X") == 0 &&
+               strcmp(index.record(rows[3]).name, "Charmander") == 0);
+    expect("name order ends at Thundurus",
+           strcmp(index.record(rows[7]).name, "Thundurus (Incarnate) Shadow") == 0);
+
+    expect("hasLetter finds B", index.hasLetter('B', all));
+    expect("hasLetter finds lowercase b", index.hasLetter('b', all));
+    expect("hasLetter rejects Z", !index.hasLetter('Z', all));
+    expect("jumpToLetter B is page 0", index.jumpToLetter('B', all) == 0);
+    expect("jumpToLetter P is page 0 for a short fixture",
+           index.jumpToLetter('P', all) == 0);
+
+    Filter noShadow;
+    expect("hasLetter respects the shadow filter", !index.hasLetter('R', noShadow));
+    expect("hasLetter finds R with shadows shown", index.hasLetter('R', all));
+
+    Filter grass;
+    grass.showShadows = true;
+    grass.type1 = typeIdFromName("Grass");
+    expect("hasLetter respects the type filter", !index.hasLetter('P', grass));
+    expect("hasLetter finds O under the Grass filter", index.hasLetter('O', grass));
+
+    expect("hasDexAtLeast finds 600+", index.hasDexAtLeast(600, all));
+    expect("hasDexAtLeast rejects beyond the max", !index.hasDexAtLeast(2000, all));
+    expect("jumpToDex 0 is page 0", index.jumpToDex(0, all) == 0);
+  }
+
+  {
+    // With no name-order buffer, name order must degrade to dex order rather
+    // than read a null pointer.
+    Record records[16];
+    Index index;
+    index.attach(records, 16, nullptr);
+    MemorySource source(kFixtureCsv);
+    index.build(source);
+
+    Filter all;
+    all.showShadows = true;
+    uint16_t rows[kGridPageSize];
+    index.pageAt(0, kOrderName, all, rows);
+    expect("name order falls back to file order without a buffer", rows[0] == 0);
+    expect("jumpToLetter is page 0 without a name order",
+           index.jumpToLetter('T', all) == 0);
+    expect("hasLetter is false without a name order", !index.hasLetter('B', all));
+  }
+
   printf("\n%u failure(s)\n", gFailures);
   return gFailures == 0 ? 0 : 1;
 }

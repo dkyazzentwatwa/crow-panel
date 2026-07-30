@@ -83,6 +83,15 @@ class Index {
   // Always at least 1 so the UI can render "Page 1/1" for an empty filter.
   uint16_t pageCount(const Filter &filter) const;
 
+  // Name-order jumps. All return 0 / false when no name-order buffer was
+  // attached, which is the PSRAM-failure fallback.
+  uint16_t jumpToLetter(char letter, const Filter &filter) const;
+  bool hasLetter(char letter, const Filter &filter) const;
+
+  // Dex-order jumps. Valid in either order buffer state.
+  uint16_t jumpToDex(uint16_t dex, const Filter &filter) const;
+  bool hasDexAtLeast(uint16_t dex, const Filter &filter) const;
+
  private:
   Record *records_ = nullptr;
   uint16_t capacity_ = 0;
