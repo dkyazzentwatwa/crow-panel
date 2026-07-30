@@ -1,11 +1,39 @@
 #include "PokedexDashboard.h"
 
 #include <CrowPanelShared.h>
+#include "PokedexSprites.h"
 #include "PokedexText.h"
 
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
 #include <Arduino_GFX_Library.h>
 #endif
+
+namespace {
+
+// Grid browse geometry. The rail takes a fixed strip on the left; the remaining
+// width divides into 6 columns and 3 rows of 18 tiles total. Kept outside the
+// USE_DISPLAY-gated section below because showGrid() needs kDexBuckets to
+// compute railCursor_ even when called from a non-display build.
+constexpr int16_t kRailX = 24;
+constexpr int16_t kRailY = 104;
+constexpr int16_t kRailW = 40;
+constexpr int16_t kRailH = 420;
+constexpr uint8_t kRailSlots = 26;  // A-Z, or 11 dex buckets using the first 11.
+constexpr uint8_t kDexBuckets = 11;  // 0,100,...,1000
+
+constexpr int16_t kGridX = 76;
+constexpr int16_t kGridY = 104;
+constexpr int16_t kGridW = 924;
+constexpr int16_t kGridH = 420;
+constexpr uint8_t kGridCols = 6;
+constexpr uint8_t kGridRows = 3;
+constexpr int16_t kGridCellW = kGridW / kGridCols;   // 154
+constexpr int16_t kGridCellH = kGridH / kGridRows;   // 140
+
+static_assert(kGridCols * kGridRows == POKEDEX_MAX_RESULTS,
+              "grid must hold exactly one result page");
+
+}  // namespace
 
 void PokedexDashboard::begin() {
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
@@ -18,18 +46,13 @@ void PokedexDashboard::showList(const PokedexRow *rows, uint8_t count, uint8_t s
                                 uint16_t browseStart, uint16_t totalRows,
                                 const String &query, const String &source,
                                 const String &status) {
-  rowCount_ = min(count, (uint8_t)POKEDEX_MAX_RESULTS);
-  for (uint8_t i = 0; i < rowCount_; i++) {
-    rows_[i] = rows[i];
-  }
-  selected_ = (rowCount_ == 0) ? 0 : min(selected, (uint8_t)(rowCount_ - 1));
-  browseStart_ = browseStart;
-  totalRows_ = totalRows;
+  // Search results are a one-off set, not a catalog window: offset 0, and leave
+  // the rail disabled so nothing suggests a position in the catalog.
+  (void)browseStart;
   query_ = query;
-  source_ = source;
-  status_ = status;
-  mode_ = kPokedexUiList;
-  dirty_ = true;
+  pokedex::Filter neutral;
+  neutral.showShadows = true;
+  showGrid(rows, count, selected, 0, totalRows, order_, neutral, nullptr, source, status);
 }
 
 void PokedexDashboard::showDetail(const PokedexDetail &detail, uint8_t page, const String &source,
@@ -42,10 +65,38 @@ void PokedexDashboard::showDetail(const PokedexDetail &detail, uint8_t page, con
   dirty_ = true;
 }
 
-void PokedexDashboard::showGrid(const PokedexRow *, uint8_t, uint8_t, uint32_t,
-                                uint32_t, pokedex::Order, const pokedex::Filter &,
-                                const bool *, const String &, const String &) {
-  // Real implementation lands in Task 13.
+void PokedexDashboard::showGrid(const PokedexRow *rows, uint8_t count, uint8_t selected,
+                                uint32_t startOrdinal, uint32_t totalMatching,
+                                pokedex::Order order, const pokedex::Filter &filter,
+                                const bool *railEnabled, const String &source,
+                                const String &status) {
+  rowCount_ = min(count, (uint8_t)POKEDEX_MAX_RESULTS);
+  for (uint8_t i = 0; i < rowCount_; i++) rows_[i] = rows[i];
+  selected_ = (rowCount_ == 0) ? 0 : min(selected, (uint8_t)(rowCount_ - 1));
+  startOrdinal_ = startOrdinal;
+  totalMatching_ = totalMatching;
+  order_ = order;
+  filter_ = filter;
+  for (uint8_t i = 0; i < kRailSlotsMax; i++) {
+    railEnabled_[i] = railEnabled != nullptr && railEnabled[i];
+  }
+  source_ = source;
+  status_ = status;
+  mode_ = kPokedexUiList;
+  dirty_ = true;
+
+  railCursor_ = 0;
+  if (rowCount_ > 0) {
+    if (order_ == pokedex::kOrderName) {
+      const char first = rows_[0].name[0];
+      const char upper = (first >= 'a' && first <= 'z') ? (char)(first - 'a' + 'A') : first;
+      if (upper >= 'A' && upper <= 'Z') railCursor_ = (uint8_t)(upper - 'A');
+    } else {
+      const uint16_t dex = (uint16_t)atoi(rows_[0].dex);
+      const uint8_t bucket = (uint8_t)(dex / 100);
+      railCursor_ = bucket < kDexBuckets ? bucket : (uint8_t)(kDexBuckets - 1);
+    }
+  }
 }
 
 void PokedexDashboard::beginSearch(const String &initial) {
@@ -135,27 +186,6 @@ constexpr int16_t kSideY = 104;
 constexpr int16_t kSideW = 236;
 constexpr int16_t kSideH = 420;
 constexpr int16_t kRowH = 46;
-
-// Grid browse geometry. The rail takes a fixed strip on the left; the remaining
-// width divides into 6 columns and 3 rows of 18 tiles total.
-constexpr int16_t kRailX = 24;
-constexpr int16_t kRailY = 104;
-constexpr int16_t kRailW = 40;
-constexpr int16_t kRailH = 420;
-constexpr uint8_t kRailSlots = 26;  // A-Z, or 11 dex buckets using the first 11.
-constexpr uint8_t kDexBuckets = 11;  // 0,100,...,1000
-
-constexpr int16_t kGridX = 76;
-constexpr int16_t kGridY = 104;
-constexpr int16_t kGridW = 924;
-constexpr int16_t kGridH = 420;
-constexpr uint8_t kGridCols = 6;
-constexpr uint8_t kGridRows = 3;
-constexpr int16_t kGridCellW = kGridW / kGridCols;   // 154
-constexpr int16_t kGridCellH = kGridH / kGridRows;   // 140
-
-static_assert(kGridCols * kGridRows == POKEDEX_MAX_RESULTS,
-              "grid must hold exactly one result page");
 
 constexpr uint16_t kDexRed = Widgets::rgb(0xD8, 0x28, 0x34);
 constexpr uint16_t kDexRedDark = Widgets::rgb(0x75, 0x15, 0x21);
@@ -329,11 +359,31 @@ void PokedexDashboard::drawHeader(Arduino_GFX *g, const char *title) {
 void PokedexDashboard::drawFooter(Arduino_GFX *g) {
   g->fillRect(0, kFooterY - 12, kScreenW, kScreenH - kFooterY + 12, Widgets::kBg);
   if (mode_ == kPokedexUiList) {
-    drawButton(g, 24, kFooterY, 126, "PREV");
-    drawButton(g, 166, kFooterY, 126, "NEXT");
-    drawButton(g, 308, kFooterY, 136, "SEARCH", kDexRedDark);
-    PokedexText::draw(g, 468, kFooterY + 8, "Tap a row to open.", PokedexText::fontS(),
-                      kMuted, PokedexText::kLeft);
+    drawButton(g, 24, kFooterY, 96, "TOP");
+    drawButton(g, 128, kFooterY, 104, "PREV");
+    drawButton(g, 240, kFooterY, 104, "NEXT");
+    drawButton(g, 352, kFooterY, 118, "SEARCH", kDexRedDark);
+    drawButton(g, 478, kFooterY, 104,
+               order_ == pokedex::kOrderName ? "A-Z" : "DEX");
+    drawButton(g, 590, kFooterY, 130,
+               filter_.type1 == pokedex::kTypeAny
+                   ? "TYPE: ALL"
+                   : pokedex::typeNameFromId(filter_.type1));
+    drawButton(g, 728, kFooterY, 140,
+               filter_.showShadows ? "SHADOWS ON" : "SHADOWS OFF");
+    // A range, not a page number: the window is offset-based and need not be
+    // page-aligned, so "Page n/m" would be meaningless after a rail jump.
+    char range[32];
+    if (rowCount_ == 0) {
+      snprintf(range, sizeof(range), "0 of %lu", (unsigned long)totalMatching_);
+    } else {
+      snprintf(range, sizeof(range), "%lu-%lu of %lu",
+               (unsigned long)(startOrdinal_ + 1),
+               (unsigned long)(startOrdinal_ + rowCount_),
+               (unsigned long)totalMatching_);
+    }
+    PokedexText::draw(g, 1000, kFooterY + 8, range, PokedexText::fontS(), kMuted,
+                      PokedexText::kRight);
   } else if (mode_ == kPokedexUiDetail) {
     drawButton(g, 24, kFooterY, 126, "LIST");
     drawButton(g, 764, kFooterY, 112, "PAGE -");
@@ -341,6 +391,33 @@ void PokedexDashboard::drawFooter(Arduino_GFX *g) {
     char page[24];
     snprintf(page, sizeof(page), "Page %u/%u", detailPage_ + 1, POKEDEX_DETAIL_PAGE_COUNT);
     PokedexText::draw(g, 512, kFooterY + 8, page, PokedexText::fontS(), kMuted,
+                      PokedexText::kCenter);
+  }
+}
+
+void PokedexDashboard::drawRail(Arduino_GFX *g) {
+  Widgets::panel(g, kRailX, kRailY, kRailW, kRailH, 6, kCard, 1, kLine);
+  const uint8_t slots = (order_ == pokedex::kOrderName) ? kRailSlots : kDexBuckets;
+  const int16_t slotH = kRailH / slots;
+
+  for (uint8_t i = 0; i < slots; i++) {
+    const int16_t y = kRailY + i * slotH;
+    char label[6];
+    if (order_ == pokedex::kOrderName) {
+      label[0] = (char)('A' + i);
+      label[1] = '\0';
+    } else {
+      snprintf(label, sizeof(label), "%u", (unsigned)(i * 100));
+    }
+    // A letter or bucket with no rows under the active filter is dimmed and
+    // ignored by the touch handler (Task 14).
+    const bool enabled = railEnabled_[i];
+    const uint16_t colour = enabled ? kWhite : kLine;
+    if (enabled && i == railCursor_) {
+      Widgets::panel(g, kRailX + 3, y + 1, kRailW - 6, slotH - 2, 4, kCardHi, 0, kCardHi);
+    }
+    PokedexText::draw(g, kRailX + kRailW / 2, y + (slotH - 12) / 2, label,
+                      PokedexText::fontS(), enabled && i == railCursor_ ? kGold : colour,
                       PokedexText::kCenter);
   }
 }
@@ -353,59 +430,68 @@ void PokedexDashboard::drawTouchDot(Arduino_GFX *g) {
   g->drawLine(lastTouchX_, lastTouchY_ - 15, lastTouchX_, lastTouchY_ + 15, kGold);
 }
 
-void PokedexDashboard::drawList(Arduino_GFX *g) {
-  drawHeader(g, "POKEDEX PANEL");
-  Widgets::panel(g, kListX, kListY, kListW, kListH, 8, kCard, 1, kLine);
-  PokedexText::draw(g, kListX + 20, kListY + 18, "CATALOG", PokedexText::fontS(), kGold,
-                    PokedexText::kLeft);
+void PokedexDashboard::drawTile(Arduino_GFX *g, uint8_t slot, const PokedexRow &row,
+                                bool active) {
+  const int16_t col = slot % kGridCols;
+  const int16_t rowIndex = slot / kGridCols;
+  const int16_t x = kGridX + col * kGridCellW;
+  const int16_t y = kGridY + rowIndex * kGridCellH;
+  const uint16_t fill = active ? Widgets::rgb(0x27, 0x38, 0x4C) : Widgets::rgb(0x10, 0x17, 0x21);
+  const uint16_t border = active ? typeColor(row.type1) : kLine;
 
-  char range[48];
-  uint16_t end = (rowCount_ == 0) ? 0 : (browseStart_ + rowCount_);
-  snprintf(range, sizeof(range), "%u-%u of %u", (rowCount_ == 0) ? 0 : browseStart_ + 1, end,
-           totalRows_);
-  PokedexText::draw(g, kListX + kListW - 20, kListY + 18, range, PokedexText::fontS(), kMuted,
-                    PokedexText::kRight);
+  Widgets::panel(g, x + 4, y + 4, kGridCellW - 8, kGridCellH - 8, 6, fill,
+                 active ? 2 : 1, border);
+
+  // Sprite, centred. Sprite BMPs have no alpha, so the well MUST be filled with
+  // literal RGB565 0x0000 (not kInk or any other "black-ish" colour) and the
+  // blit keys out the sprite's own sampled background colour.
+  //
+  // Why the well has to be exactly 0x0000: a black-background sprite's interior
+  // outline/eye pixels are ALSO literal 0x0000 (1318 of 1573 sprites have such
+  // pixels), and the transparent-colour blit cannot distinguish "background
+  // black" from "outline black" - both get skipped identically. That only reads
+  // correctly if the pixels underneath are the same 0x0000, so the skipped
+  // outline pixels still show as black rather than as whatever tile colour was
+  // there. Any other well colour would punch the outlines out of those sprites.
+  const int16_t artCx = x + kGridCellW / 2;
+  const int16_t artCy = y + 12 + 40;
+  uint16_t key = 0;
+  const uint16_t *pixels =
+      (sprites_ != nullptr) ? sprites_->tile(row.entryId, &key) : nullptr;
+  if (pixels != nullptr) {
+    const int16_t size = sprites_->tileSize();
+    g->fillRect(artCx - size / 2, y + 12, size, size, 0x0000);
+    g->draw16bitRGBBitmapWithTranColor(artCx - size / 2, y + 12, (uint16_t *)pixels,
+                                       key, size, size);
+  } else {
+    drawPokeball(g, artCx, artCy, 56, typeColor(row.type1));
+  }
+
+  String name = fitText(g, row.name, kGridCellW - 20, PokedexText::fontS());
+  PokedexText::draw(g, artCx, y + kGridCellH - 44, name.c_str(), PokedexText::fontS(),
+                    active ? kWhite : kMuted, PokedexText::kCenter);
+  char dex[12];
+  snprintf(dex, sizeof(dex), "#%s", row.dex);
+  PokedexText::draw(g, artCx, y + kGridCellH - 24, dex, PokedexText::fontS(),
+                    typeColor(row.type1), PokedexText::kCenter);
+}
+
+void PokedexDashboard::drawGrid(Arduino_GFX *g) {
+  drawHeader(g, "POKEDEX");
+  drawRail(g);
 
   if (rowCount_ == 0) {
-    PokedexText::draw(g, kListX + 24, kListY + 88, "No matches", PokedexText::fontL(), kWhite,
-                      PokedexText::kLeft);
-    drawWrapped(g, "Try SEARCH or use the Serial command: search <query>.",
-                kListX + 24, kListY + 134, kListW - 48, 28, 4, PokedexText::fontS(), kMuted);
+    Widgets::panel(g, kGridX, kGridY, kGridW, kGridH, 8, kCard, 1, kLine);
+    PokedexText::draw(g, kGridX + kGridW / 2, kGridY + 180, "No matches",
+                      PokedexText::fontL(), kWhite, PokedexText::kCenter);
+    PokedexText::draw(g, kGridX + kGridW / 2, kGridY + 226,
+                      "Clear the type filter or enable shadows.", PokedexText::fontS(),
+                      kMuted, PokedexText::kCenter);
+  } else {
+    for (uint8_t i = 0; i < rowCount_; i++) {
+      drawTile(g, i, rows_[i], i == selected_);
+    }
   }
-
-  for (uint8_t i = 0; i < rowCount_; i++) {
-    int16_t y = kListY + 58 + i * kRowH;
-    bool active = i == selected_;
-    uint16_t fill = active ? Widgets::rgb(0x27, 0x38, 0x4C) : Widgets::rgb(0x10, 0x17, 0x21);
-    Widgets::panel(g, kListX + 14, y, kListW - 28, 38, 8, fill, active ? 2 : 1,
-                   active ? typeColor(rows_[i].type1) : kLine);
-    char dex[12];
-    snprintf(dex, sizeof(dex), "#%s", rows_[i].dex);
-    PokedexText::draw(g, kListX + 30, y + 9, dex, PokedexText::fontS(),
-                      typeColor(rows_[i].type1), PokedexText::kLeft);
-    String name = fitText(g, rows_[i].name, 165, PokedexText::fontS());
-    PokedexText::draw(g, kListX + 91, y + 9, name.c_str(), PokedexText::fontS(), kWhite,
-                      PokedexText::kLeft);
-    PokedexText::draw(g, kListX + kListW - 32, y + 9, rows_[i].type1, PokedexText::fontS(),
-                      kMuted, PokedexText::kRight);
-  }
-
-  Widgets::panel(g, kHeroX, kHeroY, kHeroW, kHeroH, 8, kCard, 1, kLine);
-  PokedexText::draw(g, kHeroX + 28, kHeroY + 24, "READY TO SCAN", PokedexText::fontS(), kGold,
-                    PokedexText::kLeft);
-  drawPokeball(g, kHeroX + kHeroW / 2, kHeroY + 190, 112, kDexRed);
-  drawWrapped(g, String("Query: ") + query_, kHeroX + 36, kHeroY + 332, kHeroW - 72, 30, 2,
-              PokedexText::fontM(), kWhite);
-  drawWrapped(g, "Use search pikachu, search mega, browse 24, or open mewtwo.",
-              kHeroX + 36, kHeroY + 382, kHeroW - 72, 24, 2, PokedexText::fontS(), kMuted);
-
-  Widgets::panel(g, kSideX, kSideY, kSideW, kSideH, 8, kCard, 1, kLine);
-  PokedexText::draw(g, kSideX + 20, kSideY + 20, "PORT NOTES", PokedexText::fontS(), kGold,
-                    PokedexText::kLeft);
-  drawWrapped(g, "Source: local esp32-pokedex. The original Cardputer keyboard and audio paths were replaced with touch and Serial controls.",
-              kSideX + 20, kSideY + 68, kSideW - 40, 26, 6, PokedexText::fontS(), kMuted);
-  drawWrapped(g, status_, kSideX + 20, kSideY + 252, kSideW - 40, 26, 5,
-              PokedexText::fontS(), kWhite);
   drawFooter(g);
   drawTouchDot(g);
 }
@@ -493,7 +579,7 @@ void PokedexDashboard::draw() {
   } else if (mode_ == kPokedexUiSearch) {
     drawSearch(g);
   } else {
-    drawList(g);
+    drawGrid(g);
   }
 }
 

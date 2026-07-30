@@ -63,7 +63,6 @@ class PokedexDashboard {
 
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
   void draw();
-  void drawList(class Arduino_GFX *g);
   void drawDetail(class Arduino_GFX *g);
   void drawSearch(class Arduino_GFX *g);
   void drawGrid(class Arduino_GFX *g);
