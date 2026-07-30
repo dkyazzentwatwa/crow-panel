@@ -43,8 +43,26 @@ to handle**.
 Fighting, Fire, Flying, Ghost, Grass, Ground, Ice, Normal, Poison, Psychic,
 Rock, Steel, Water.
 
-Variant breakdown of the 1573 entries: 459 `_shadow`, 46 `_mega`, 18 `_galarian`,
-18 `_alolan`, 14 `_hisuian`, ~111 other suffixed forms, 907 unsuffixed.
+Variant breakdown of the 1573 entries, measured by running the shipped
+`classifyVariant` over the real file (`marker appears anywhere in entry_id`, so
+these overlap):
+
+| Marker | Count |
+|---|---|
+| base (no underscore) | 907 |
+| shadow | 459 |
+| regional (galarian / alolan / hisuian) | 71 |
+| other (costume and unrecognised forms) | 107 |
+| mega | 48 |
+| **carrying 2+ marker bits** | **19** |
+
+Browse with shadows hidden therefore shows **1114** of 1573.
+
+Counting by the *last* underscore token instead gives 46 megas and 50 regionals —
+both wrong, because `charizard_mega_x` ends in `x` and `rattata_alolan_shadow`
+ends in `shadow`. Do not re-derive these numbers that way. Likewise, 43 entries
+have two or more underscores but only 19 carry two or more marker *bits*
+(`pikachu_5th_anniversary` has two underscores and one marker).
 
 ## Decisions
 
@@ -116,9 +134,10 @@ line read instead of up to 1573 sequential reads.
 
 `flags` is a genuine bitmask, not an enum, because **variants compose**:
 `rattata_alolan_shadow` is regional *and* shadow, and `charizard_mega_x` /
-`charizard_mega_y` are distinct mega forms. 43 entries carry two or more variant
+`charizard_mega_y` are distinct mega forms. 19 entries carry two or more variant
 markers. The classifier must test every marker against the `entry_id` rather than
-stopping at the first match. Costume forms (`pikachu_pop_star`,
+stopping at the first match — a first-match-wins implementation misclassifies all
+19 and silently loses 2 megas. Costume forms (`pikachu_pop_star`,
 `pikachu_5th_anniversary`) classify as `other`.
 
 The bitmask is also what makes the shadow toggle a bit test rather than a string
