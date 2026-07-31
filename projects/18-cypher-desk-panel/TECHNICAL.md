@@ -89,10 +89,11 @@ SD is primary. RAM is a clearly labeled, small, nonpersistent demo fallback.
 │   ├── daily/
 │   ├── scraps/
 │   └── user notebooks/
-├── audio/
+├── audio/          ambience loops (rainy-cafe.wav, vinyl-room.wav, ...)
 ├── recordings/
-├── music/
-├── podcasts/
+├── music/          any PCM WAV, 8-48 kHz, mono or stereo, 8- or 16-bit
+├── podcasts/       same formats as music/
+├── video/          MJPEG .avi clips (see scripts/convert-crowpanel-video.sh)
 ├── documents/
 ├── calendar/
 │   └── events.tsv
@@ -175,8 +176,60 @@ display + SD + time      -DUSE_DISPLAY=1 -DUSE_CYPHER_DESK_SD=1 -DUSE_WIFI=1
 display + SD + audio     -DUSE_DISPLAY=1 -DUSE_CYPHER_DESK_SD=1 -DUSE_CYPHER_DESK_AUDIO=1
 recorder guard           -DUSE_DISPLAY=1 -DUSE_CYPHER_DESK_SD=1 -DUSE_CYPHER_DESK_RECORDER=1
 display + SD + media     -DUSE_DISPLAY=1 -DUSE_CYPHER_DESK_SD=1 -DUSE_CYPHER_DESK_MEDIA=1 -DUSE_CYPHER_DESK_AUDIO=1
-full OS                  -DUSE_DISPLAY=1 -DUSE_CYPHER_DESK_SD=1 -DUSE_WIFI=1 -DUSE_CYPHER_DESK_AUDIO=1 -DUSE_CYPHER_DESK_MEDIA=1 -DUSE_CYPHER_DESK_RECORDER=1
+display + SD + video     -DUSE_DISPLAY=1 -DUSE_CYPHER_DESK_SD=1 -DUSE_CYPHER_DESK_AUDIO=1 -DUSE_CYPHER_DESK_MEDIA=1 -DUSE_CYPHER_DESK_VIDEO=1
+full OS                  -DUSE_DISPLAY=1 -DUSE_CYPHER_DESK_SD=1 -DUSE_WIFI=1 -DUSE_CYPHER_DESK_AUDIO=1 -DUSE_CYPHER_DESK_MEDIA=1 -DUSE_CYPHER_DESK_VIDEO=1 -DUSE_CYPHER_DESK_RECORDER=1
 ```
+
+Everything together is 1.86 MB, 59% of the 3 MB app partition.
+
+Apps whose feature is compiled out are neither built nor registered, so a
+build without `USE_CYPHER_DESK_MEDIA` or `USE_CYPHER_DESK_VIDEO` carries none
+of their UI and the launcher shows no tile for them.
+
+## Host tests
+
+The WAV reader, the AVI demuxer and the editor's word-wrap engine are free of
+SD_MMC and display headers, so the exact translation units that ship also
+build with a plain `g++`:
+
+```sh
+./scripts/test-cypher-desk.sh              # 62 checks
+./scripts/test-cypher-desk.sh clip.avi     # inspect a real file with the same parser
+./scripts/test-cypher-desk.sh track.wav
+```
+
+The file mode is the quickest way to find out whether a clip or track will
+play before copying it to the card.
+
+## Media
+
+Audio runs through one `DeskAudioEngine` on the IDF `i2s_std` driver - the
+path projects 09, 20, 21 and 22 are hardware-verified on - at a fixed
+44.1 kHz stereo output, with every source resampled up to it. That is what
+lets 44.1 kHz stereo music, a 16 kHz ambience loop and a key click share the
+output without reconfiguring the clock mid-playback, and it makes the played-
+frame counter usable as a video sync clock.
+
+A FreeRTOS mixer task on core 0 drains a 1.5 s PSRAM ring that loop context
+fills from the card. **The mixer task never opens a file** - break that and
+audio deadlocks behind a slow card.
+
+Video is MJPEG-in-AVI through the P4's hardware JPEG decoder and PPA scaler,
+both already linked by core 3.3.8. Audio is the master clock: frame N is
+presented when the played-frame counter passes N x microSecPerFrame, and a
+frame more than one frame late is dropped rather than queued. Clips with no
+audio stream - including project 02's own `VID_*.AVI` recordings - play
+silently off the wall clock.
+
+Prepare clips with:
+
+```sh
+./scripts/convert-crowpanel-video.sh input.mp4
+```
+
+512 px wide at 15 fps is about 286 KB/s, comfortable on SD_MMC in 1-bit mode.
+The player reports dropped frames on screen; if that number climbs, lower the
+width or frame rate.
 
 Example upload:
 

@@ -49,7 +49,7 @@ The repository is Arduino CLI only. Detailed toolchain setup, hardware notes, fe
 | Pokedex Panel | Offline creature catalog and field guide | [15](projects/15-pokedex-panel) |
 | Cypher Flock Panel | Passive multi-board Wi-Fi and BLE detection surface | [in-progress/16](in-progress/16-cypher-flock-panel) |
 | LittleHakr RF Lab | Receive and register-proof bench for supported radio modules | [17](projects/17-littlehakr-rf-lab) |
-| Cypher Desk OS | Offline-first writing and creator workstation | [18](projects/18-cypher-desk-panel) |
+| Cypher Desk OS | Offline-first writing, media and creator workstation | [18](projects/18-cypher-desk-panel) |
 | Starbeam Console | Arm-gated lab console for the author's transmit-capable radio build | [in-progress/19](in-progress/19-starbeam-console) |
 | Pip-Boy 3000 Terminal | Fan-prop launcher with stats, map, gallery, and audio | [20](projects/20-pipboy-terminal) |
 | Cypher Keys HID Deck | Touch keyboard, macros, launcher, and USB/Bluetooth HID | [21](projects/21-cypher-keys-hid-deck) |

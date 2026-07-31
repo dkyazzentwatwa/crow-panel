@@ -33,12 +33,15 @@ Host-side tests (no board needed) and companion firmware:
 
 ```bash
 ./scripts/test-litego.sh --quick        # LiteGo rules fixtures + AI hygiene + bench (g++, ~1s)
+./scripts/test-cypher-desk.sh           # project 18 WAV/AVI/word-wrap parsers (g++, ~2s)
+./scripts/test-cypher-desk.sh clip.avi  # run the shipping demuxer over a real file
 ./scripts/compile-flock-system.sh       # Flock catalog checks + protocol fixtures + both companions
 python3 scripts/test-flock-catalog.py   # one catalog/policy suite on its own
 python3 scripts/test-flock-protocol.py  # one UART/session edge-case suite on its own
 ./scripts/build-espnow-companions.sh    # plain-ESP32 ESP-NOW bridge + sensor node
 ./scripts/build-flock-bridge.sh         # ESP32 BLE aggregator companion
 ./scripts/build-flock-bw16.sh           # BW16 dual-band Wi-Fi scanner companion
+./scripts/convert-crowpanel-video.sh in.mp4   # MJPEG/AVI clip for project 18's video player
 ```
 
 Env vars honored by the build scripts: `FQBN`, `BUILD_ROOT`, `EXTRA_FLAGS`, `EXTRA_C_FLAGS`, `CTAGS_WORKAROUND`, `CORE_VERSION`.
