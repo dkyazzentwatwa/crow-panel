@@ -24,6 +24,12 @@ class TouchTracker {
     int16_t downX = 0, downY = 0;  // position at press (hit-test against THIS)
     uint32_t downMs = 0;
     int16_t owner = -1;          // UiLayout control the press landed on
+    // Object the press was aimed at, latched at press time (UI-managed). downX/
+    // downY stop a drag retargeting to a different CONTROL; this stops it
+    // retargeting to a different PAD. Without it, holding the VOL slider while
+    // a second finger taps a pad rewrites the newly selected pad's gain,
+    // because selectedPad_ moved under the in-flight drag.
+    int8_t ownerPad = -1;
     uint32_t nextRepeatMs = 0;   // hold-repeat bookkeeping (UI-managed)
     bool releasePending = false;
     uint32_t releasePendingSinceMs = 0;

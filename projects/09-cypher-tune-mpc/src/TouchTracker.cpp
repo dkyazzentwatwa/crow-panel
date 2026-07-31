@@ -51,6 +51,7 @@ void TouchTracker::tick() {
       c.releasedEdge = false;
       c.id = 0xFF;
       c.owner = -1;
+      c.ownerPad = -1;
     }
     c.seenThisPoll = false;
   }
@@ -130,6 +131,7 @@ void TouchTracker::tick() {
         c.y = c.downY = y;
         c.downMs = now;
         c.owner = -1;
+        c.ownerPad = -1;
         c.nextRepeatMs = 0;
         c.releasePending = false;
         c.seenThisPoll = true;

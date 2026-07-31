@@ -256,10 +256,12 @@ void TuneUi::pressControl_(TouchTracker::Contact &c, uint32_t now) {
       seq_->setPattern(owner - kControlPattern0);
       break;  // syncState_ picks up the change (also covers serial `pat`)
     case kControlVolSlider:
+      c.ownerPad = (int8_t)selectedPad_;  // latch: a later pad tap must not steal this drag
       bank_->setGain(selectedPad_, (uint8_t)sliderValue(c.downX, 255));
       dirtyEdit_ = true;
       break;
     case kControlPitchSlider:
+      c.ownerPad = (int8_t)selectedPad_;
       bank_->setPitch(selectedPad_, (int8_t)(sliderValue(c.downX, 24) - 12));
       dirtyEdit_ = true;
       break;
@@ -328,20 +330,28 @@ void TuneUi::holdControl_(TouchTracker::Contact &c, uint32_t now) {
       }
       break;
     }
-    case kControlVolSlider:
-      bank_->setGain(selectedPad_, (uint8_t)sliderValue(c.x, 255));
+    case kControlVolSlider: {
+      // Write the pad latched at press, not selectedPad_ - see Contact::ownerPad.
+      uint8_t target = (c.ownerPad >= 0) ? (uint8_t)c.ownerPad : selectedPad_;
+      bank_->setGain(target, (uint8_t)sliderValue(c.x, 255));
       if (now - lastSliderDrawMs_ >= 33) {
         lastSliderDrawMs_ = now;
-        dirtyEdit_ = true;
+        // Only repaint the edit panel when it is showing the pad being edited;
+        // a drag on a pad that is no longer selected still takes effect, it
+        // just has nothing on screen to update.
+        if (target == selectedPad_) dirtyEdit_ = true;
       }
       break;
-    case kControlPitchSlider:
-      bank_->setPitch(selectedPad_, (int8_t)(sliderValue(c.x, 24) - 12));
+    }
+    case kControlPitchSlider: {
+      uint8_t target = (c.ownerPad >= 0) ? (uint8_t)c.ownerPad : selectedPad_;
+      bank_->setPitch(target, (int8_t)(sliderValue(c.x, 24) - 12));
       if (now - lastSliderDrawMs_ >= 33) {
         lastSliderDrawMs_ = now;
-        dirtyEdit_ = true;
+        if (target == selectedPad_) dirtyEdit_ = true;
       }
       break;
+    }
     default:
       break;
   }
