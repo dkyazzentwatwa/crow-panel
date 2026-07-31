@@ -1,16 +1,40 @@
-# CrowPanel AIoT Arduino Suite
-
+# CrowPanel App Suite
 ## A large-format touch platform for real embedded interfaces
 
-![CrowPanel running the CrowPanel app suite](docs/assets/crowpanel/01-surveyops.jpg)
 
-The [Elecrow CrowPanel Advanced 7-inch ESP32-P4 HMI AI Display](https://www.elecrow.com/crowpanel-advanced-7inch-esp32-p4-hmi-ai-display-1024x600-ips-touch-screen-with-wifi-6-compatible-with-arduino-lvgl-micropython.html) is a remarkably capable piece of hardware. This repository treats it like a product platform rather than a tiny demo screen.
+The [Elecrow CrowPanel Advanced 7-inch ESP32-P4 HMI AI Display](https://www.awin1.com/cread.php?awinmid=82721&awinaffid=2977153&ued=https%3A%2F%2Fm.elecrow.com%2Fpages%2Fshop%2Fproduct%2Fdetails%3Fid%3D208494) is a remarkably capable piece of hardware. This repository treats it like a product platform rather than a tiny demo screen.
 
 It is a collection of 20 standalone touch applications for field work, creative work, games, dashboards, and hardware experiments. The common thread is simple: give the device interfaces that feel made for a 7-inch screen.
 
 The result is a portable embedded desktop that can become a camera, groovebox, aircraft radar, writing desk, game system, HID keyboard, network tool, or instrument panel without changing the display hardware.
 
 The repository is Arduino CLI only. Detailed toolchain setup, hardware notes, feature flags, wiring, companion boards, safety boundaries, and proof requirements live in [TECHNICAL.md](TECHNICAL.md).
+
+## In the field
+
+The photos below show the suite running on the CrowPanel, including SurveyOps, Pokedex, Cypher Boy, CypherDrive, ADS-B Radar, LiteGo, Vision Cam, and Cypher Desk. They are illustrative device captures, not a replacement for the per-project proof record.
+
+<p align="center">
+  <img src="docs/assets/crowpanel/01-surveyops.jpg" alt="SurveyOps passive Wi-Fi and GPS panel" width="32%" />
+  <img src="docs/assets/crowpanel/02-pokedex.jpg" alt="Pokedex detail panel" width="32%" />
+  <img src="docs/assets/crowpanel/03-cypher-boy-zelda.jpg" alt="Cypher Boy running a Game Boy title" width="32%" />
+</p>
+<p align="center">
+  <img src="docs/assets/crowpanel/05-cypherdrive.jpg" alt="CypherDrive BLE device view" width="32%" />
+  <img src="docs/assets/crowpanel/06-adsb-radar.jpg" alt="ADS-B aircraft radar" width="32%" />
+  <img src="docs/assets/crowpanel/07-litego.jpg" alt="LiteGo Go board" width="32%" />
+</p>
+<p align="center">
+  <img src="docs/assets/crowpanel/09-cypher-boy-phantasy-star.jpg" alt="Cypher Boy running Phantasy Star IV" width="32%" />
+  <img src="docs/assets/crowpanel/10-visioncam-stream.jpg" alt="Cypher Vision Cam stream view" width="32%" />
+  <img src="docs/assets/crowpanel/11-cypher-desk.jpg" alt="Cypher Desk home screen" width="32%" />
+</p>
+<p align="center">
+  <img src="docs/assets/crowpanel/12-cypher-desk-writer.jpg" alt="Cypher Desk writer view" width="32%" />
+  <img src="docs/assets/crowpanel/04-board-detail.jpg" alt="CrowPanel board detail" width="32%" />
+  <img src="docs/assets/crowpanel/08-board-fan.jpg" alt="CrowPanel board cooling fan detail" width="32%" />
+</p>
+
 
 ## What this shows off
 
@@ -55,30 +79,6 @@ The repository is Arduino CLI only. Detailed toolchain setup, hardware notes, fe
 | Cypher Keys HID Deck | Touch keyboard, macros, launcher, and USB/Bluetooth HID | [21](projects/21-cypher-keys-hid-deck) |
 | Cypher Boy | SD-backed Game Boy, GBC, NES, and Mega Drive player | [22](projects/22-cypher-boy) |
 
-## In the field
-
-The photos below show the suite running on the CrowPanel, including SurveyOps, Pokedex, Cypher Boy, CypherDrive, ADS-B Radar, LiteGo, Vision Cam, and Cypher Desk. They are illustrative device captures, not a replacement for the per-project proof record.
-
-<p align="center">
-  <img src="docs/assets/crowpanel/01-surveyops.jpg" alt="SurveyOps passive Wi-Fi and GPS panel" width="32%" />
-  <img src="docs/assets/crowpanel/02-pokedex.jpg" alt="Pokedex detail panel" width="32%" />
-  <img src="docs/assets/crowpanel/03-cypher-boy-zelda.jpg" alt="Cypher Boy running a Game Boy title" width="32%" />
-</p>
-<p align="center">
-  <img src="docs/assets/crowpanel/05-cypherdrive.jpg" alt="CypherDrive BLE device view" width="32%" />
-  <img src="docs/assets/crowpanel/06-adsb-radar.jpg" alt="ADS-B aircraft radar" width="32%" />
-  <img src="docs/assets/crowpanel/07-litego.jpg" alt="LiteGo Go board" width="32%" />
-</p>
-<p align="center">
-  <img src="docs/assets/crowpanel/09-cypher-boy-phantasy-star.jpg" alt="Cypher Boy running Phantasy Star IV" width="32%" />
-  <img src="docs/assets/crowpanel/10-visioncam-stream.jpg" alt="Cypher Vision Cam stream view" width="32%" />
-  <img src="docs/assets/crowpanel/11-cypher-desk.jpg" alt="Cypher Desk home screen" width="32%" />
-</p>
-<p align="center">
-  <img src="docs/assets/crowpanel/12-cypher-desk-writer.jpg" alt="Cypher Desk writer view" width="32%" />
-  <img src="docs/assets/crowpanel/04-board-detail.jpg" alt="CrowPanel board detail" width="32%" />
-  <img src="docs/assets/crowpanel/08-board-fan.jpg" alt="CrowPanel board cooling fan detail" width="32%" />
-</p>
 
 ## Start here
 
