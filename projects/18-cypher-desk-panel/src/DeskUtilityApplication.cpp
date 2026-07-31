@@ -1,5 +1,7 @@
 #include "DeskUtilityApplication.h"
 
+#include "DeskKeyboardLayout.h"
+
 #include "DeskAppRouter.h"
 #include "DeskEventBus.h"
 #include "DeskSettings.h"
@@ -291,6 +293,7 @@ void DeskUtilityApplication::beginInput(InputPurpose purpose, const String &init
   input_ = initial;
   if (context_ != nullptr && context_->keyboard != nullptr) context_->keyboard->reset();
   dirty_ = true;
+  keyboardDirty_ = true;  // the band is uncovered, so it needs a full paint
 }
 void DeskUtilityApplication::cancelInput() { inputPurpose_ = kInputNone; input_ = ""; dirty_ = true; }
 void DeskUtilityApplication::finishInput() {
@@ -346,14 +349,13 @@ void DeskUtilityApplication::finishInput() {
   input_ = "";
   dirty_ = true;
 }
-void DeskUtilityApplication::handleKeyboard(int16_t x, int16_t y) {
-  if (context_ == nullptr || context_->keyboard == nullptr) return;
-  DeskKeyEvent key = context_->keyboard->hitTest(x, y);
-  if (key.action == kDeskKeyShift || key.action == kDeskKeySymbols) {
-    context_->keyboard->applyModeAction(key.action);
-  } else if (key.action == kDeskKeyText && input_.length() < 96) {
+// Shift consumption, key clicks and layer state all live in the keyboard now;
+// this just applies the resulting character.
+bool DeskUtilityApplication::keyboardVisible() const { return inputPurpose_ != kInputNone; }
+
+void DeskUtilityApplication::handleKey(const DeskKeyEvent &key) {
+  if (key.action == kDeskKeyText && input_.length() < 96) {
     input_ += key.text;
-    if (context_->keyboard->shifted()) context_->keyboard->applyModeAction(kDeskKeyShift);
   } else if (key.action == kDeskKeyBackspace && input_.length()) {
     input_.remove(input_.length() - 1);
   } else if (key.action == kDeskKeyEnter) {
@@ -369,7 +371,8 @@ bool DeskUtilityApplication::handleTouch(const DeskTouchEvent &event) {
   if (inputPurpose_ != kInputNone) {
     if (inside(x, y, 18, 60, 120, 48)) cancelInput();
     else if (inside(x, y, 866, 60, 140, 48)) finishInput();
-    else handleKeyboard(x, y);
+    // Anything else in this view is a key, and keys were already serviced on
+    // their press edge before this release-edge tap was delivered.
     return true;
   }
   if (confirmingDelete_) {
@@ -621,7 +624,14 @@ void DeskUtilityApplication::drawShell(const String &subtitle) {
   Arduino_GFX *g = CrowDisplay::canvas();
   if (g == nullptr) return;
   const DeskThemePalette &theme = deskTheme(context_->settings->theme());
-  g->fillScreen(theme.background);
+  // Clear only the page area when the keyboard is up. A full-screen fill would
+  // wipe the pressed-key highlight out from under a finger that is still down,
+  // and repaint 296 rows of keys to show one new character.
+  if (keyboardVisible()) {
+    g->fillRect(0, 0, DeskKeyboardLayout::kScreenW, DeskKeyboardLayout::kBandY, theme.background);
+  } else {
+    g->fillScreen(theme.background);
+  }
   g->fillRect(0, 0, 1024, 52, theme.shell);
   osButton(g, theme, 12, 7, 112, 38, "OS HOME");
   smallText(g, 146, 17, title(), theme.ink);
@@ -684,7 +694,7 @@ void DeskUtilityApplication::drawInput() {
   }
   Widgets::panel(g, 28, 166, 968, 94, 12, theme.panel, 2, theme.line);
   smallText(g, 48, 202, shown.length() ? shown : "tap keys below", shown.length() ? theme.ink : theme.muted);
-  context_->keyboard->draw(g, theme);
+  if (keyboardDirty_) { context_->keyboard->draw(g, theme); keyboardDirty_ = false; }
 #endif
 }
 void DeskUtilityApplication::drawToday() {

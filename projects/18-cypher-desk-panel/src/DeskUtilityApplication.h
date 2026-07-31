@@ -17,6 +17,8 @@ class DeskUtilityApplication : public DeskApplication {
   void draw() override;
   bool handleBack() override;
   void handleSerial(const String &command, Print &out) override;
+  bool keyboardVisible() const override;
+  void handleKey(const DeskKeyEvent &key) override;
   bool dirty() const;
   void clearDirty();
   void refreshDynamic();
@@ -49,6 +51,7 @@ class DeskUtilityApplication : public DeskApplication {
   DeskAppId appId_;
   DeskAppContext *context_ = nullptr;
   bool dirty_ = true;
+  bool keyboardDirty_ = true;
   uint32_t lastRefreshMs_ = 0;
   uint32_t lastLiveRefreshMs_ = 0;
   String settingsSnapshot_;
@@ -88,7 +91,6 @@ class DeskUtilityApplication : public DeskApplication {
   void beginInput(InputPurpose purpose, const String &initial = "");
   void finishInput();
   void cancelInput();
-  void handleKeyboard(int16_t x, int16_t y);
   void pressCalculator(const String &key);
   void loadClockSettings();
   void saveClockSettings();

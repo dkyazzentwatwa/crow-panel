@@ -139,7 +139,7 @@ void setup() {
   router.on("scrap", "open a new autosaving scrap", cmdScrap);
   router.on("focus", "open focus page or start: focus [10|20|30|45]", cmdFocus);
   router.on("ritual", "open ritual, shuffle, or write: ritual [shuffle|write]", cmdRitual);
-  router.on("theme", "cycle or select a theme by name", cmdTheme);
+  router.on("theme", "cycle, list, or select a theme by name", cmdTheme);
   router.on("sound", "set sound: key <0-3>|ambience <0-4>|volume <0-100>", cmdSound);
   router.on("stats", "print gentle writing totals", cmdStats);
   router.on("search", "search notes: search <text> or search tag <tag>", cmdSearch);

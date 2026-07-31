@@ -141,7 +141,8 @@ void CypherDeskOs::begin() {
   weatherService_.begin(&wifi_, &storage_, &events_);
   audio_.begin(&events_);
   keyboard_.reset();
-  context_ = {&events_, &storage_, &wifi_, &settings_, &keyboard_, &time_, &audio_, &weatherService_, &router_, &writer_};
+  context_ = {&events_, &storage_,        &wifi_,   &settings_, &keyboard_, &touch_,
+              &time_,   &audio_,          &weatherService_, &router_,   &writer_};
   registerApplications();
   display_.begin();
   events_.publish(kDeskEventInfo, "Cypher Desk OS booted");
@@ -154,25 +155,54 @@ void CypherDeskOs::tick() {
   time_.tick(now);
   weatherService_.tick(now);
   audio_.tick();
+
+  // One display tick and one touch poll, before anything branches on which app
+  // is active. The Writer used to be excluded here and run its own pair.
+  display_.tick();
+  touch_.tick();
+
   DeskAppId current = router_.currentId();
   if (current != lastApp_) { lastApp_ = current; dirty_ = true; }
   DeskApplication *active = router_.current();
+
+  // Keys first: they fire on touch-DOWN and draw their own press art, so they
+  // must be resolved before any release-edge chrome tap is delivered.
+  serviceKeyboard(active);
   if (active != nullptr) active->tick(now);
   if (current == kDeskAppWriter) return;
-  display_.tick();
-  touch_.tick();
-  DeskTouchEvent event;
-  if (touch_.take(event)) {
-    if (current == kDeskAppHome) handleHomeTouch(event);
-    else if (active != nullptr) active->handleTouch(event);
-    dirty_ = true;
-  }
+
+  deliverTaps(active, current);
   if (now - lastStatusRefreshMs_ >= 1000) {
     lastStatusRefreshMs_ = now;
     if (current == kDeskAppHome && !dirty_) drawHomeStatus();
   }
   if (current != router_.currentId()) dirty_ = true;
   drawActive();
+}
+
+void CypherDeskOs::serviceKeyboard(DeskApplication *active) {
+  if (active == nullptr || !active->keyboardVisible()) return;
+  keyboard_.service(touch_, display_.canvas(), deskTheme(settings_.theme()), &audio_);
+  DeskKeyEvent event;
+  while (keyboard_.nextEvent(event)) active->handleKey(event);
+  if (keyboard_.consumeRedraw()) dirty_ = true;
+}
+
+void CypherDeskOs::deliverTaps(DeskApplication *active, DeskAppId current) {
+  // App chrome commits on RELEASE, and only for contacts the keyboard did not
+  // already claim (owner >= 0 means a key owns that finger).
+  for (uint8_t i = 0; i < DeskTouch::kMaxContacts; ++i) {
+    const DeskTouch::Contact &contact = touch_.contact(i);
+    if (!contact.releasedEdge || contact.owner >= 0) continue;
+    DeskTouchEvent event;
+    event.x = contact.x;
+    event.y = contact.y;
+    event.released = true;
+    event.atMs = millis();
+    if (current == kDeskAppHome) handleHomeTouch(event);
+    else if (active != nullptr) active->handleTouch(event);
+    dirty_ = true;
+  }
 }
 void CypherDeskOs::drawActive() {
   DeskApplication *active = router_.current();
@@ -261,7 +291,10 @@ void CypherDeskOs::printStatus(Print &out) const {
   out.println(F("[proof] os=compile target; writer path preserved; SD/Wi-Fi/audio/microphone require feature-specific device proof"));
 }
 void CypherDeskOs::printFiles(Print &out) { files_.handleSerial("", out); }
-void CypherDeskOs::printTouchDiagnostics(Print &out) const { out.print(F("[touch] os_release_count=")); out.println(touch_.count()); }
+void CypherDeskOs::printTouchDiagnostics(Print &out) const {
+  out.print(F("[touch] "));
+  out.println(touch_.diagnostics());
+}
 void CypherDeskOs::commandApp(const String &args, Print &out) {
   DeskAppId id = appIdFromName(args);
   if (id == kDeskAppCount || !router_.open(id)) out.println(F("[os] app home|writer|today|calendar|contacts|clock|calculator|files|settings|recorder|music|podcasts|weather"));

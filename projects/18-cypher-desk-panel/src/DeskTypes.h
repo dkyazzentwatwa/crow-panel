@@ -29,12 +29,21 @@ constexpr DeskPage kDeskFolder = kDeskPageNotebooks;
 constexpr DeskPage kDeskEditor = kDeskPageEditor;
 constexpr DeskPage kDeskMessage = kDeskPageMessage;
 
+// The five original writing palettes, plus the six ported from project 21.
+// Two of the ported ones are LIGHT themes, which only work because of the
+// onAccent role below.
 enum DeskThemeId {
   kDeskThemeMidnightPlum,
   kDeskThemeMatchaTerminal,
   kDeskThemeDustyRose,
   kDeskThemeRainyBlue,
   kDeskThemePaperback,
+  kDeskThemeOpsTeal,
+  kDeskThemeAmberCrt,
+  kDeskThemeSynthwave,
+  kDeskThemeMatrix,
+  kDeskThemePastel,
+  kDeskThemeCottonCandy,
   kDeskThemeCount
 };
 
@@ -52,7 +61,14 @@ struct DeskThemePalette {
   uint16_t success;
   uint16_t warning;
   uint16_t line;
+  // Text drawn ON TOP of an accent/success/warning fill. Without this a light
+  // theme is unreadable the moment anything is highlighted, because the ink
+  // colour is already dark.
+  uint16_t onAccent;
   uint16_t keyboardRows[4];
+  // True for palettes whose background is lighter than their ink, so chrome
+  // that picks a shadow or divider colour can do the right thing.
+  bool light;
 };
 
 struct DeskDocument {

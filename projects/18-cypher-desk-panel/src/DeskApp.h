@@ -14,7 +14,8 @@ class DeskApp {
  public:
   void begin(bool initializeDisplay = true, class DeskWifiService *wifi = nullptr,
              class DeskStorageService *storageService = nullptr,
-             class DeskAudioService *audio = nullptr);
+             class DeskAudioService *audio = nullptr,
+             class DeskTouch *touch = nullptr);
   void tick();
   bool consumeOsHomeRequest();
   void reloadPreferences();
@@ -85,7 +86,8 @@ class DeskApp {
   uint32_t focusPausedTotalMs_ = 0;
   uint32_t focusStartWords_ = 0;
   bool dirty_ = true;
-  bool wasTouched_ = false;
+  bool keyboardDirty_ = true;
+  class DeskTouch *touch_ = nullptr;
   uint32_t touchCount_ = 0;
   bool osHomeRequested_ = false;
   int16_t lastRawX_ = 0;
@@ -94,6 +96,7 @@ class DeskApp {
   int16_t lastTouchY_ = 0;
 
   const DeskThemePalette &theme() const;
+  bool keyboardVisible() const;
   // Null-safe views onto the shared audio service. The Writer can be opened in
   // a build with no audio backend at all, so every read goes through these.
   void applyAudioPreferences();
@@ -139,7 +142,7 @@ class DeskApp {
   void resetPreferredColumn();
   uint32_t countWords(const String &text) const;
   String titleFromBuffer() const;
-  void handleKeyboardTap(int16_t x, int16_t y, bool inputMode);
+  void applyKeyEvent(const DeskKeyEvent &key);
   void handleTap(int16_t x, int16_t y);
   int16_t calibrateX(int16_t rawX, int16_t rawY) const;
   int16_t calibrateY(int16_t rawX, int16_t rawY) const;

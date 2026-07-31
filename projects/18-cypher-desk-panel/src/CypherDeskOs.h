@@ -53,7 +53,10 @@ class CypherDeskOs {
  private:
   DeskEventBus events_;
   DeskDisplayService display_;
-  DeskTouchService touch_;
+  // One touch source for the whole product. The Writer used to run a second,
+  // press-edge loop over the same panel while the OS used release-edge, so the
+  // launcher and the editor never felt the same.
+  DeskTouch touch_;
   DeskStorageService storage_;
   DeskWifiService wifi_;
   DeskTimeService time_;
@@ -84,6 +87,8 @@ class CypherDeskOs {
   void drawHome();
   void drawHomeStatus();
   void drawActive();
+  void serviceKeyboard(DeskApplication *active);
+  void deliverTaps(DeskApplication *active, DeskAppId current);
   void handleHomeTouch(const DeskTouchEvent &event);
   DeskAppId appIdFromName(String name) const;
   DeskUtilityApplication *utility(DeskAppId id);

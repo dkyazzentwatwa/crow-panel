@@ -137,6 +137,27 @@
 #define CYPHER_DESK_TOUCH_POLL_MS 16
 #endif
 
+// A release is only committed after this long with no contact, so one dropped
+// GT911 frame mid-press can never read as a lift.
+#ifndef CYPHER_DESK_TOUCH_RELEASE_DEBOUNCE_MS
+#define CYPHER_DESK_TOUCH_RELEASE_DEBOUNCE_MS 30
+#endif
+
+// Proximity fallback in pixels for panels whose GT911 track ids churn: an
+// unmatched point this close to a live contact is the same finger, not a new
+// press.
+#ifndef CYPHER_DESK_TOUCH_MATCH_RADIUS
+#define CYPHER_DESK_TOUCH_MATCH_RADIUS 48
+#endif
+
+// Mac-like hold-repeat, applied only to backspace and the arrow keys.
+#ifndef CYPHER_DESK_KEY_REPEAT_DELAY_MS
+#define CYPHER_DESK_KEY_REPEAT_DELAY_MS 400
+#endif
+#ifndef CYPHER_DESK_KEY_REPEAT_MS
+#define CYPHER_DESK_KEY_REPEAT_MS 60
+#endif
+
 #ifndef CYPHER_DESK_TOUCH_MIN_X
 #define CYPHER_DESK_TOUCH_MIN_X 0
 #endif

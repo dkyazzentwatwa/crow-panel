@@ -1,6 +1,8 @@
 #include "DeskApp.h"
 
+#include "DeskKeyboardLayout.h"
 #include "DeskSystemServices.h"
+#include "DeskTouch.h"
 
 #include <CrowPanelShared.h>
 
@@ -67,8 +69,10 @@ const char *DeskApp::audioKeySoundName() const {
 }
 
 void DeskApp::begin(bool initializeDisplay, DeskWifiService *wifi,
-                    DeskStorageService *storageService, DeskAudioService *audio) {
+                    DeskStorageService *storageService, DeskAudioService *audio,
+                    DeskTouch *touch) {
   audio_ = audio;
+  touch_ = touch;
   settings_.begin();
   storage_.begin(storageService);
   clock_.begin(&settings_, wifi);
@@ -78,7 +82,7 @@ void DeskApp::begin(bool initializeDisplay, DeskWifiService *wifi,
   // The service is already up - CypherDeskOs::begin() started it before the
   // Writer ever opens. Just apply the stored preferences.
   applyAudioPreferences();
-  keyboard_.reset();
+  keyboard_.reset(); keyboardDirty_ = true;
   navigator_.reset();
   refreshNotes();
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
@@ -99,6 +103,11 @@ void DeskApp::reloadPreferences() {
   dirty_ = true;
 }
 
+bool DeskApp::keyboardVisible() const {
+  const DeskPage page = navigator_.active();
+  return page == kDeskPageEditor || page == kDeskPageTextInput;
+}
+
 void DeskApp::tick() {
   clock_.tick();
   autosaveEditor();
@@ -108,20 +117,32 @@ void DeskApp::tick() {
     if (millis() - lastSecond >= 1000) { lastSecond = millis(); dirty_ = true; }
   }
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
-  CrowDisplay::tick();
-  if (CrowDisplay::canvas() == nullptr) return;
+  // CrowDisplay::tick() and the touch poll both belong to CypherDeskOs now.
+  // This used to run its own pair over the same panel, on press edges while
+  // the rest of the OS used release edges.
+  if (CrowDisplay::canvas() == nullptr || touch_ == nullptr) return;
+
+  // Keys fire on touch-DOWN and draw their own press art.
+  if (keyboardVisible()) {
+    keyboard_.service(*touch_, CrowDisplay::canvas(), theme(), audio_);
+    DeskKeyEvent key;
+    while (keyboard_.nextEvent(key)) applyKeyEvent(key);
+    if (keyboard_.consumeRedraw()) { keyboardDirty_ = true; dirty_ = true; }
+  }
+
   if (dirty_) { draw(); dirty_ = false; }
-  int16_t rawX, rawY;
-  bool touched = CrowDisplay::touchPoint(rawX, rawY);
-  bool tapped = touched && !wasTouched_;
-  wasTouched_ = touched;
-  if (!tapped) return;
-  lastRawX_ = rawX;
-  lastRawY_ = rawY;
-  lastTouchX_ = calibrateX(rawX, rawY);
-  lastTouchY_ = calibrateY(rawX, rawY);
-  ++touchCount_;
-  handleTap(lastTouchX_, lastTouchY_);
+
+  // Chrome commits on release, and only for fingers no key claimed.
+  for (uint8_t i = 0; i < DeskTouch::kMaxContacts; ++i) {
+    const DeskTouch::Contact &contact = touch_->contact(i);
+    if (!contact.releasedEdge || contact.owner >= 0) continue;
+    lastRawX_ = touch_->lastRawX();
+    lastRawY_ = touch_->lastRawY();
+    lastTouchX_ = contact.x;
+    lastTouchY_ = contact.y;
+    ++touchCount_;
+    handleTap(lastTouchX_, lastTouchY_);
+  }
 #endif
 }
 
@@ -206,7 +227,7 @@ void DeskApp::openFolder(const DeskFolder &folder) {
 void DeskApp::beginTextInput(DeskInputPurpose purpose, const String &initial) {
   inputPurpose_ = purpose;
   inputBuffer_ = initial;
-  keyboard_.reset();
+  keyboard_.reset(); keyboardDirty_ = true;
   navigator_.go(kDeskPageTextInput, true);
   dirty_ = true;
 }
@@ -314,7 +335,7 @@ void DeskApp::openNote(const DeskDocument &document, DeskPage returnPage) {
   meta.lastOpened = millis() / 1000;
   storage_.setMetadata(meta);
   settings_.setLastDocument(document.path);
-  keyboard_.reset();
+  keyboard_.reset(); keyboardDirty_ = true;
   navigator_.go(kDeskPageEditor);
   ensureCursorVisible();
   dirty_ = true;
@@ -575,20 +596,15 @@ String DeskApp::titleFromBuffer() const {
   return storage_.titleFromPath(editor_.document.path);
 }
 
-void DeskApp::handleKeyboardTap(int16_t x, int16_t y, bool inputMode) {
-  DeskKeyEvent key = keyboard_.hitTest(x, y);
+// Shift consumption, key clicks and layer state all live in the keyboard now;
+// this just applies the resulting character or motion.
+void DeskApp::applyKeyEvent(const DeskKeyEvent &key) {
   if (key.action == kDeskKeyNone) return;
-  if (audio_) audio_->keyPress();
-  if (key.action == kDeskKeyShift || key.action == kDeskKeySymbols) {
-    keyboard_.applyModeAction(key.action);
-    dirty_ = true;
-    return;
-  }
-  if (inputMode) {
+  if (navigator_.active() == kDeskPageTextInput) {
     if (key.action == kDeskKeyText && inputBuffer_.length() < 64) inputBuffer_ += key.text;
-    else if (key.action == kDeskKeyBackspace && inputBuffer_.length()) inputBuffer_.remove(inputBuffer_.length() - 1);
+    else if (key.action == kDeskKeyBackspace && inputBuffer_.length())
+      inputBuffer_.remove(inputBuffer_.length() - 1);
     else if (key.action == kDeskKeyEnter) completeTextInput();
-    if (keyboard_.shifted()) keyboard_.applyModeAction(kDeskKeyShift);
     dirty_ = true;
     return;
   }
@@ -597,7 +613,7 @@ void DeskApp::handleKeyboardTap(int16_t x, int16_t y, bool inputMode) {
   else if (key.action == kDeskKeyEnter) insertTextAtCursor("\n");
   else if (key.action == kDeskKeyLeft) moveEditorLeft();
   else if (key.action == kDeskKeyRight) moveEditorRight();
-  if (keyboard_.shifted()) keyboard_.applyModeAction(kDeskKeyShift);
+  dirty_ = true;
 }
 
 void DeskApp::handleTap(int16_t x, int16_t y) {
@@ -611,8 +627,7 @@ void DeskApp::handleTap(int16_t x, int16_t y) {
   if (page == kDeskPageTextInput) {
     if (inside(x, y, 16, 14, 124, 56)) { navigator_.back(); dirty_ = true; return; }
     if (inside(x, y, 866, 14, 142, 56)) { completeTextInput(); return; }
-    handleKeyboardTap(x, y, true);
-    return;
+    return;  // keys are serviced on press edges in tick()
   }
   if (page == kDeskPageEditor) {
     if (focusActive_) {
@@ -636,8 +651,7 @@ void DeskApp::handleTap(int16_t x, int16_t y) {
         return;
       }
     }
-    handleKeyboardTap(x, y, false);
-    return;
+    return;  // keys are serviced on press edges in tick()
   }
 
   if (page == kDeskPageDesk && inside(x, y, 618, 14, 118, 54)) {
@@ -822,7 +836,23 @@ void DeskApp::commandDaily() { openDaily(); }
 void DeskApp::commandScrap() { openScrap(); }
 void DeskApp::commandFocus(const String &args) { int minutes = args.toInt(); if (minutes == 10 || minutes == 20 || minutes == 30 || minutes == 45) startFocus(minutes); else route(kDeskPageFocus); }
 void DeskApp::commandRitual(const String &args) { String v = args; v.toLowerCase(); if (v == "shuffle") prompts_.shuffle(); else if (v == "write") writeFromPrompt(); else route(kDeskPageRitual); dirty_ = true; }
-void DeskApp::commandTheme(const String &args) { String v = args; v.trim(); settings_.setTheme(v.length() ? deskThemeFromName(v) : nextDeskTheme(settings_.theme())); dirty_ = true; }
+void DeskApp::commandTheme(const String &args) {
+  String value = args;
+  value.trim();
+  if (value.equalsIgnoreCase("list")) {
+    for (uint8_t i = 0; i < kDeskThemeCount; ++i) {
+      Serial.print(F("[theme] "));
+      Serial.print(i == settings_.theme() ? "* " : "  ");
+      Serial.println(deskThemeName(static_cast<DeskThemeId>(i)));
+    }
+    return;
+  }
+  settings_.setTheme(value.length() ? deskThemeFromName(value) : nextDeskTheme(settings_.theme()));
+  Serial.print(F("[theme] "));
+  Serial.println(deskThemeName(settings_.theme()));
+  dirty_ = true;
+  keyboardDirty_ = true;
+}
 void DeskApp::commandSound(const String &args) { String v = args; v.toLowerCase(); if (v.startsWith("ambience ")) { uint8_t a = v.substring(9).toInt(); settings_.setAmbience(a); if (audio_) audio_->setAmbience(a); } else if (v.startsWith("key ")) { uint8_t k = v.substring(4).toInt(); settings_.setKeySound(k); if (audio_) audio_->setKeySound(k); } else if (v.startsWith("volume ")) { uint8_t volume = v.substring(7).toInt(); settings_.setVolume(volume); if (audio_) audio_->setVolume(volume); } Serial.println(audioStatus()); dirty_ = true; }
 void DeskApp::commandStats(Print &out) const { DeskStats s = storage_.stats(clock_.isoDate()); out.print(F("[stats] today=")); out.print(s.quietMinutesToday); out.print(F("min week=")); out.print(s.quietMinutesWeek); out.print(F("min words=")); out.print(s.wordsAddedWeek); out.print(F(" completed=")); out.print(s.sessionsCompleted); out.print(F(" last=")); out.println(s.lastSession.length() ? s.lastSession : "none yet"); }
 void DeskApp::commandSearch(const String &argsValue, Print &out) const {
@@ -1182,7 +1212,7 @@ void DeskApp::drawEditor(Arduino_GFX *g) {
     }
   }
   if (editingScrap_ && !focusActive_) button(g, t, 20, 268, 140, 38, "DISCARD");
-  keyboard_.draw(g, t);
+  if (keyboardDirty_) { keyboard_.draw(g, t); keyboardDirty_ = false; }
 }
 
 void DeskApp::drawTextInput(Arduino_GFX *g) {
@@ -1200,7 +1230,7 @@ void DeskApp::drawTextInput(Arduino_GFX *g) {
     for (size_t i = 0; i < inputBuffer_.length(); ++i) shown += '*';
   }
   Widgets::text(g, 94, 170, shown.length() ? fitLabel(g, shown, 820, Widgets::fontL()).c_str() : "Type here...", Widgets::fontL(), shown.length() ? t.ink : t.muted, Widgets::kLeft);
-  keyboard_.draw(g, t);
+  if (keyboardDirty_) { keyboard_.draw(g, t); keyboardDirty_ = false; }
 }
 
 void DeskApp::drawMessage(Arduino_GFX *g) {
@@ -1226,7 +1256,16 @@ void DeskApp::drawConfirm(Arduino_GFX *g) {
 void DeskApp::draw() {
   Arduino_GFX *g = CrowDisplay::canvas();
   if (!g) return;
-  g->fillScreen(theme().background);
+  // Clear only the page area when the keyboard is up. Repainting the whole
+  // screen on every keystroke wiped the pressed-key highlight out from under
+  // the finger that was still holding it - and repainted 296 rows of keys to
+  // show one new character.
+  if (keyboardVisible()) {
+    g->fillRect(0, 0, DeskKeyboardLayout::kScreenW, DeskKeyboardLayout::kBandY,
+                theme().background);
+  } else {
+    g->fillScreen(theme().background);
+  }
   switch (navigator_.active()) {
     case kDeskPageDesk: drawDesk(g); break;
     case kDeskPageNotebooks: drawNotebooks(g); break;
