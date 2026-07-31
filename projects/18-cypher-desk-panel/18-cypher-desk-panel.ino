@@ -153,7 +153,7 @@ void setup() {
   router.on("calendar", "calendar list|add YYYY-MM-DD HH:MM title|delete N", cmdCalendar);
   router.on("contacts", "contacts list|add name|delete N", cmdContacts);
   router.on("alarm", "alarm on|off or timer <minutes>", cmdAlarm);
-  router.on("media", "indexed local music, podcast, and recording counts", cmdMedia);
+  router.on("media", "media list|<n>|play|pause|stop|next|prev|shuffle|repeat|seek <s>", cmdMedia);
   router.on("audio", "audio speaker|mic|record [name]|play <path>|stop|volume N|status", cmdAudio);
   router.on("recovery", "recover structured writes: recovery run", cmdRecovery);
   router.on("weather", "weather status|refresh|location <lat> <lon> [label]", cmdWeather);

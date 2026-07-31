@@ -115,8 +115,6 @@ class DeskUtilityApplication : public DeskApplication {
   void drawFiles();
   void drawSettings();
   void drawRecorder();
-  void drawMusic();
-  void drawPodcasts();
   void drawWeather();
   void initializeCalendarMonth();
   void shiftCalendarMonth(int8_t delta);

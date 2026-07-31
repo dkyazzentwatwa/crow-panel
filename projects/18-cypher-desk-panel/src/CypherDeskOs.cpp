@@ -19,8 +19,8 @@ const DeskAppDescriptor kHomeApps[12] = {
     {kDeskAppFiles, "FILES", "SD workspace", 0},
     {kDeskAppSettings, "SETTINGS", "Wi-Fi + system", 0},
     {kDeskAppRecorder, "RECORDER", "hardware guarded", 0},
-    {kDeskAppMusic, "MUSIC", "local WAV", 0},
-    {kDeskAppPodcasts, "PODCASTS", "local folder", 0},
+    {kDeskAppMusic, "MUSIC", "SD library", 0},
+    {kDeskAppPodcasts, "PODCASTS", "local episodes", 0},
     {kDeskAppWeather, "WEATHER", "local forecast", 0}};
 
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
@@ -206,13 +206,28 @@ void CypherDeskOs::deliverTaps(DeskApplication *active, DeskAppId current) {
 }
 void CypherDeskOs::drawActive() {
   DeskApplication *active = router_.current();
-  if (router_.currentId() == kDeskAppHome) {
+  const DeskAppId current = router_.currentId();
+  if (current == kDeskAppHome) {
     if (dirty_) drawHome();
   } else if (active != nullptr) {
-    DeskUtilityApplication *app = utility(router_.currentId());
-    if (dirty_ || (app != nullptr && app->dirty())) active->draw();
+    // Both app families keep their own dirty flag; ask whichever one owns this
+    // id, so a screen that changed without the OS knowing still repaints.
+    DeskUtilityApplication *utilityApp = utility(current);
+    DeskMusicApplication *musicApp = music(current);
+    const bool appDirty = (utilityApp != nullptr && utilityApp->dirty()) ||
+                          (musicApp != nullptr && musicApp->dirty());
+    if (dirty_ || appDirty) {
+      active->draw();
+      if (musicApp != nullptr) musicApp->clearDirty();
+    }
   }
   dirty_ = false;
+}
+
+DeskMusicApplication *CypherDeskOs::music(DeskAppId id) {
+  if (id == kDeskAppMusic) return &music_;
+  if (id == kDeskAppPodcasts) return &podcasts_;
+  return nullptr;
 }
 void CypherDeskOs::drawHome() {
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
@@ -278,7 +293,6 @@ DeskUtilityApplication *CypherDeskOs::utility(DeskAppId id) {
     case kDeskAppContacts: return &contacts_; case kDeskAppClock: return &clock_;
     case kDeskAppCalculator: return &calculator_; case kDeskAppFiles: return &files_;
     case kDeskAppSettings: return &settingsApp_; case kDeskAppRecorder: return &recorder_;
-    case kDeskAppMusic: return &music_; case kDeskAppPodcasts: return &podcasts_;
     case kDeskAppWeather: return &weather_; default: return nullptr;
   }
 }
@@ -316,11 +330,16 @@ void CypherDeskOs::commandCalculator(const String &args, Print &out) { calculato
 void CypherDeskOs::commandCalendar(const String &args, Print &out) { calendar_.handleSerial(args, out); }
 void CypherDeskOs::commandContacts(const String &args, Print &out) { contacts_.handleSerial(args, out); }
 void CypherDeskOs::commandAlarm(const String &args, Print &out) { clock_.handleSerial(args, out); }
-void CypherDeskOs::commandMedia(const String &, Print &out) {
-  out.print(F("[media] music_wav=")); out.print(storage_.countFiles(CYPHER_DESK_MUSIC_DIR, ".wav"));
-  out.print(F(" podcasts=")); out.print(storage_.countFiles(CYPHER_DESK_PODCASTS_DIR));
-  out.print(F(" recordings=")); out.println(storage_.countFiles(CYPHER_DESK_RECORDINGS_DIR, ".wav"));
+void CypherDeskOs::commandMedia(const String &args, Print &out) {
+  // Routes to whichever media app is open so an injected command drives the
+  // same state a tap does; defaults to Music.
+  DeskMusicApplication *app = music(router_.currentId());
+  if (app == nullptr) app = &music_;
+  app->command(args, out);
+  out.print(F("[media] recordings="));
+  out.println(storage_.countFiles(CYPHER_DESK_RECORDINGS_DIR, ".wav"));
   audio_.print(out);
+  dirty_ = true;
 }
 void CypherDeskOs::commandAudio(const String &args, Print &out) {
   String value = args; value.toLowerCase();

@@ -2,6 +2,7 @@
 #define CYPHER_DESK_OS_H
 
 #include "DeskAppRouter.h"
+#include "DeskMusicApplication.h"
 #include "DeskEventBus.h"
 #include "DeskSettings.h"
 #include "DeskSystemServices.h"
@@ -74,8 +75,8 @@ class CypherDeskOs {
   DeskUtilityApplication files_;
   DeskUtilityApplication settingsApp_;
   DeskUtilityApplication recorder_;
-  DeskUtilityApplication music_;
-  DeskUtilityApplication podcasts_;
+  DeskMusicApplication music_;
+  DeskMusicApplication podcasts_;
   DeskUtilityApplication weather_;
   DeskAppContext context_;
   bool dirty_ = true;
@@ -92,6 +93,7 @@ class CypherDeskOs {
   void handleHomeTouch(const DeskTouchEvent &event);
   DeskAppId appIdFromName(String name) const;
   DeskUtilityApplication *utility(DeskAppId id);
+  DeskMusicApplication *music(DeskAppId id);
 };
 
 #endif

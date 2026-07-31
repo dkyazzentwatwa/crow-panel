@@ -41,8 +41,6 @@ const char *appTitle(DeskAppId id) {
     case kDeskAppFiles: return "Files";
     case kDeskAppSettings: return "Settings";
     case kDeskAppRecorder: return "Recorder";
-    case kDeskAppMusic: return "Music";
-    case kDeskAppPodcasts: return "Podcasts";
     case kDeskAppWeather: return "Weather";
     default: return "App";
   }
@@ -218,8 +216,6 @@ void DeskUtilityApplication::onEnter() {
   if (context_ != nullptr) loadLocalData(context_->storage);
   if (appId_ == kDeskAppFiles) refreshFiles();
   if (appId_ == kDeskAppCalendar) initializeCalendarMonth();
-  if (appId_ == kDeskAppMusic) { fileDirectory_ = CYPHER_DESK_MUSIC_DIR; refreshFiles(); }
-  if (appId_ == kDeskAppPodcasts) { fileDirectory_ = CYPHER_DESK_PODCASTS_DIR; refreshFiles(); }
 }
 bool DeskUtilityApplication::dirty() const { return dirty_; }
 void DeskUtilityApplication::clearDirty() { dirty_ = false; }
@@ -544,15 +540,6 @@ bool DeskUtilityApplication::handleTouch(const DeskTouchEvent &event) {
         else context_->audio->startRecording();
       } else if (inside(x, y, 350, 466, 324, 54) && context_->audio->recordingPath().length())
         context_->audio->playWav(context_->audio->recordingPath());
-      dirty_ = true;
-      break;
-    case kDeskAppMusic:
-    case kDeskAppPodcasts:
-      for (uint8_t row = 0; row < min(static_cast<uint8_t>(5), fileEntryCount_); ++row) {
-        if (inside(x, y, 80, 166 + row * 58, 864, 48) && !fileEntries_[row].directory)
-          context_->audio->playWav(fileEntries_[row].path);
-      }
-      if (inside(x, y, 760, 480, 184, 52)) context_->audio->stopPlayback();
       dirty_ = true;
       break;
     case kDeskAppWeather:
@@ -988,34 +975,6 @@ void DeskUtilityApplication::drawRecorderDynamic() {
             String(context_->audio->recordingDurationMs() / 1000) + "s" : ""), t.accent, Widgets::kCenter);
 #endif
 }
-void DeskUtilityApplication::drawMusic() {
-#if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
-  drawShell("LOCAL PCM WAV LIBRARY  //  SD-BACKED PLAYBACK");
-  Arduino_GFX *g = CrowDisplay::canvas(); const DeskThemePalette &t = deskTheme(context_->settings->theme());
-  osCard(g, t, 60, 122, 904, 356, t.accent2);
-  smallText(g, 82, 148, String(context_->storage->countFiles(CYPHER_DESK_MUSIC_DIR, ".wav")) + " WAV FILES  //  16 kHz MONO PCM ONLY", t.accent);
-  for (uint8_t row = 0; row < min(static_cast<uint8_t>(5), fileEntryCount_); ++row)
-    osButton(g, t, 80, 166 + row * 58, 864, 48, fileEntries_[row].name,
-             context_->audio->playing() && context_->audio->playbackPath() == fileEntries_[row].path);
-  if (!fileEntryCount_) smallText(g, 512, 250, "Copy compatible WAV files to /cypher-puter/desk/music/", t.muted, Widgets::kCenter);
-  smallText(g, 82, 456, context_->audio->status() + "  //  " + context_->audio->testStatus(), t.warning);
-  osButton(g, t, 760, 480, 184, 52, "STOP");
-#endif
-}
-void DeskUtilityApplication::drawPodcasts() {
-#if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
-  drawShell("LOCAL PODCAST FOLDER  //  SD ONLY, NO RSS OR DOWNLOADS");
-  Arduino_GFX *g = CrowDisplay::canvas(); const DeskThemePalette &t = deskTheme(context_->settings->theme());
-  osCard(g, t, 60, 122, 904, 356, t.accent3);
-  smallText(g, 82, 148, String(context_->storage->countFiles(CYPHER_DESK_PODCASTS_DIR)) + " LOCAL FILES  //  WAV PLAYBACK WHEN HARDWARE IS READY", t.accent);
-  for (uint8_t row = 0; row < min(static_cast<uint8_t>(5), fileEntryCount_); ++row)
-    osButton(g, t, 80, 166 + row * 58, 864, 48, fileEntries_[row].name,
-             context_->audio->playing() && context_->audio->playbackPath() == fileEntries_[row].path);
-  if (!fileEntryCount_) smallText(g, 512, 250, "Copy local WAV files to /cypher-puter/desk/podcasts/", t.muted, Widgets::kCenter);
-  smallText(g, 82, 456, "RSS, downloading, cloud sync, and simulated playback are outside this release.", t.warning);
-  osButton(g, t, 760, 480, 184, 52, "STOP");
-#endif
-}
 void DeskUtilityApplication::drawWeather() {
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
   drawShell("OPEN-METEO FORECAST  //  USER-CONFIGURED LOCATION");
@@ -1075,8 +1034,6 @@ void DeskUtilityApplication::draw() {
     case kDeskAppFiles: drawFiles(); break;
     case kDeskAppSettings: drawSettings(); break;
     case kDeskAppRecorder: drawRecorder(); break;
-    case kDeskAppMusic: drawMusic(); break;
-    case kDeskAppPodcasts: drawPodcasts(); break;
     case kDeskAppWeather: drawWeather(); break;
     default: break;
   }
