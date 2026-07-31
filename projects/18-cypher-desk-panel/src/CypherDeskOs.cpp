@@ -1,14 +1,32 @@
 #include "CypherDeskOs.h"
 
 #include "DeskTheme.h"
+#include "DeskWidgets.h"
 #include <CrowPanelShared.h>
 
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
 #include <Arduino_GFX_Library.h>
-#include <U8g2lib.h>
+// smallText/button/card/progressBar/blend565 - one copy for the project.
+using namespace DeskUi;
 #endif
 
 namespace {
+// 4x4 grid: 13 apps with headroom. The old 3x4 was exactly full when Video was
+// added. One set of numbers, used by both drawHome() and handleHomeTouch() -
+// the two used to carry duplicate arithmetic that had to be kept in step.
+constexpr int16_t kGridLeft = 24;
+constexpr int16_t kGridTop = 108;
+constexpr int16_t kTileW = 232;
+constexpr int16_t kTileH = 100;
+constexpr int16_t kTilePitchX = 248;
+constexpr int16_t kTilePitchY = 112;
+constexpr uint8_t kGridCols = 4;
+// Status bar: the strip that repaints every second, and the now-playing pill.
+constexpr int16_t kStatusX = 360;
+constexpr int16_t kPillRight = 1004;
+constexpr int16_t kPillY = 10;
+constexpr int16_t kPillH = 30;
+
 const DeskAppDescriptor kHomeApps[13] = {
     {kDeskAppWriter, "WRITER", "notes + focus", 0},
     {kDeskAppToday, "TODAY", "daily command desk", 0},
@@ -24,21 +42,14 @@ const DeskAppDescriptor kHomeApps[13] = {
     {kDeskAppVideo, "VIDEO", "MJPEG clips", 0},
     {kDeskAppWeather, "WEATHER", "local forecast", 0}};
 
-#if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
-void smallText(Arduino_GFX *g, int16_t x, int16_t topY, const String &text, uint16_t color,
-               Widgets::Align align = Widgets::kLeft) {
-  g->setFont(u8g2_font_cubic11_h_cjk);
-  g->setUTF8Print(true);
-  g->setTextSize(1);
-  g->setTextColor(color);
-  int16_t bx, by; uint16_t bw, bh;
-  g->getTextBounds(text, 0, 0, &bx, &by, &bw, &bh);
-  int16_t drawX = x - bx;
-  if (align == Widgets::kCenter) drawX = x - static_cast<int16_t>(bw) / 2 - bx;
-  if (align == Widgets::kRight) drawX = x - static_cast<int16_t>(bw) - bx;
-  g->setCursor(drawX, topY - by);
-  g->print(text);
+constexpr uint8_t kHomeAppCount = sizeof(kHomeApps) / sizeof(kHomeApps[0]);
+
+void homeTileOrigin(uint8_t index, int16_t &x, int16_t &y) {
+  x = kGridLeft + (index % kGridCols) * kTilePitchX;
+  y = kGridTop + (index / kGridCols) * kTilePitchY;
 }
+
+#if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
 
 void drawHomeIcon(Arduino_GFX *g, DeskAppId id, int16_t x, int16_t y, uint16_t accent,
                   uint16_t ink) {
@@ -130,16 +141,34 @@ void drawHomeIcon(Arduino_GFX *g, DeskAppId id, int16_t x, int16_t y, uint16_t a
 CypherDeskOs::CypherDeskOs()
     : today_(kDeskAppToday), calendar_(kDeskAppCalendar), contacts_(kDeskAppContacts),
       clock_(kDeskAppClock), calculator_(kDeskAppCalculator), files_(kDeskAppFiles),
-      settingsApp_(kDeskAppSettings), recorder_(kDeskAppRecorder), music_(kDeskAppMusic),
-      podcasts_(kDeskAppPodcasts), weather_(kDeskAppWeather) {}
+      settingsApp_(kDeskAppSettings), recorder_(kDeskAppRecorder),
+#if USE_CYPHER_DESK_MEDIA
+      music_(kDeskAppMusic), podcasts_(kDeskAppPodcasts),
+#endif
+      weather_(kDeskAppWeather) {}
 
 void CypherDeskOs::registerApplications() {
-  DeskApplication *apps[] = {&writer_, &today_, &calendar_, &contacts_, &clock_, &calculator_,
-                             &files_, &settingsApp_, &recorder_, &music_, &podcasts_,
-                             &video_,  &weather_};
+  DeskApplication *apps[] = {&writer_,  &today_,       &calendar_, &contacts_,
+                             &clock_,   &calculator_,  &files_,    &settingsApp_,
+                             &recorder_,
+#if USE_CYPHER_DESK_MEDIA
+                             &music_, &podcasts_,
+#endif
+#if USE_CYPHER_DESK_VIDEO
+                             &video_,
+#endif
+                             &weather_};
   for (DeskApplication *app : apps) {
     router_.registerApp(app);
     app->begin(context_);
+  }
+  // The launcher shows exactly what registered, so a build without media or
+  // video has no dead tiles and the grid closes up behind them.
+  homeTileCount_ = 0;
+  for (const DeskAppDescriptor &descriptor : kHomeApps) {
+    if (router_.has(descriptor.id) && homeTileCount_ < 16) {
+      homeTiles_[homeTileCount_++] = &descriptor;
+    }
   }
 }
 void CypherDeskOs::begin() {
@@ -154,7 +183,9 @@ void CypherDeskOs::begin() {
               &time_,   &audio_,          &weatherService_, &router_,   &writer_};
   registerApplications();
   display_.begin();
+  DeskSplash::run(deskTheme(settings_.theme()), "a calm place for words");
   events_.publish(kDeskEventInfo, "Cypher Desk OS booted");
+  lastActivityMs_ = millis();
   dirty_ = true;
 }
 void CypherDeskOs::tick() {
@@ -181,12 +212,37 @@ void CypherDeskOs::tick() {
   if (current == kDeskAppWriter) return;
 
   deliverTaps(active, current);
+  serviceIdleDim(now);
   if (now - lastStatusRefreshMs_ >= 1000) {
     lastStatusRefreshMs_ = now;
     if (current == kDeskAppHome && !dirty_) drawHomeStatus();
   }
   if (current != router_.currentId()) dirty_ = true;
   drawActive();
+}
+
+// Dims the backlight after a quiet spell and wakes on the next contact. The
+// tap that wakes the panel must not also fire whatever it landed on, so every
+// binding is dropped - otherwise a pending release replays as a keystroke.
+void CypherDeskOs::serviceIdleDim(uint32_t nowMs) {
+#if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
+  if (touch_.activeCount() > 0) {
+    lastActivityMs_ = nowMs;
+    if (dimmed_) {
+      dimmed_ = false;
+      CrowDisplay::setBacklight(CYPHER_DESK_BRIGHTNESS);
+      touch_.forgetBindings();
+      dirty_ = true;
+    }
+    return;
+  }
+  if (!dimmed_ && nowMs - lastActivityMs_ >= CYPHER_DESK_IDLE_DIM_MS) {
+    dimmed_ = true;
+    CrowDisplay::setBacklight(CYPHER_DESK_IDLE_DIM_LEVEL);
+  }
+#else
+  (void)nowMs;
+#endif
 }
 
 void CypherDeskOs::serviceKeyboard(DeskApplication *active) {
@@ -217,34 +273,56 @@ void CypherDeskOs::drawActive() {
   DeskApplication *active = router_.current();
   const DeskAppId current = router_.currentId();
   if (current == kDeskAppHome) {
-    if (dirty_) drawHome();
+    if (dirty_) { drawHome(); flushFrame(); }
   } else if (active != nullptr) {
     // Both app families keep their own dirty flag; ask whichever one owns this
     // id, so a screen that changed without the OS knowing still repaints.
     DeskUtilityApplication *utilityApp = utility(current);
+    bool appDirty = utilityApp != nullptr && utilityApp->dirty();
+#if USE_CYPHER_DESK_MEDIA
     DeskMusicApplication *musicApp = music(current);
+    appDirty = appDirty || (musicApp != nullptr && musicApp->dirty());
+#endif
+#if USE_CYPHER_DESK_VIDEO
     DeskVideoApplication *videoApplication = videoApp(current);
-    const bool appDirty = (utilityApp != nullptr && utilityApp->dirty()) ||
-                          (musicApp != nullptr && musicApp->dirty()) ||
-                          (videoApplication != nullptr && videoApplication->dirty());
+    appDirty = appDirty || (videoApplication != nullptr && videoApplication->dirty());
+#endif
     if (dirty_ || appDirty) {
       active->draw();
+#if USE_CYPHER_DESK_MEDIA
       if (musicApp != nullptr) musicApp->clearDirty();
+#endif
+#if USE_CYPHER_DESK_VIDEO
       if (videoApplication != nullptr) videoApplication->clearDirty();
+#endif
+      flushFrame();
     }
   }
   dirty_ = false;
 }
 
+// The panel is in manual-flush mode, so nothing reaches the glass until this
+// runs. That is what makes per-key press art, the scrub bar and the video
+// window able to push their own rectangles without the rest of the screen
+// being re-synced behind them.
+void CypherDeskOs::flushFrame() {
+#if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
+  CrowDisplay::flush();
+#endif
+}
+
+#if USE_CYPHER_DESK_MEDIA
 DeskMusicApplication *CypherDeskOs::music(DeskAppId id) {
   if (id == kDeskAppMusic) return &music_;
   if (id == kDeskAppPodcasts) return &podcasts_;
   return nullptr;
 }
-
+#endif
+#if USE_CYPHER_DESK_VIDEO
 DeskVideoApplication *CypherDeskOs::videoApp(DeskAppId id) {
   return id == kDeskAppVideo ? &video_ : nullptr;
 }
+#endif
 void CypherDeskOs::drawHome() {
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
   Arduino_GFX *g = display_.canvas();
@@ -256,42 +334,83 @@ void CypherDeskOs::drawHome() {
   drawHomeStatus();
   g->fillRect(0, 52, 256, 4, theme.accent); g->fillRect(256, 52, 256, 4, theme.accent2);
   g->fillRect(512, 52, 256, 4, theme.success); g->fillRect(768, 52, 256, 4, theme.accent3);
-  smallText(g, 24, 76, "OFFLINE-FIRST CREATOR COMMAND DESK  //  12 APPS", theme.accent);
+  smallText(g, 24, 76,
+            String("OFFLINE-FIRST CREATOR COMMAND DESK  //  ") + homeTileCount_ + " APPS",
+            theme.accent);
   const uint16_t accents[] = {theme.accent, theme.accent2, theme.success, theme.accent3};
-  for (uint8_t index = 0; index < 12; ++index) {
-    uint8_t col = index % 3; uint8_t row = index / 3;
-    int16_t x = 24 + col * 333; int16_t y = 108 + row * 112;
-    uint16_t accent = accents[index % 4];
-    Widgets::panel(g, x + 4, y + 5, 310, 94, 14, theme.background);
-    Widgets::panel(g, x, y, 310, 94, 14, theme.panel, 2, accent);
-    drawHomeIcon(g, kHomeApps[index].id, x + 14, y + 12, accent, theme.background);
-    smallText(g, x + 82, y + 24, kHomeApps[index].title, theme.ink);
-    smallText(g, x + 82, y + 52, kHomeApps[index].subtitle, theme.muted);
+  for (uint8_t index = 0; index < homeTileCount_; ++index) {
+    int16_t x, y;
+    homeTileOrigin(index, x, y);
+    const uint16_t accent = accents[index % 4];
+    Widgets::panel(g, x + 4, y + 5, kTileW, kTileH, 14, theme.background);
+    Widgets::panel(g, x, y, kTileW, kTileH, 14, theme.panel, 2, accent);
+    drawHomeIcon(g, homeTiles_[index]->id, x + 14, y + 20, accent, theme.background);
+    smallText(g, x + 78, y + 28, homeTiles_[index]->title, theme.ink);
+    smallText(g, x + 78, y + 54, homeTiles_[index]->subtitle, theme.muted);
   }
   DeskEvent last = events_.recent();
-  smallText(g, 24, 574, last.message.length() ? last.message : "ready", theme.muted);
+  smallText(g, 24, 570, last.message.length() ? last.message : "ready", theme.muted);
 #endif
 }
+// Repainted once a second on its own strip, so a ticking clock and a moving
+// now-playing label never cost a full-screen redraw.
 void CypherDeskOs::drawHomeStatus() {
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
   Arduino_GFX *g = display_.canvas();
   if (g == nullptr) return;
   const DeskThemePalette &theme = deskTheme(settings_.theme());
-  g->fillRect(400, 0, 624, 52, theme.shell);
-  smallText(g, 1000, 18, time_.timeText() + "  //  WIFI " + wifi_.stateLabel() +
-            "  //  SD " + storage_.stateLabel() + "  //  REC " +
-            (audio_.recording() ? "ON" : "OFF") + "  //  ALARM " +
-            (clock_.alarmEnabled() ? "ON" : "OFF"), theme.muted, Widgets::kRight);
+  g->fillRect(kStatusX, 0, 1024 - kStatusX, 52, theme.shell);
+
+  int16_t cursor = 1000;
+  // Now-playing pill, tappable straight through to whichever media app owns
+  // the audio - the point of a status bar is that it is a shortcut.
+  const String nowPlaying = nowPlayingLabel();
+  if (nowPlaying.length()) {
+    const int16_t width = smallTextWidth(g, nowPlaying) + 34;
+    const int16_t x = kPillRight - width;
+    Widgets::panel(g, x, kPillY, width, kPillH, kPillH / 2, theme.accent);
+    smallText(g, x + width / 2, kPillY + 7, nowPlaying, theme.onAccent, Widgets::kCenter);
+    nowPlayingPillX_ = x;
+    nowPlayingPillW_ = width;
+    cursor = x - 16;
+  } else {
+    nowPlayingPillW_ = 0;
+  }
+
+  smallText(g, cursor, 18,
+            time_.timeText() + "  //  WIFI " + wifi_.stateLabel() + "  //  SD " +
+                storage_.stateLabel() + "  //  REC " + (audio_.recording() ? "ON" : "OFF") +
+                "  //  ALARM " + (clock_.alarmEnabled() ? "ON" : "OFF"),
+            theme.muted, Widgets::kRight);
+  CrowDisplay::flush(kStatusX, 0, 1024 - kStatusX, 52);
 #endif
 }
+String CypherDeskOs::nowPlayingLabel() const {
+#if USE_CYPHER_DESK_MEDIA
+  if (music_.playing()) return music_.nowPlayingLabel();
+  if (podcasts_.playing()) return podcasts_.nowPlayingLabel();
+#endif
+  return String();
+}
 void CypherDeskOs::handleHomeTouch(const DeskTouchEvent &event) {
-  if (!event.released || event.y < 108) return;
-  int16_t col = (event.x - 24) / 333;
-  int16_t row = (event.y - 108) / 112;
-  if (col < 0 || col > 2 || row < 0 || row > 3) return;
-  int16_t tileX = 24 + col * 333; int16_t tileY = 108 + row * 112;
-  if (event.x >= tileX && event.x < tileX + 310 && event.y >= tileY && event.y < tileY + 94)
-    router_.open(kHomeApps[row * 3 + col].id);
+  if (!event.released) return;
+  // The now-playing pill lives in the status bar, above the grid.
+#if USE_CYPHER_DESK_MEDIA
+  if (nowPlayingPillW_ > 0 && event.y < 52 && event.x >= nowPlayingPillX_ &&
+      event.x < nowPlayingPillX_ + nowPlayingPillW_) {
+    router_.open(music_.playing() ? kDeskAppMusic : kDeskAppPodcasts);
+    return;
+  }
+#endif
+  if (event.y < kGridTop) return;
+  for (uint8_t index = 0; index < homeTileCount_; ++index) {
+    int16_t x, y;
+    homeTileOrigin(index, x, y);
+    if (deskInside(event.x, event.y, x, y, kTileW, kTileH)) {
+      router_.open(homeTiles_[index]->id);
+      return;
+    }
+  }
 }
 DeskAppId CypherDeskOs::appIdFromName(String name) const {
   name.toLowerCase(); name.trim();
@@ -347,15 +466,25 @@ void CypherDeskOs::commandCalendar(const String &args, Print &out) { calendar_.h
 void CypherDeskOs::commandContacts(const String &args, Print &out) { contacts_.handleSerial(args, out); }
 void CypherDeskOs::commandAlarm(const String &args, Print &out) { clock_.handleSerial(args, out); }
 void CypherDeskOs::commandVideo(const String &args, Print &out) {
+#if USE_CYPHER_DESK_VIDEO
   video_.command(args, out);
   dirty_ = true;
+#else
+  (void)args;
+  out.println(F("[video] not built: compile with -DUSE_CYPHER_DESK_VIDEO=1"));
+#endif
 }
 void CypherDeskOs::commandMedia(const String &args, Print &out) {
   // Routes to whichever media app is open so an injected command drives the
   // same state a tap does; defaults to Music.
+#if USE_CYPHER_DESK_MEDIA
   DeskMusicApplication *app = music(router_.currentId());
   if (app == nullptr) app = &music_;
   app->command(args, out);
+#else
+  (void)args;
+  out.println(F("[media] library not built: compile with -DUSE_CYPHER_DESK_MEDIA=1"));
+#endif
   out.print(F("[media] recordings="));
   out.println(storage_.countFiles(CYPHER_DESK_RECORDINGS_DIR, ".wav"));
   audio_.print(out);

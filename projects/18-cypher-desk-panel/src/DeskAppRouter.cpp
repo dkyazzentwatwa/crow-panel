@@ -6,6 +6,8 @@ bool DeskAppRouter::registerApp(DeskApplication *app) {
   return true;
 }
 
+bool DeskAppRouter::has(DeskAppId id) const { return find(id) != nullptr; }
+
 DeskApplication *DeskAppRouter::find(DeskAppId id) const {
   for (uint8_t i = 0; i < appCount_; ++i) if (apps_[i]->id() == id) return apps_[i];
   return nullptr;

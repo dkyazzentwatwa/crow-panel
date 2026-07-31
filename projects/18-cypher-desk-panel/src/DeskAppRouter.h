@@ -13,6 +13,7 @@ class DeskAppRouter {
   DeskAppId currentId() const;
   const char *currentTitle() const;
   uint8_t registeredCount() const;
+  bool has(DeskAppId id) const;
   void print(Print &out) const;
 
  private:

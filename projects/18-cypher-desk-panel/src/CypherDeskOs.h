@@ -2,8 +2,13 @@
 #define CYPHER_DESK_OS_H
 
 #include "DeskAppRouter.h"
+#include "DeskSplash.h"
+#if USE_CYPHER_DESK_MEDIA
 #include "DeskMusicApplication.h"
+#endif
+#if USE_CYPHER_DESK_VIDEO
 #include "DeskVideoApplication.h"
+#endif
 #include "DeskEventBus.h"
 #include "DeskSettings.h"
 #include "DeskSystemServices.h"
@@ -77,27 +82,49 @@ class CypherDeskOs {
   DeskUtilityApplication files_;
   DeskUtilityApplication settingsApp_;
   DeskUtilityApplication recorder_;
+  // Apps whose feature is compiled out are neither built nor registered, so a
+  // silent or video-less binary does not carry their UI - and the launcher
+  // never shows a tile that could only report that it does not work.
+#if USE_CYPHER_DESK_MEDIA
   DeskMusicApplication music_;
   DeskMusicApplication podcasts_;
+#endif
+#if USE_CYPHER_DESK_VIDEO
   DeskVideoApplication video_;
+#endif
   DeskUtilityApplication weather_;
   DeskAppContext context_;
   bool dirty_ = true;
   uint32_t lastStatusRefreshMs_ = 0;
+  int16_t nowPlayingPillX_ = 0;
+  int16_t nowPlayingPillW_ = 0;
+  uint32_t lastActivityMs_ = 0;
+  bool dimmed_ = false;
   DeskAppId lastApp_ = kDeskAppHome;
+  // Tiles actually available in this build, filled at begin() from what
+  // registered. Keeps drawHome() and handleHomeTouch() on one list.
+  const struct DeskAppDescriptor *homeTiles_[16] = {};
+  uint8_t homeTileCount_ = 0;
 
   void registerApplications();
   void ensureWriterOpen();
   void drawHome();
   void drawHomeStatus();
+  String nowPlayingLabel() const;
   void drawActive();
+  void flushFrame();
   void serviceKeyboard(DeskApplication *active);
+  void serviceIdleDim(uint32_t nowMs);
   void deliverTaps(DeskApplication *active, DeskAppId current);
   void handleHomeTouch(const DeskTouchEvent &event);
   DeskAppId appIdFromName(String name) const;
   DeskUtilityApplication *utility(DeskAppId id);
+#if USE_CYPHER_DESK_MEDIA
   DeskMusicApplication *music(DeskAppId id);
+#endif
+#if USE_CYPHER_DESK_VIDEO
   DeskVideoApplication *videoApp(DeskAppId id);
+#endif
 };
 
 #endif

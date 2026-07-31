@@ -22,8 +22,9 @@ void DeskWriterApplication::tick(uint32_t) {
     context_->router->home();
 }
 bool DeskWriterApplication::handleTouch(const DeskTouchEvent &) {
-  // The legacy writer retains its calibrated touch loop during this adapter
-  // phase. All OS-native applications use DeskTouchService tap-on-release.
+  // The Writer reads the shared DeskTouch directly inside DeskApp::tick(), so
+  // it needs no delivery from the router. Both paths now use the same tracker
+  // and the same model: keys on press, chrome on release.
   return false;
 }
 void DeskWriterApplication::draw() {}

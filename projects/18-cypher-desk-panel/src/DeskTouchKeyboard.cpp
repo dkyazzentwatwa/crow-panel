@@ -2,11 +2,11 @@
 
 #include "DeskKeyboardLayout.h"
 #include "DeskSystemServices.h"
+#include "DeskWidgets.h"
 
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
 #include <Arduino_GFX_Library.h>
 #include <CrowPanelShared.h>
-#include <U8g2lib.h>
 #endif
 
 using namespace DeskKeyboardLayout;
@@ -306,18 +306,6 @@ void DeskTouchKeyboard::service(DeskTouch &touch, Arduino_GFX *g, const DeskThem
 
 namespace {
 
-void drawSmallCentered(Arduino_GFX *g, int16_t centerX, int16_t topY, const char *label,
-                       uint16_t color) {
-  g->setFont(u8g2_font_cubic11_h_cjk);
-  g->setUTF8Print(true);
-  g->setTextSize(1);
-  g->setTextColor(color);
-  int16_t bx, by;
-  uint16_t bw, bh;
-  g->getTextBounds(label, 0, 0, &bx, &by, &bw, &bh);
-  g->setCursor(centerX - static_cast<int16_t>(bw) / 2 - bx, topY - by);
-  g->print(label);
-}
 
 // One key cap. The visual language is project 21's: an offset shadow panel
 // behind the cap, alternating row fills, a border that thickens from 1 to 3 px
@@ -336,7 +324,7 @@ void drawKeyCell(Arduino_GFX *g, const DeskThemePalette &theme, const KeyDefinit
   if (strlen(key.label) <= 2) {
     Widgets::text(g, x + w / 2, y + 17, key.label, Widgets::fontM(), ink, Widgets::kCenter);
   } else {
-    drawSmallCentered(g, x + w / 2, y + 21, key.label, ink);
+    DeskUi::smallText(g, x + w / 2, y + 21, key.label, ink, Widgets::kCenter);
   }
 }
 

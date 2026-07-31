@@ -16,24 +16,6 @@ class DeskDisplayService {
   class Arduino_GFX *canvas() const;
 };
 
-class DeskTouchService {
- public:
-  void tick();
-  bool take(DeskTouchEvent &event);
-  uint32_t count() const;
-
- private:
-  bool wasPressed_ = false;
-  bool pending_ = false;
-  int16_t lastX_ = 0;
-  int16_t lastY_ = 0;
-  uint32_t count_ = 0;
-  uint32_t lastPollMs_ = 0;
-  DeskTouchEvent event_;
-  int16_t mapX(int16_t rawX, int16_t rawY) const;
-  int16_t mapY(int16_t rawX, int16_t rawY) const;
-};
-
 class DeskStorageService {
  public:
   struct FileEntry {

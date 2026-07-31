@@ -88,7 +88,11 @@ uint32_t readLe32(File &file) {
 
 bool DeskDisplayService::begin() {
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
-  return CrowDisplay::begin(activeHardwareProfile(), "CYPHER DESK OS");
+  // manualFlush: draws land in the cached PSRAM framebuffer and only explicit
+  // flush() calls reach the panel. Required for per-key press art, the music
+  // scrub bar, and the video window - the video player writes through PPA,
+  // which bypasses Arduino_GFX entirely and would never be synced otherwise.
+  return CrowDisplay::begin(activeHardwareProfile(), "CYPHER DESK OS", true);
 #else
   return false;
 #endif
@@ -112,47 +116,6 @@ Arduino_GFX *DeskDisplayService::canvas() const {
   return nullptr;
 #endif
 }
-
-int16_t DeskTouchService::mapX(int16_t rawX, int16_t rawY) const {
-  int16_t source = CYPHER_DESK_TOUCH_SWAP_XY ? rawY : rawX;
-  int16_t value = mapAxis(source, CYPHER_DESK_TOUCH_MIN_X, CYPHER_DESK_TOUCH_MAX_X, kScreenW - 1);
-  return CYPHER_DESK_TOUCH_INVERT_X ? kScreenW - 1 - value : value;
-}
-int16_t DeskTouchService::mapY(int16_t rawX, int16_t rawY) const {
-  int16_t source = CYPHER_DESK_TOUCH_SWAP_XY ? rawX : rawY;
-  int16_t value = mapAxis(source, CYPHER_DESK_TOUCH_MIN_Y, CYPHER_DESK_TOUCH_MAX_Y, kScreenH - 1);
-  return CYPHER_DESK_TOUCH_INVERT_Y ? kScreenH - 1 - value : value;
-}
-void DeskTouchService::tick() {
-#if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
-  // loop() no longer paces this with delay(12), so gate the I2C read here.
-  // Polling the GT911 faster than the panel refreshes returns empty frames and
-  // costs bus time the display bring-up wants.
-  const uint32_t now = millis();
-  if (now - lastPollMs_ < CYPHER_DESK_TOUCH_POLL_MS) return;
-  lastPollMs_ = now;
-  int16_t rawX = 0;
-  int16_t rawY = 0;
-  bool pressed = CrowDisplay::touchPoint(rawX, rawY);
-  if (pressed) {
-    lastX_ = mapX(rawX, rawY);
-    lastY_ = mapY(rawX, rawY);
-  }
-  if (!pressed && wasPressed_) {
-    event_ = {lastX_, lastY_, false, true, millis()};
-    pending_ = true;
-    ++count_;
-  }
-  wasPressed_ = pressed;
-#endif
-}
-bool DeskTouchService::take(DeskTouchEvent &event) {
-  if (!pending_) return false;
-  event = event_;
-  pending_ = false;
-  return true;
-}
-uint32_t DeskTouchService::count() const { return count_; }
 
 uint32_t DeskStorageService::mountGeneration() const { return mountGeneration_; }
 void DeskStorageService::setState(DeskSdState state, const String &reason) {

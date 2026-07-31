@@ -1,6 +1,7 @@
 #include "DeskApp.h"
 
 #include "DeskKeyboardLayout.h"
+#include "DeskWidgets.h"
 #include "DeskSystemServices.h"
 #include "DeskTouch.h"
 
@@ -8,8 +9,9 @@
 
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
 #include <Arduino_GFX_Library.h>
-#include <U8g2lib.h>
 #include <math.h>
+// One copy of the compact type for the whole project - see DeskWidgets.cpp.
+using namespace DeskUi;
 #endif
 
 namespace {
@@ -130,7 +132,7 @@ void DeskApp::tick() {
     if (keyboard_.consumeRedraw()) { keyboardDirty_ = true; dirty_ = true; }
   }
 
-  if (dirty_) { draw(); dirty_ = false; }
+  if (dirty_) { draw(); dirty_ = false; CrowDisplay::flush(); }
 
   // Chrome commits on release, and only for fingers no key claimed.
   for (uint8_t i = 0; i < DeskTouch::kMaxContacts; ++i) {
@@ -899,35 +901,9 @@ void DeskApp::printTouchDiagnostics(Print &out) const { out.print(F("[touch] cou
 
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
 namespace {
-void smallText(Arduino_GFX *g, int16_t x, int16_t topY, const String &text, uint16_t color,
-               Widgets::Align align = Widgets::kLeft) {
-  g->setFont(u8g2_font_cubic11_h_cjk);
-  g->setUTF8Print(true);
-  g->setTextSize(1);
-  g->setTextColor(color);
-  int16_t bx, by; uint16_t bw, bh;
-  g->getTextBounds(text, 0, 0, &bx, &by, &bw, &bh);
-  int16_t drawX = x - bx;
-  if (align == Widgets::kCenter) drawX = x - static_cast<int16_t>(bw) / 2 - bx;
-  if (align == Widgets::kRight) drawX = x - static_cast<int16_t>(bw) - bx;
-  g->setCursor(drawX, topY - by);
-  g->print(text);
-}
 String fitLabel(Arduino_GFX *g, String value, int16_t width, const GFXfont *font) {
   while (value.length() > 3 && Widgets::textWidth(g, value.c_str(), font) > width) value.remove(value.length() - 1);
   return value;
-}
-void button(Arduino_GFX *g, const DeskThemePalette &t, int16_t x, int16_t y, int16_t w,
-            int16_t h, const String &label, bool active = false) {
-  Widgets::panel(g, x + 3, y + 4, w, h, 11, t.background);
-  Widgets::panel(g, x, y, w, h, 11, active ? t.panelHighlight : t.panel, active ? 3 : 1,
-                 active ? t.accent2 : t.line);
-  smallText(g, x + w / 2, y + h / 2 - 3, label, active ? t.ink : t.muted, Widgets::kCenter);
-}
-void card(Arduino_GFX *g, const DeskThemePalette &t, int16_t x, int16_t y, int16_t w,
-          int16_t h, uint16_t accent) {
-  Widgets::panel(g, x + 4, y + 5, w, h, 14, t.background);
-  Widgets::panel(g, x, y, w, h, 14, t.panel, 2, accent);
 }
 void sparkle(Arduino_GFX *g, int16_t x, int16_t y, uint16_t color, uint16_t ink) {
   g->drawFastHLine(x - 7, y, 15, color);
@@ -1188,7 +1164,6 @@ void DeskApp::drawEditor(Arduino_GFX *g) {
   }
   card(g, t, 20, 94, 984, 210, focusActive_ ? t.success : t.accent);
   if (!focusActive_) smallText(g, 38, 110, editor_.document.path, t.accent3);
-  g->setFont(u8g2_font_cubic11_h_cjk); g->setUTF8Print(true); g->setTextSize(1); g->setTextColor(t.ink);
   uint16_t cursorLine = lineNumberForIndex(editor_.buffer, editor_.cursor);
   uint16_t cursorColumn = columnForIndex(editor_.buffer, editor_.cursor);
   uint8_t rows = focusActive_ ? 5 : 8;
@@ -1204,8 +1179,10 @@ void DeskApp::drawEditor(Arduino_GFX *g) {
     line = editor_.leftColumn < line.length() ? line.substring(editor_.leftColumn, sliceEnd) : "";
     int16_t y = baseY + row * rowH;
     if (focusActive_ && lineNo == cursorLine) g->fillRoundRect(32, y - 21, 960, 30, 8, t.panelHighlight);
-    g->setCursor(42, y); if (line.length()) g->print(line);
-    if (!editor_.buffer.length() && row == 0) { g->setTextColor(t.muted); g->print("Start writing..."); g->setTextColor(t.ink); }
+    // Every text draw goes through DeskUi so the CJK font is named in exactly
+    // one translation unit; see DeskWidgets.cpp.
+    if (line.length()) smallText(g, 42, y - 11, line, t.ink);
+    if (!editor_.buffer.length() && row == 0) smallText(g, 42, y - 11, "Start writing...", t.muted);
     if (lineNo == cursorLine) {
       int16_t col = cursorColumn >= editor_.leftColumn ? cursorColumn - editor_.leftColumn : 0;
       g->fillRect(42 + min(col, static_cast<int16_t>(78)) * 11, y - 14, 3, 16, t.accent2);

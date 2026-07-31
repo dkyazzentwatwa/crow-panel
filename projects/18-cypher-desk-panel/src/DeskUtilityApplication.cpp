@@ -1,6 +1,7 @@
 #include "DeskUtilityApplication.h"
 
 #include "DeskKeyboardLayout.h"
+#include "DeskWidgets.h"
 
 #include "DeskAppRouter.h"
 #include "DeskEventBus.h"
@@ -16,7 +17,6 @@
 
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
 #include <Arduino_GFX_Library.h>
-#include <U8g2lib.h>
 #endif
 
 namespace {
@@ -168,33 +168,6 @@ bool saveContacts(DeskStorageService *storage) {
 }
 
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
-void smallText(Arduino_GFX *g, int16_t x, int16_t topY, const String &text, uint16_t color,
-               Widgets::Align align = Widgets::kLeft) {
-  g->setFont(u8g2_font_cubic11_h_cjk);
-  g->setUTF8Print(true);
-  g->setTextSize(1);
-  g->setTextColor(color);
-  int16_t bx, by; uint16_t bw, bh;
-  g->getTextBounds(text, 0, 0, &bx, &by, &bw, &bh);
-  int16_t drawX = x - bx;
-  if (align == Widgets::kCenter) drawX = x - static_cast<int16_t>(bw) / 2 - bx;
-  if (align == Widgets::kRight) drawX = x - static_cast<int16_t>(bw) - bx;
-  g->setCursor(drawX, topY - by);
-  g->print(text);
-}
-void osButton(Arduino_GFX *g, const DeskThemePalette &theme, int16_t x, int16_t y,
-              int16_t w, int16_t h, const String &label, bool active = false) {
-  Widgets::panel(g, x + 3, y + 4, w, h, 10, theme.background);
-  Widgets::panel(g, x, y, w, h, 10, active ? theme.panelHighlight : theme.panel,
-                 active ? 3 : 1, active ? theme.accent2 : theme.line);
-  smallText(g, x + w / 2, y + h / 2 - 3, label, active ? theme.ink : theme.muted,
-            Widgets::kCenter);
-}
-void osCard(Arduino_GFX *g, const DeskThemePalette &theme, int16_t x, int16_t y,
-            int16_t w, int16_t h, uint16_t accent) {
-  Widgets::panel(g, x + 4, y + 5, w, h, 13, theme.background);
-  Widgets::panel(g, x, y, w, h, 13, theme.panel, 2, accent);
-}
 #endif
 }
 
@@ -620,14 +593,14 @@ void DeskUtilityApplication::drawShell(const String &subtitle) {
     g->fillScreen(theme.background);
   }
   g->fillRect(0, 0, 1024, 52, theme.shell);
-  osButton(g, theme, 12, 7, 112, 38, "OS HOME");
-  smallText(g, 146, 17, title(), theme.ink);
+  DeskUi::button(g, theme, 12, 7, 112, 38, "OS HOME");
+  DeskUi::smallText(g, 146, 17, title(), theme.ink);
   drawStatusBar();
   g->fillRect(0, 50, 256, 4, theme.accent);
   g->fillRect(256, 50, 256, 4, theme.accent2);
   g->fillRect(512, 50, 256, 4, theme.success);
   g->fillRect(768, 50, 256, 4, theme.accent3);
-  smallText(g, 28, 78, subtitle, theme.muted);
+  DeskUi::smallText(g, 28, 78, subtitle, theme.muted);
 #else
   (void)subtitle;
 #endif
@@ -645,7 +618,7 @@ void DeskUtilityApplication::drawStatusBar() {
     alarmOn = statusPrefs.getBool("alarm-on", false);
     statusPrefs.end();
   }
-  smallText(g, 1004, 17, context_->time->timeText() + "  //  WIFI " +
+  DeskUi::smallText(g, 1004, 17, context_->time->timeText() + "  //  WIFI " +
             context_->wifi->stateLabel() + "  //  SD " + context_->storage->stateLabel() +
             "  //  REC " + (context_->audio->recording() ? "ON" : "OFF") +
             "  //  ALARM " + (alarmOn ? "ON" : "OFF"),
@@ -657,8 +630,8 @@ void DeskUtilityApplication::drawInput() {
   drawShell("SHARED TOUCH KEYBOARD");
   Arduino_GFX *g = CrowDisplay::canvas();
   const DeskThemePalette &theme = deskTheme(context_->settings->theme());
-  osButton(g, theme, 18, 60, 120, 48, "CANCEL");
-  osButton(g, theme, 866, 60, 140, 48, "SAVE", true);
+  DeskUi::button(g, theme, 18, 60, 120, 48, "CANCEL");
+  DeskUi::button(g, theme, 866, 60, 140, 48, "SAVE", true);
   String label = (inputPurpose_ == kInputCalendarTitle || inputPurpose_ == kInputCalendarEditTitle) ? "EVENT TITLE" :
                  inputPurpose_ == kInputCalendarDate ? "EVENT DATE YYYY-MM-DD" :
                  inputPurpose_ == kInputCalendarTime ? "EVENT TIME HH:MM" :
@@ -674,13 +647,13 @@ void DeskUtilityApplication::drawInput() {
                  inputPurpose_ == kInputFileCopy ? "COPY AS" :
                  inputPurpose_ == kInputFileMove ? "MOVE TO PATH" :
                  inputPurpose_ == kInputHiddenSsid ? "HIDDEN NETWORK" : "WI-FI PASSWORD";
-  smallText(g, 34, 144, label, theme.accent);
+  DeskUi::smallText(g, 34, 144, label, theme.accent);
   String shown = input_;
   if (inputPurpose_ == kInputWifiPassword || inputPurpose_ == kInputHiddenPassword) {
     shown = ""; for (size_t i = 0; i < input_.length(); ++i) shown += '*';
   }
   Widgets::panel(g, 28, 166, 968, 94, 12, theme.panel, 2, theme.line);
-  smallText(g, 48, 202, shown.length() ? shown : "tap keys below", shown.length() ? theme.ink : theme.muted);
+  DeskUi::smallText(g, 48, 202, shown.length() ? shown : "tap keys below", shown.length() ? theme.ink : theme.muted);
   if (keyboardDirty_) { context_->keyboard->draw(g, theme); keyboardDirty_ = false; }
 #endif
 }
@@ -688,25 +661,25 @@ void DeskUtilityApplication::drawToday() {
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
   drawShell("YOUR CREATOR COMMAND DESK  //  " + context_->time->dateText());
   Arduino_GFX *g = CrowDisplay::canvas(); const DeskThemePalette &t = deskTheme(context_->settings->theme());
-  osCard(g, t, 30, 122, 964, 366, t.accent);
-  smallText(g, 52, 146, "QUICK START", t.accent);
-  osButton(g, t, 30, 174, 300, 92, "DAILY PAGE", true);
-  osButton(g, t, 362, 174, 300, 92, "TODAY'S CALENDAR");
-  osButton(g, t, 694, 174, 300, 92, "VOICE NOTE");
+  DeskUi::card(g, t, 30, 122, 964, 366, t.accent);
+  DeskUi::smallText(g, 52, 146, "QUICK START", t.accent);
+  DeskUi::button(g, t, 30, 174, 300, 92, "DAILY PAGE", true);
+  DeskUi::button(g, t, 362, 174, 300, 92, "TODAY'S CALENDAR");
+  DeskUi::button(g, t, 694, 174, 300, 92, "VOICE NOTE");
   uint8_t todayEvents = 0;
   for (uint8_t i = 0; i < gCalendarCount; ++i) if (gCalendar[i].date == context_->time->dateText()) ++todayEvents;
-  smallText(g, 52, 304, String(todayEvents) + " event" + (todayEvents == 1 ? "" : "s") + " today  //  " +
+  DeskUi::smallText(g, 52, 304, String(todayEvents) + " event" + (todayEvents == 1 ? "" : "s") + " today  //  " +
             String(context_->storage->countFiles(CYPHER_DESK_NOTES_DIR, ".md")) + " Markdown notes", t.ink);
-  osButton(g, t, 30, 330, 300, 60, "QUICK SCRAP");
+  DeskUi::button(g, t, 30, 330, 300, 60, "QUICK SCRAP");
   String last = context_->settings->lastDocument();
-  smallText(g, 362, 350, last.length() ? "LAST NOTE  //  " + last : "LAST NOTE  //  create a Daily Page or open Writer", t.muted);
+  DeskUi::smallText(g, 362, 350, last.length() ? "LAST NOTE  //  " + last : "LAST NOTE  //  create a Daily Page or open Writer", t.muted);
   if (todayEvents) {
     for (uint8_t i = 0, row = 0; i < gCalendarCount && row < 2; ++i) {
       if (gCalendar[i].date == context_->time->dateText())
-        smallText(g, 362, 392 + row++ * 32, gCalendar[i].time + "  //  " + gCalendar[i].title, t.accent);
+        DeskUi::smallText(g, 362, 392 + row++ * 32, gCalendar[i].time + "  //  " + gCalendar[i].title, t.accent);
     }
-  } else smallText(g, 362, 394, "No events today. Add one locally in Calendar.", t.muted);
-  smallText(g, 52, 454, context_->storage->status() + "  //  OFFLINE FIRST", t.success);
+  } else DeskUi::smallText(g, 362, 394, "No events today. Add one locally in Calendar.", t.muted);
+  DeskUi::smallText(g, 52, 454, context_->storage->status() + "  //  OFFLINE FIRST", t.success);
 #endif
 }
 void DeskUtilityApplication::drawCalendar() {
@@ -718,16 +691,16 @@ void DeskUtilityApplication::drawCalendarMonth() {
   initializeCalendarMonth();
   drawShell("LOCAL MONTH VIEW  //  EVENTS STAY ON SD");
   Arduino_GFX *g = CrowDisplay::canvas(); const DeskThemePalette &t = deskTheme(context_->settings->theme());
-  osButton(g, t, 24, 94, 84, 40, "PREV");
-  osButton(g, t, 118, 94, 84, 40, "NEXT");
-  smallText(g, 236, 108, String(monthName(calendarMonth_)) + " " + String(calendarYear_), t.ink);
-  osButton(g, t, 608, 94, 104, 40, "TODAY");
-  osButton(g, t, 722, 94, 104, 40, "LIST");
-  osButton(g, t, 836, 94, 164, 40, "ADD EVENT", true);
+  DeskUi::button(g, t, 24, 94, 84, 40, "PREV");
+  DeskUi::button(g, t, 118, 94, 84, 40, "NEXT");
+  DeskUi::smallText(g, 236, 108, String(monthName(calendarMonth_)) + " " + String(calendarYear_), t.ink);
+  DeskUi::button(g, t, 608, 94, 104, 40, "TODAY");
+  DeskUi::button(g, t, 722, 94, 104, 40, "LIST");
+  DeskUi::button(g, t, 836, 94, 164, 40, "ADD EVENT", true);
   const char *weekdays[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
   constexpr int16_t gridX = 20, gridY = 160, cellW = 140, cellH = 60;
   for (uint8_t col = 0; col < 7; ++col)
-    smallText(g, gridX + col * cellW + cellW / 2, 144, weekdays[col], t.muted, Widgets::kCenter);
+    DeskUi::smallText(g, gridX + col * cellW + cellW / 2, 144, weekdays[col], t.muted, Widgets::kCenter);
   uint8_t firstWeekday = weekdaySundayFirst(calendarYear_, calendarMonth_, 1);
   uint8_t monthDays = daysInMonth(calendarYear_, calendarMonth_);
   uint8_t previousMonth = calendarMonth_ == 1 ? 12 : calendarMonth_ - 1;
@@ -749,7 +722,7 @@ void DeskUtilityApplication::drawCalendarMonth() {
     Widgets::panel(g, x, y, cellW, cellH, 0, current ? t.panel : t.background,
                    selected ? 2 : 1, selected ? t.accent2 : t.line);
     if (isToday) g->fillCircle(x + cellW - 18, y + 15, 12, t.accent3);
-    smallText(g, x + cellW - 10, y + 7, String(dateDay), isToday ? t.background : (current ? t.ink : t.muted), Widgets::kRight);
+    DeskUi::smallText(g, x + cellW - 10, y + 7, String(dateDay), isToday ? t.background : (current ? t.ink : t.muted), Widgets::kRight);
     if (!current) continue;
     uint8_t eventRow = 0, extra = 0;
     for (uint8_t i = 0; i < gCalendarCount; ++i) {
@@ -759,14 +732,14 @@ void DeskUtilityApplication::drawCalendarMonth() {
       g->fillRoundRect(x + 6, chipY, cellW - 12, 13, 4, eventRow == 0 ? t.accent : t.accent2);
       String title = gCalendar[i].title;
       if (title.length() > 18) title = title.substring(0, 17) + ".";
-      smallText(g, x + 10, chipY + 1, title, t.background);
+      DeskUi::smallText(g, x + 10, chipY + 1, title, t.background);
       ++eventRow;
     }
-    if (extra) smallText(g, x + 10, y + 47, "+" + String(extra) + " more", t.warning);
+    if (extra) DeskUi::smallText(g, x + 10, y + 47, "+" + String(extra) + " more", t.warning);
   }
   uint8_t selectedEvents = 0;
   for (uint8_t i = 0; i < gCalendarCount; ++i) if (gCalendar[i].date == pendingCalendarDate_) ++selectedEvents;
-  smallText(g, 24, 536, pendingCalendarDate_ + "  //  " + String(selectedEvents) +
+  DeskUi::smallText(g, 24, 536, pendingCalendarDate_ + "  //  " + String(selectedEvents) +
             " event" + (selectedEvents == 1 ? "" : "s") + "  //  tap LIST to edit", t.muted);
 #endif
 }
@@ -774,23 +747,23 @@ void DeskUtilityApplication::drawCalendarList() {
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
   drawShell("EVENT EDITOR  //  ATOMIC SCHEMA 1 STORAGE");
   Arduino_GFX *g = CrowDisplay::canvas(); const DeskThemePalette &t = deskTheme(context_->settings->theme());
-  osButton(g, t, 572, 72, 186, 48, "MONTH VIEW");
-  osButton(g, t, 790, 72, 202, 48, "ADD EVENT", true);
+  DeskUi::button(g, t, 572, 72, 186, 48, "MONTH VIEW");
+  DeskUi::button(g, t, 790, 72, 202, 48, "ADD EVENT", true);
   for (uint8_t row = 0; row < min(static_cast<uint8_t>(6), gCalendarCount); ++row) {
     DeskCalendarEvent &event = gCalendar[row];
-    osButton(g, t, 28, 142 + row * 58, 720, 50,
+    DeskUi::button(g, t, 28, 142 + row * 58, 720, 50,
              event.date + "  " + event.time + "  //  " + event.title, row == selected_);
   }
-  if (!gCalendarCount) smallText(g, 40, 168, "No events yet. Add one without needing the cloud.", t.muted);
+  if (!gCalendarCount) DeskUi::smallText(g, 40, 168, "No events yet. Add one without needing the cloud.", t.muted);
   if (gCalendarCount) {
     DeskCalendarEvent &event = gCalendar[selected_];
-    smallText(g, 790, 124, "SELECTED EVENT", t.accent);
-    osButton(g, t, 790, 142, 202, 44, "TITLE  //  " + event.title);
-    osButton(g, t, 790, 198, 202, 44, "DATE  //  " + event.date);
-    osButton(g, t, 790, 254, 202, 44, "TIME  //  " + event.time);
-    osButton(g, t, 790, 310, 202, 44, event.notes.length() ? "EDIT NOTES" : "ADD NOTES");
-    osButton(g, t, 790, 366, 202, 44, event.alarm ? "ALARM  //  ON" : "ALARM  //  OFF", event.alarm);
-    osButton(g, t, 790, 422, 202, 44, "DELETE EVENT");
+    DeskUi::smallText(g, 790, 124, "SELECTED EVENT", t.accent);
+    DeskUi::button(g, t, 790, 142, 202, 44, "TITLE  //  " + event.title);
+    DeskUi::button(g, t, 790, 198, 202, 44, "DATE  //  " + event.date);
+    DeskUi::button(g, t, 790, 254, 202, 44, "TIME  //  " + event.time);
+    DeskUi::button(g, t, 790, 310, 202, 44, event.notes.length() ? "EDIT NOTES" : "ADD NOTES");
+    DeskUi::button(g, t, 790, 366, 202, 44, event.alarm ? "ALARM  //  ON" : "ALARM  //  OFF", event.alarm);
+    DeskUi::button(g, t, 790, 422, 202, 44, "DELETE EVENT");
   }
 #endif
 }
@@ -798,26 +771,26 @@ void DeskUtilityApplication::drawContacts() {
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
   drawShell("LOCAL PEOPLE AND BUSINESS CONTACTS");
   Arduino_GFX *g = CrowDisplay::canvas(); const DeskThemePalette &t = deskTheme(context_->settings->theme());
-  osButton(g, t, 570, 72, 188, 48, contactQuery_.length() ? "SEARCH  //  " + contactQuery_ : "SEARCH");
-  osButton(g, t, 790, 72, 202, 48, "ADD CONTACT", true);
+  DeskUi::button(g, t, 570, 72, 188, 48, contactQuery_.length() ? "SEARCH  //  " + contactQuery_ : "SEARCH");
+  DeskUi::button(g, t, 790, 72, 202, 48, "ADD CONTACT", true);
   for (uint8_t row = 0; row < min(static_cast<uint8_t>(6), gContactCount); ++row) {
     if (!selectedContactMatches(row)) continue;
     DeskContactRecord &contact = gContacts[row];
     String detail = contact.organization.length() ? "  //  " + contact.organization : "";
-    osButton(g, t, 28, 142 + row * 58, 520, 50, contact.name + detail, row == selected_);
+    DeskUi::button(g, t, 28, 142 + row * 58, 520, 50, contact.name + detail, row == selected_);
   }
-  if (!gContactCount) smallText(g, 40, 168, "No contacts yet. Add a person or business.", t.muted);
+  if (!gContactCount) DeskUi::smallText(g, 40, 168, "No contacts yet. Add a person or business.", t.muted);
   else {
     DeskContactRecord &contact = gContacts[selected_];
-    smallText(g, 790, 124, "SELECTED CONTACT", t.accent);
-    osButton(g, t, 790, 142, 202, 44, "NAME  //  " + contact.name);
-    osButton(g, t, 790, 198, 202, 44, contact.organization.length() ? "EDIT ORGANIZATION" : "ADD ORGANIZATION");
-    osButton(g, t, 790, 254, 202, 44, contact.phone.length() ? "EDIT PHONE" : "ADD PHONE");
-    osButton(g, t, 790, 310, 202, 44, contact.email.length() ? "EDIT EMAIL" : "ADD EMAIL");
-    osButton(g, t, 790, 366, 202, 44, contact.notes.length() ? "EDIT NOTES" : "ADD NOTES");
-    osButton(g, t, 790, 422, 202, 44, "DELETE CONTACT");
-    smallText(g, 570, 196, contact.organization, t.muted);
-    smallText(g, 570, 230, contact.phone + "  " + contact.email, t.muted);
+    DeskUi::smallText(g, 790, 124, "SELECTED CONTACT", t.accent);
+    DeskUi::button(g, t, 790, 142, 202, 44, "NAME  //  " + contact.name);
+    DeskUi::button(g, t, 790, 198, 202, 44, contact.organization.length() ? "EDIT ORGANIZATION" : "ADD ORGANIZATION");
+    DeskUi::button(g, t, 790, 254, 202, 44, contact.phone.length() ? "EDIT PHONE" : "ADD PHONE");
+    DeskUi::button(g, t, 790, 310, 202, 44, contact.email.length() ? "EDIT EMAIL" : "ADD EMAIL");
+    DeskUi::button(g, t, 790, 366, 202, 44, contact.notes.length() ? "EDIT NOTES" : "ADD NOTES");
+    DeskUi::button(g, t, 790, 422, 202, 44, "DELETE CONTACT");
+    DeskUi::smallText(g, 570, 196, contact.organization, t.muted);
+    DeskUi::smallText(g, 570, 230, contact.phone + "  " + contact.email, t.muted);
   }
 #endif
 }
@@ -827,11 +800,11 @@ void DeskUtilityApplication::drawClock() {
   Arduino_GFX *g = CrowDisplay::canvas(); const DeskThemePalette &t = deskTheme(context_->settings->theme());
   Widgets::text(g, 512, 90, context_->time->timeText().c_str(), Widgets::fontXL(), t.ink, Widgets::kCenter);
   uint32_t sw = stopwatchElapsedMs_ + (stopwatchRunning_ ? millis() - stopwatchStartedMs_ : 0);
-  osButton(g, t, 30, 190, 300, 74, String(stopwatchRunning_ ? "STOP " : "START ") + "STOPWATCH  " + String(sw / 1000) + "s", stopwatchRunning_);
-  osButton(g, t, 362, 190, 300, 74, String(timerRunning_ ? "CANCEL " : "START ") + String(timerMinutes_) + " MIN TIMER", timerRunning_);
-  osButton(g, t, 694, 190, 140, 74, "+5 MIN"); osButton(g, t, 850, 190, 140, 74, "-5 MIN");
-  osButton(g, t, 30, 316, 300, 74, String("ALARM 08:00  //  ") + (alarmEnabled_ ? "ON" : "OFF"), alarmEnabled_);
-  smallText(g, 362, 340, "Alarm preference persists in the existing cypher-desk NVS namespace.", t.muted);
+  DeskUi::button(g, t, 30, 190, 300, 74, String(stopwatchRunning_ ? "STOP " : "START ") + "STOPWATCH  " + String(sw / 1000) + "s", stopwatchRunning_);
+  DeskUi::button(g, t, 362, 190, 300, 74, String(timerRunning_ ? "CANCEL " : "START ") + String(timerMinutes_) + " MIN TIMER", timerRunning_);
+  DeskUi::button(g, t, 694, 190, 140, 74, "+5 MIN"); DeskUi::button(g, t, 850, 190, 140, 74, "-5 MIN");
+  DeskUi::button(g, t, 30, 316, 300, 74, String("ALARM 08:00  //  ") + (alarmEnabled_ ? "ON" : "OFF"), alarmEnabled_);
+  DeskUi::smallText(g, 362, 340, "Alarm preference persists in the existing cypher-desk NVS namespace.", t.muted);
 #endif
 }
 void DeskUtilityApplication::drawClockDynamic() {
@@ -844,7 +817,7 @@ void DeskUtilityApplication::drawClockDynamic() {
   Widgets::text(g, 512, 90, context_->time->timeText().c_str(), Widgets::fontXL(), t.ink, Widgets::kCenter);
   g->fillRect(30, 190, 300, 74, t.background);
   uint32_t sw = stopwatchElapsedMs_ + (stopwatchRunning_ ? millis() - stopwatchStartedMs_ : 0);
-  osButton(g, t, 30, 190, 300, 74,
+  DeskUi::button(g, t, 30, 190, 300, 74,
            String(stopwatchRunning_ ? "STOP " : "START ") + "STOPWATCH  " + String(sw / 1000) + "s",
            stopwatchRunning_);
 #endif
@@ -854,41 +827,41 @@ void DeskUtilityApplication::drawCalculator() {
   drawShell("OFFLINE FOUR-FUNCTION CALCULATOR");
   Arduino_GFX *g = CrowDisplay::canvas(); const DeskThemePalette &t = deskTheme(context_->settings->theme());
   Widgets::panel(g, 174, 88, 664, 50, 10, t.shell, 2, t.line);
-  smallText(g, 816, 105, calcDisplay_, t.ink, Widgets::kRight);
+  DeskUi::smallText(g, 816, 105, calcDisplay_, t.ink, Widgets::kRight);
   const char *keys[5][4] = {{"C", "+/-", "%", "/"}, {"7", "8", "9", "*"},
                             {"4", "5", "6", "-"}, {"1", "2", "3", "+"},
                             {"0", ".", "=", "="}};
   for (uint8_t row = 0; row < 5; ++row) for (uint8_t col = 0; col < 4; ++col)
-    osButton(g, t, 174 + col * 170, 146 + row * 78, 154, 64, keys[row][col], col == 3 || keys[row][col][0] == '=');
+    DeskUi::button(g, t, 174 + col * 170, 146 + row * 78, 154, 64, keys[row][col], col == 3 || keys[row][col][0] == '=');
 #endif
 }
 void DeskUtilityApplication::drawFiles() {
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
   drawShell("SD WORKSPACE  //  SAFE LOCAL FILE OPERATIONS");
   Arduino_GFX *g = CrowDisplay::canvas(); const DeskThemePalette &t = deskTheme(context_->settings->theme());
-  osButton(g, t, 30, 92, 118, 44, "UP");
-  osButton(g, t, 164, 92, 160, 44, "NEW FOLDER", true);
-  smallText(g, 344, 106, fileDirectory_, t.accent);
+  DeskUi::button(g, t, 30, 92, 118, 44, "UP");
+  DeskUi::button(g, t, 164, 92, 160, 44, "NEW FOLDER", true);
+  DeskUi::smallText(g, 344, 106, fileDirectory_, t.accent);
   for (uint8_t i = 0; i < min(static_cast<uint8_t>(6), fileEntryCount_); ++i) {
     const DeskStorageService::FileEntry &entry = fileEntries_[i];
-    osButton(g, t, 30, 150 + i * 64, 700, 54,
+    DeskUi::button(g, t, 30, 150 + i * 64, 700, 54,
              String(entry.directory ? "[DIR]  " : "[FILE]  ") + entry.name +
              (entry.directory ? "" : "  //  " + String(entry.size) + " B"), i == selected_);
   }
-  if (!fileEntryCount_) smallText(g, 40, 170, "Folder empty. Create a folder or copy files onto the SD card.", t.muted);
-  osCard(g, t, 754, 120, 238, 292, t.accent2);
-  smallText(g, 873, 136, String(context_->storage->stateLabel()) + "  //  " + String(context_->storage->freePercent()) + "% FREE", t.success, Widgets::kCenter);
-  osButton(g, t, 754, 132, 238, 44, "OPEN TEXT");
-  osButton(g, t, 754, 188, 238, 44, "RENAME");
-  osButton(g, t, 754, 244, 238, 44, "COPY");
-  osButton(g, t, 754, 300, 238, 44, "MOVE");
-  osButton(g, t, 754, 356, 238, 44, "DELETE");
-  osButton(g, t, 774, 430, 218, 58, "SAFE EJECT");
-  osButton(g, t, 774, 500, 218, 58, "REMOUNT");
+  if (!fileEntryCount_) DeskUi::smallText(g, 40, 170, "Folder empty. Create a folder or copy files onto the SD card.", t.muted);
+  DeskUi::card(g, t, 754, 120, 238, 292, t.accent2);
+  DeskUi::smallText(g, 873, 136, String(context_->storage->stateLabel()) + "  //  " + String(context_->storage->freePercent()) + "% FREE", t.success, Widgets::kCenter);
+  DeskUi::button(g, t, 754, 132, 238, 44, "OPEN TEXT");
+  DeskUi::button(g, t, 754, 188, 238, 44, "RENAME");
+  DeskUi::button(g, t, 754, 244, 238, 44, "COPY");
+  DeskUi::button(g, t, 754, 300, 238, 44, "MOVE");
+  DeskUi::button(g, t, 754, 356, 238, 44, "DELETE");
+  DeskUi::button(g, t, 774, 430, 218, 58, "SAFE EJECT");
+  DeskUi::button(g, t, 774, 500, 218, 58, "REMOUNT");
   if (filePreview_.length()) {
-    osCard(g, t, 66, 170, 650, 286, t.warning);
-    smallText(g, 88, 194, "TEXT PREVIEW  //  BACK TO CLOSE", t.warning);
-    smallText(g, 88, 230, filePreview_, t.ink);
+    DeskUi::card(g, t, 66, 170, 650, 286, t.warning);
+    DeskUi::smallText(g, 88, 194, "TEXT PREVIEW  //  BACK TO CLOSE", t.warning);
+    DeskUi::smallText(g, 88, 230, filePreview_, t.ink);
   }
 #endif
 }
@@ -896,21 +869,21 @@ void DeskUtilityApplication::drawSettings() {
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
   drawShell("THEME  //  HOSTED-C6 WI-FI  //  OFFLINE MODE");
   Arduino_GFX *g = CrowDisplay::canvas(); const DeskThemePalette &t = deskTheme(context_->settings->theme());
-  osButton(g, t, 30, 150, 300, 64, "THEME  //  " + String(t.name), true);
-  osButton(g, t, 362, 150, 300, 64, "SCAN NETWORKS");
-  osButton(g, t, 694, 150, 300, 64, context_->wifi->offline() ? "LEAVE OFFLINE MODE" : "ENTER OFFLINE MODE", context_->wifi->offline());
-  osButton(g, t, 30, 232, 300, 54, "HIDDEN NETWORK");
-  osButton(g, t, 362, 232, 300, 54, diagnosticsVisible_ ? "HIDE DIAGNOSTICS" : "DIAGNOSTICS");
+  DeskUi::button(g, t, 30, 150, 300, 64, "THEME  //  " + String(t.name), true);
+  DeskUi::button(g, t, 362, 150, 300, 64, "SCAN NETWORKS");
+  DeskUi::button(g, t, 694, 150, 300, 64, context_->wifi->offline() ? "LEAVE OFFLINE MODE" : "ENTER OFFLINE MODE", context_->wifi->offline());
+  DeskUi::button(g, t, 30, 232, 300, 54, "HIDDEN NETWORK");
+  DeskUi::button(g, t, 362, 232, 300, 54, diagnosticsVisible_ ? "HIDE DIAGNOSTICS" : "DIAGNOSTICS");
   drawSettingsDynamic();
-  smallText(g, 700, 316, "Credentials are NVS-stored, masked, and never logged.", t.muted);
-  smallText(g, 700, 350, "Ordinary NVS is not described as encrypted.", t.warning);
+  DeskUi::smallText(g, 700, 316, "Credentials are NVS-stored, masked, and never logged.", t.muted);
+  DeskUi::smallText(g, 700, 350, "Ordinary NVS is not described as encrypted.", t.warning);
   if (diagnosticsVisible_) {
-    osCard(g, t, 674, 382, 318, 174, t.success);
-    smallText(g, 694, 404, "REAL PROOF STATE", t.success);
-    smallText(g, 694, 434, String("DISPLAY ") + (context_->storage->mounted() ? "RUNNING" : "RUNNING / NO SD"), t.ink);
-    smallText(g, 694, 462, String("SD  ") + context_->storage->status(), t.ink);
-    smallText(g, 694, 490, String("C6  ") + context_->wifi->stateLabel() + "  //  TIME " + (context_->time->synced() ? "SYNCED" : "PENDING"), t.ink);
-    smallText(g, 694, 518, "SPK " + String(context_->audio->speakerAvailable() ? "READY" : "UNPROVEN") +
+    DeskUi::card(g, t, 674, 382, 318, 174, t.success);
+    DeskUi::smallText(g, 694, 404, "REAL PROOF STATE", t.success);
+    DeskUi::smallText(g, 694, 434, String("DISPLAY ") + (context_->storage->mounted() ? "RUNNING" : "RUNNING / NO SD"), t.ink);
+    DeskUi::smallText(g, 694, 462, String("SD  ") + context_->storage->status(), t.ink);
+    DeskUi::smallText(g, 694, 490, String("C6  ") + context_->wifi->stateLabel() + "  //  TIME " + (context_->time->synced() ? "SYNCED" : "PENDING"), t.ink);
+    DeskUi::smallText(g, 694, 518, "SPK " + String(context_->audio->speakerAvailable() ? "READY" : "UNPROVEN") +
               "  //  MIC " + String(context_->audio->microphoneAvailable() ? "READY" : "UNPROVEN"), t.warning);
   }
   settingsSnapshot_ = settingsSnapshot();
@@ -937,14 +910,14 @@ void DeskUtilityApplication::drawSettingsDynamic() {
   const DeskThemePalette &t = deskTheme(context_->settings->theme());
   g->fillRect(350, 230, 320, 40, t.background);
   g->fillRect(20, 280, 650, 276, t.background);
-  smallText(g, 362, 248, context_->wifi->status(), t.muted);
+  DeskUi::smallText(g, 362, 248, context_->wifi->status(), t.muted);
   bool visible = context_->wifi->state() == kDeskWifiNetworksFound;
   uint8_t count = visible ? context_->wifi->networkCount() : context_->wifi->savedCount();
-  smallText(g, 30, 292, visible ? "VISIBLE NETWORKS" : "SAVED NETWORKS", t.accent);
+  DeskUi::smallText(g, 30, 292, visible ? "VISIBLE NETWORKS" : "SAVED NETWORKS", t.accent);
   for (uint8_t row = 0; row < min(static_cast<uint8_t>(5), count); ++row) {
     String name = visible ? context_->wifi->network(row).ssid : context_->wifi->savedSsid(row);
     if (visible && context_->wifi->network(row).secured) name += "  //  LOCKED";
-    osButton(g, t, 30, 306 + row * 50, 640, 44, name);
+    DeskUi::button(g, t, 30, 306 + row * 50, 640, 44, name);
   }
   settingsSnapshot_ = settingsSnapshot();
 #endif
@@ -953,14 +926,14 @@ void DeskUtilityApplication::drawRecorder() {
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
   drawShell("VOICE CAPTURE  //  SD-BACKED AND HARDWARE-GUARDED");
   Arduino_GFX *g = CrowDisplay::canvas(); const DeskThemePalette &t = deskTheme(context_->settings->theme());
-  osCard(g, t, 120, 126, 784, 360, t.warning);
-  smallText(g, 512, 170, context_->audio->microphoneAvailable() ? "PDM MICROPHONE READY" : "MICROPHONE UNAVAILABLE", context_->audio->microphoneAvailable() ? t.success : t.warning, Widgets::kCenter);
-  smallText(g, 512, 212, String("Speaker: ") + (context_->audio->speakerAvailable() ? "ready" : "unavailable") + "   Mic: " + (context_->audio->microphoneAvailable() ? "ready" : "unavailable"), t.ink, Widgets::kCenter);
-  smallText(g, 512, 250, "Mic pins: PDM CLK GPIO24 / DATA GPIO26 / 16 kHz mono PCM WAV", t.muted, Widgets::kCenter);
+  DeskUi::card(g, t, 120, 126, 784, 360, t.warning);
+  DeskUi::smallText(g, 512, 170, context_->audio->microphoneAvailable() ? "PDM MICROPHONE READY" : "MICROPHONE UNAVAILABLE", context_->audio->microphoneAvailable() ? t.success : t.warning, Widgets::kCenter);
+  DeskUi::smallText(g, 512, 212, String("Speaker: ") + (context_->audio->speakerAvailable() ? "ready" : "unavailable") + "   Mic: " + (context_->audio->microphoneAvailable() ? "ready" : "unavailable"), t.ink, Widgets::kCenter);
+  DeskUi::smallText(g, 512, 250, "Mic pins: PDM CLK GPIO24 / DATA GPIO26 / 16 kHz mono PCM WAV", t.muted, Widgets::kCenter);
   drawRecorderDynamic();
-  osButton(g, t, 180, 392, 300, 58, "PLAY SPEAKER TEST");
-  osButton(g, t, 512, 392, 332, 58, context_->audio->recording() ? "STOP AND SAVE" : "START RECORDING", context_->audio->recording());
-  osButton(g, t, 350, 466, 324, 54, context_->audio->recordingPath().length() ? "PLAY LAST RECORDING" : "NO RECORDING YET");
+  DeskUi::button(g, t, 180, 392, 300, 58, "PLAY SPEAKER TEST");
+  DeskUi::button(g, t, 512, 392, 332, 58, context_->audio->recording() ? "STOP AND SAVE" : "START RECORDING", context_->audio->recording());
+  DeskUi::button(g, t, 350, 466, 324, 54, context_->audio->recordingPath().length() ? "PLAY LAST RECORDING" : "NO RECORDING YET");
 #endif
 }
 void DeskUtilityApplication::drawRecorderDynamic() {
@@ -970,7 +943,7 @@ void DeskUtilityApplication::drawRecorderDynamic() {
   if (g == nullptr) return;
   const DeskThemePalette &t = deskTheme(context_->settings->theme());
   g->fillRect(150, 264, 724, 44, t.panel);
-  smallText(g, 512, 286, String("Level: ") + context_->audio->inputLevel() + "   //   " +
+  DeskUi::smallText(g, 512, 286, String("Level: ") + context_->audio->inputLevel() + "   //   " +
             context_->audio->testStatus() + (context_->audio->recording() ? "  //  " +
             String(context_->audio->recordingDurationMs() / 1000) + "s" : ""), t.accent, Widgets::kCenter);
 #endif
@@ -980,30 +953,30 @@ void DeskUtilityApplication::drawWeather() {
   drawShell("OPEN-METEO FORECAST  //  USER-CONFIGURED LOCATION");
   Arduino_GFX *g = CrowDisplay::canvas(); const DeskThemePalette &t = deskTheme(context_->settings->theme());
   if (context_->weather == nullptr || !context_->weather->configured()) {
-    osCard(g, t, 160, 155, 704, 270, t.warning);
-    smallText(g, 512, 214, "SET YOUR LOCATION BEFORE REQUESTING WEATHER", t.ink, Widgets::kCenter);
-    smallText(g, 512, 278, "Serial: weather location <latitude> <longitude> [label]", t.accent, Widgets::kCenter);
-    smallText(g, 512, 334, "Example: weather location 34.0522 -118.2437 Los Angeles", t.muted, Widgets::kCenter);
-    smallText(g, 512, 390, "Coordinates are stored locally. No location is assumed by this device.", t.muted, Widgets::kCenter);
+    DeskUi::card(g, t, 160, 155, 704, 270, t.warning);
+    DeskUi::smallText(g, 512, 214, "SET YOUR LOCATION BEFORE REQUESTING WEATHER", t.ink, Widgets::kCenter);
+    DeskUi::smallText(g, 512, 278, "Serial: weather location <latitude> <longitude> [label]", t.accent, Widgets::kCenter);
+    DeskUi::smallText(g, 512, 334, "Example: weather location 34.0522 -118.2437 Los Angeles", t.muted, Widgets::kCenter);
+    DeskUi::smallText(g, 512, 390, "Coordinates are stored locally. No location is assumed by this device.", t.muted, Widgets::kCenter);
     weatherSnapshot_ = weatherSnapshot();
     return;
   }
   const DeskWeatherData &weather = context_->weather->data();
-  osCard(g, t, 74, 132, 876, 326, t.accent);
-  smallText(g, 512, 170, context_->weather->locationLabel(), t.accent, Widgets::kCenter);
+  DeskUi::card(g, t, 74, 132, 876, 326, t.accent);
+  DeskUi::smallText(g, 512, 170, context_->weather->locationLabel(), t.accent, Widgets::kCenter);
   if (context_->weather->valid()) {
-    smallText(g, 300, 260, String(weather.tempC, 1) + " C", t.ink, Widgets::kCenter);
-    smallText(g, 300, 310, weather.condition, t.muted, Widgets::kCenter);
-    smallText(g, 668, 225, "FEELS  " + String(weather.feelsC, 1) + " C", t.ink, Widgets::kCenter);
-    smallText(g, 668, 272, "HIGH / LOW  " + String(weather.hiC, 1) + " / " + String(weather.loC, 1) + " C", t.ink, Widgets::kCenter);
-    smallText(g, 668, 319, "WIND  " + String(weather.windKt, 1) + " kt", t.ink, Widgets::kCenter);
-    if (context_->weather->cached()) smallText(g, 512, 362, "CACHED RESULT  //  REFRESH FOR LIVE DATA", t.warning, Widgets::kCenter);
+    DeskUi::smallText(g, 300, 260, String(weather.tempC, 1) + " C", t.ink, Widgets::kCenter);
+    DeskUi::smallText(g, 300, 310, weather.condition, t.muted, Widgets::kCenter);
+    DeskUi::smallText(g, 668, 225, "FEELS  " + String(weather.feelsC, 1) + " C", t.ink, Widgets::kCenter);
+    DeskUi::smallText(g, 668, 272, "HIGH / LOW  " + String(weather.hiC, 1) + " / " + String(weather.loC, 1) + " C", t.ink, Widgets::kCenter);
+    DeskUi::smallText(g, 668, 319, "WIND  " + String(weather.windKt, 1) + " kt", t.ink, Widgets::kCenter);
+    if (context_->weather->cached()) DeskUi::smallText(g, 512, 362, "CACHED RESULT  //  REFRESH FOR LIVE DATA", t.warning, Widgets::kCenter);
   } else {
-    smallText(g, 512, 270, "NO WEATHER RESULT YET", t.ink, Widgets::kCenter);
+    DeskUi::smallText(g, 512, 270, "NO WEATHER RESULT YET", t.ink, Widgets::kCenter);
   }
-  smallText(g, 512, 408, context_->weather->status(), t.muted, Widgets::kCenter);
-  osButton(g, t, 360, 484, 304, 58, "REFRESH WEATHER");
-  smallText(g, 512, 566, "Requires verified internet. HTTPS certificate validation is not yet device-proven.", t.warning, Widgets::kCenter);
+  DeskUi::smallText(g, 512, 408, context_->weather->status(), t.muted, Widgets::kCenter);
+  DeskUi::button(g, t, 360, 484, 304, 58, "REFRESH WEATHER");
+  DeskUi::smallText(g, 512, 566, "Requires verified internet. HTTPS certificate validation is not yet device-proven.", t.warning, Widgets::kCenter);
   weatherSnapshot_ = weatherSnapshot();
 #endif
 }
@@ -1016,11 +989,11 @@ void DeskUtilityApplication::drawDeleteConfirm() {
   String subject = deleteKind_ == kDeleteCalendar && selected_ < gCalendarCount ?
       gCalendar[selected_].date + "  //  " + gCalendar[selected_].title :
       deleteKind_ == kDeleteContact && selected_ < gContactCount ? gContacts[selected_].name : pendingFilePath_;
-  smallText(g, 512, 286, deleteKind_ == kDeleteFile ? "DELETE THIS FILE?" : "DELETE THIS LOCAL RECORD?", t.warning, Widgets::kCenter);
-  smallText(g, 512, 322, subject, t.ink, Widgets::kCenter);
-  smallText(g, 512, 342, deleteKind_ == kDeleteFile ? "Protected system folders cannot be removed here." : "This change is saved atomically to SD.", t.muted, Widgets::kCenter);
-  osButton(g, t, 318, 352, 178, 60, "CANCEL");
-  osButton(g, t, 528, 352, 178, 60, "DELETE", true);
+  DeskUi::smallText(g, 512, 286, deleteKind_ == kDeleteFile ? "DELETE THIS FILE?" : "DELETE THIS LOCAL RECORD?", t.warning, Widgets::kCenter);
+  DeskUi::smallText(g, 512, 322, subject, t.ink, Widgets::kCenter);
+  DeskUi::smallText(g, 512, 342, deleteKind_ == kDeleteFile ? "Protected system folders cannot be removed here." : "This change is saved atomically to SD.", t.muted, Widgets::kCenter);
+  DeskUi::button(g, t, 318, 352, 178, 60, "CANCEL");
+  DeskUi::button(g, t, 528, 352, 178, 60, "DELETE", true);
 #endif
 }
 void DeskUtilityApplication::draw() {

@@ -94,23 +94,21 @@
 #define CYPHER_DESK_VIDEO_MAX_H 480
 #endif
 
-// MEASURED LIMIT, not a policy choice: video and Wi-Fi do not both fit.
+// Flash budget: everything now fits together, with room to spare.
 //
-//   display+sd+audio+media+video+recorder   2.64 MB   83% of the app partition
-//   display+sd+audio+media+recorder+wifi    2.81 MB   89%
-//   all of the above together               3.21 MB  102%  <- does not link
+//   display+sd+audio+media+video+wifi+recorder   1.86 MB   59% of the app slot
 //
-// The board has 16 MB of flash, and the largest app partition the core ships
-// for 16 MB is the 3 MB one this repo's FQBN already uses (the 4.8 MB and
-// 13 MB tables are 32 MB-flash only). The hosted-C6 Wi-Fi stack plus HTTPS and
-// JSON for weather is ~570 KB on its own.
+// It did not, briefly: adding video took the kitchen-sink build to 3.21 MB
+// against a 3 MB partition. The cause turned out not to be video at all.
+// U8g2 declares its fonts as file-scope consts in the header, which is
+// internal linkage in C++, so every .cpp that named u8g2_font_cubic11_h_cjk
+// got a private 337,650-byte copy the linker cannot merge. FIVE copies were
+// reaching the image - 1.69 MB, over half the partition, for one font.
+// Routing all compact text through DeskUi::smallText (defined in exactly one
+// translation unit, DeskWidgets.cpp) recovered 1.35 MB.
 //
-// Catching it here turns an eight-minute build ending in a linker overflow
-// into an immediate, explicable failure. Override the guard if you are
-// building against a custom partition table with a larger app slot.
-#if USE_CYPHER_DESK_VIDEO && USE_WIFI && !defined(CYPHER_DESK_ALLOW_VIDEO_WITH_WIFI)
-#error "USE_CYPHER_DESK_VIDEO and USE_WIFI together overflow the 3 MB app partition (~3.21 MB). Pick one, or define CYPHER_DESK_ALLOW_VIDEO_WITH_WIFI with a custom partition table."
-#endif
+// If a build ever jumps by ~330 KB for no obvious reason, check for a new
+// #include <U8g2lib.h> before anything else.
 
 // Weather is opt-in at the feature level and still requires a user-configured
 // location plus WifiService's verified-internet state at runtime.
@@ -167,6 +165,18 @@
 
 #ifndef CYPHER_DESK_AUDIO_MIC_RATE
 #define CYPHER_DESK_AUDIO_MIC_RATE 16000
+#endif
+
+// Backlight. The idle level is deliberately never 0: the panel keeps
+// rendering at 0, you just cannot see it, which reads as a crash.
+#ifndef CYPHER_DESK_BRIGHTNESS
+#define CYPHER_DESK_BRIGHTNESS 255
+#endif
+#ifndef CYPHER_DESK_IDLE_DIM_MS
+#define CYPHER_DESK_IDLE_DIM_MS 90000
+#endif
+#ifndef CYPHER_DESK_IDLE_DIM_LEVEL
+#define CYPHER_DESK_IDLE_DIM_LEVEL 28
 #endif
 
 // Polling the GT911 faster than the panel refreshes just returns empty frames,
