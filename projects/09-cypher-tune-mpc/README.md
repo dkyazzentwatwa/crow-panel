@@ -17,19 +17,23 @@ files present.
 
 ## Status
 
-**Hardware-verified (V1.2, 2026-07-23).** Display, multi-touch pads, and audible
-sample playback out of the onboard speaker are all confirmed on a real
-CrowPanel. This is the project that surfaced the amp-enable polarity fix
-(IO30 is active-LOW; driving it HIGH mutes the speaker while I2S keeps
-streaming). Baseline, `USE_DISPLAY=1`, `USE_AUDIO=1`,
-`USE_AUDIO=1 USE_MPC_SD=1` and the combined display+audio builds are all
-green in the flag matrix.
+**Compile-ready, after being hardware-verified once.** Display, multi-touch
+pads and audible sample playback out of the onboard speaker were all confirmed
+on a real CrowPanel on 2026-07-23 (V1.2) — this is the project that surfaced
+the amp-enable polarity fix, where IO30 is active-LOW and driving it HIGH mutes
+the speaker while I2S keeps streaming.
 
-Still unmeasured: pad-to-speaker latency has not been captured on video, and
-the `engine` underrun counter has not been read under a sustained dense
-240 BPM pattern. The audio design targets ~26-29 ms worst-case pad-to-speaker
-(see [TECHNICAL.md](TECHNICAL.md) for the math) and the render task exposes
-that counter precisely so the timing claim can be checked rather than trusted.
+That result was on the **22050 Hz** engine. The engine now runs at **32 kHz**,
+with different DMA geometry, a resampled backing-loop voice and table-based
+pitch math, so it is a materially different binary and the proof state was
+deliberately reset rather than carried forward. Nothing about the earlier
+result is retracted; it just is not evidence about this build. All five flag
+combinations compile green.
+
+The audio design targets ~28 ms worst-case pad-to-speaker (see
+[TECHNICAL.md](TECHNICAL.md) for the math), and the render task exposes an
+underrun counter via `engine` so the timing claim can be checked rather than
+trusted. Pad-to-speaker latency has never been captured on video.
 
 ## What you get
 

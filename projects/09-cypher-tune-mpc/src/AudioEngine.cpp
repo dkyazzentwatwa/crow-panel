@@ -247,9 +247,12 @@ void AudioEngine::drainCommands_() {
         loopRetired_ = loopPcm_;
         loopPcm_ = loopPending_;
         loopFrames_ = loopPendingFrames_;
+        loopIncFP_ = loopPendingIncFP_;
         loopPending_ = nullptr;
         loopPendingFrames_ = 0;
+        loopPendingIncFP_ = 0;
         loopPos_ = 0;
+        loopPosFP_ = 0;
         pushEvent_({kEvtLoopSwapped, 0, 0, 0});
         break;
       }
@@ -257,7 +260,9 @@ void AudioEngine::drainCommands_() {
         loopRetired_ = loopPcm_;
         loopPcm_ = nullptr;
         loopFrames_ = 0;
+        loopIncFP_ = 0;
         loopPos_ = 0;
+        loopPosFP_ = 0;
         pushEvent_({kEvtLoopSwapped, 0, 0, 0});
         break;
       case kCmdChokeAll:
@@ -380,19 +385,35 @@ void AudioEngine::fadeAll_() {
 }
 
 void AudioEngine::mixChunk_(int32_t *acc, uint32_t frames) {
-  // Backing loop first, so the pads sit on top of it. It is at the engine
-  // rate, so this is a plain integer walk that wraps - no resampling and no
-  // end-of-sample check beyond the wrap.
-  if (loopPcm_ != nullptr && loopFrames_ > 0) {
-    uint32_t pos = loopPos_;
+  // Backing loop first, so the pads sit on top of it. This used to be a plain
+  // integer walk on the assumption that loops are written at the engine rate.
+  // They are not: scripts/build-loop-packs.py renders every pack at 22050, so
+  // once the engine moved to 32 kHz that assumption played every loop 45% fast
+  // and silently broke the tempo lock. Loops now resample the same way pads do
+  // (16.16 fixed point, 2-point linear), which also keeps every SD card that
+  // is already in the field working untouched.
+  if (loopPcm_ != nullptr && loopFrames_ > 0 && loopIncFP_ > 0) {
+    uint64_t posFP = loopPosFP_;  // Q32.32
+    const uint64_t endFP = (uint64_t)loopFrames_ << 32;
     int32_t gain = (int32_t)loopVolume_ * masterVolume_;  // 0..65025
     for (uint32_t n = 0; n < frames; n++) {
-      acc[n] += ((int32_t)loopPcm_[pos] * gain) >> 16;
-      if (++pos >= loopFrames_) {
-        pos = 0;
+      uint32_t idx = (uint32_t)(posFP >> 32);
+      // 16 bits of fraction is plenty for the interpolation itself; the extra
+      // precision in posFP exists for the cycle length, not the crossfade.
+      uint32_t frac = (uint32_t)((posFP >> 16) & 0xFFFF);
+      int32_t s0 = loopPcm_[idx];
+      // Wrap the interpolation partner too, so the seam between the last and
+      // first frame is as smooth as every other sample boundary.
+      int32_t s1 = loopPcm_[(idx + 1 >= loopFrames_) ? 0 : idx + 1];
+      int32_t s = s0 + (((s1 - s0) * (int32_t)frac) >> 16);
+      acc[n] += (s * gain) >> 16;
+      posFP += loopIncFP_;
+      if (posFP >= endFP) {
+        posFP -= endFP;
       }
     }
-    loopPos_ = pos;
+    loopPosFP_ = posFP;
+    loopPos_ = (uint32_t)(loopPosFP_ >> 32);  // UI reads this for the position bar
   }
 
   for (uint8_t i = 0; i <= kVoices; i++) {
@@ -472,9 +493,11 @@ uint8_t AudioEngine::activeVoices() const {
   return activeVoiceCount_;
 }
 
-void AudioEngine::stageLoop(int16_t *pcm, uint32_t frames) {
+void AudioEngine::stageLoop(int16_t *pcm, uint32_t frames, uint64_t incFP) {
   loopPending_ = pcm;
   loopPendingFrames_ = frames;
+  // 1<<32 reproduces the old plain integer walk exactly.
+  loopPendingIncFP_ = incFP != 0 ? incFP : ((uint64_t)1 << 32);
 }
 
 int16_t *AudioEngine::takeRetiredLoop() {
@@ -538,7 +561,7 @@ uint16_t AudioEngine::copyScope(int16_t *, uint16_t) const { return 0; }
 
 // Silent build: accept the buffer and hand it straight back, so the loop
 // context's alloc/free bookkeeping works identically with no engine running.
-void AudioEngine::stageLoop(int16_t *pcm, uint32_t) { loopRetired_ = pcm; }
+void AudioEngine::stageLoop(int16_t *pcm, uint32_t, uint64_t) { loopRetired_ = pcm; }
 
 int16_t *AudioEngine::takeRetiredLoop() {
   int16_t *old = loopRetired_;

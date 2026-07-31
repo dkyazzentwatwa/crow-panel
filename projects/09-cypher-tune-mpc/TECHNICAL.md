@@ -29,6 +29,7 @@ hardware or sample files.
 | `src/SampleBank` | Owns 16 `PadSound`s (PSRAM PCM + gain/pitch/choke/label); two banks so SD kits stage while the other plays |
 | `src/KitSamples` | Generated flash tables for the 16 builtin drum sounds (`scripts/build-builtin-kit.py`); `src/BuiltinKit` copies them into PSRAM at boot so an NVS write's flash-cache stall cannot fault the audio task |
 | `src/SynthKit` | Metronome click synthesis, plus reusable xorshift noise and a one-pole highpass. No longer synthesizes the playable kit — that is real recordings now |
+| `src/LoopLock.h` | Backing-loop trim + tempo-lock arithmetic. Free of Arduino.h on purpose so `scripts/test-cypher-tune.sh` compiles the shipping code rather than a copy — this is where source frames and engine frames are kept apart |
 | `src/LoopLibrary` | SD backing-loop catalog (`/mpc/loops/<pack>/loops.txt`), one loop resident in PSRAM at a time; the `bars` field derives a step length that locks the sequencer to fractional loop tempos |
 | `src/AudioEngine` | IDF `i2s_std` output, FreeRTOS render task on core 0, 8-voice mixer (16.16 resampler = rate conversion + pitch, Q12 gains, choke/steal fades), SPSC command+event rings; the render task is the musical clock |
 | `src/WavLoader` | SD kit scan + RIFF parse (16-bit PCM mono, 8-48 kHz kept at native rate), builtin fallback per missing pad file |
@@ -40,14 +41,31 @@ hardware or sample files.
 
 ### Audio path and latency
 
+- **The engine runs at 32000 Hz.** It was 22050 through the first
+  hardware-verified build; an 11 kHz Nyquist makes hats and cymbals dull and
+  is far too low for oscillator work. The builtin kit and every shipped loop
+  pack remain 22050 and are resampled up on the fly, which doubles as the
+  regression test that the resampler is right.
 - The Arduino `ESP_I2S` wrapper is **not** used: core 3.3.8 hardcodes
-  `dma_desc_num=6, dma_frame_num=240` (~65 ms of queued audio at 22.05 kHz).
-  The engine drives IDF `driver/i2s_std.h` directly with
-  `CYPHER_TUNE_DMA_DESC` (4) descriptors of `CYPHER_TUNE_BLOCK_FRAMES` (128)
-  frames: a 23 ms ring, ~26-29 ms worst-case pad-to-speaker. Playback itself
-  is hardware-verified; the specific latency figure is not, and the `engine`
-  command's underrun counter is the empirical check for it.
-- NS4168 I2S amp (LRCLK 21, BCLK 22, SDATA 23, amp enable IO30 active-high):
+  `dma_desc_num=6, dma_frame_num=240` (~65 ms of queued audio). The engine
+  drives IDF `driver/i2s_std.h` directly with `CYPHER_TUNE_DMA_DESC` (6)
+  descriptors of `CYPHER_TUNE_BLOCK_FRAMES` (128) frames: a 24 ms ring,
+  ~28 ms worst-case pad-to-speaker. DESC went 4 to 6 with the rate change -
+  4x128 at 32 kHz is only a 16 ms ring, which would have thrown away 31% of
+  the underrun margin the 22050 build was proven at. The `engine` command's
+  underrun counter is the empirical check.
+- **Backing loops resample too, and their step lock is Q32.32.** The loop
+  voice used to be a plain integer walk on the assumption that loops are
+  written at the engine rate; `LoopLibrary::loadLoop` did not even read the
+  WAV's sample-rate field. At 32 kHz that would have played every pack 45%
+  fast *and* silently mistuned the tempo lock, because
+  `Sequencer::setLockedStepFrames()` counts output frames while `loops.txt`
+  counts source frames. The increment is now derived from the exact cycle
+  length the sequencer will count, so the wrap and the grid cannot separate;
+  it is Q32.32 rather than the pads' 16.16 because a 16.16 increment's own
+  truncation drifts ~7 frames per cycle here, about 10 ms after 50 bars. Pad
+  one-shots are short enough that 16.16 stays correct for them.
+- NS4168 I2S amp (LRCLK 21, BCLK 22, SDATA 23, amp enable IO30 **active-LOW**):
   a digital-input Class-D amp, no codec registers, no I2C init. The engine
   streams two silent blocks before raising IO30 to avoid the wake pop.
 - The render task (core 0, priority 10) is paced by the blocking
@@ -194,9 +212,9 @@ Flag-matrix rows: `baseline`, `display`, `audio`, `audio-sd`,
 
 Project-local tuning macros (`config/ProjectConfig.h`):
 
-- `CYPHER_TUNE_ENGINE_RATE` (22050) — engine sample rate
-- `CYPHER_TUNE_BLOCK_FRAMES` (128) / `CYPHER_TUNE_DMA_DESC` (4) — latency vs
-  underrun headroom; raise DESC to 6 if `engine` shows underruns
+- `CYPHER_TUNE_ENGINE_RATE` (32000) — engine sample rate
+- `CYPHER_TUNE_BLOCK_FRAMES` (128) / `CYPHER_TUNE_DMA_DESC` (6) — latency vs
+  underrun headroom; raise DESC further if `engine` shows underruns
 - `CYPHER_TUNE_VOICES` (8), `CYPHER_TUNE_MASTER_VOLUME` (96)
 - `CYPHER_TUNE_MAX_SAMPLE_FRAMES` (275625) — source-frame cap per pad,
   i.e. a PSRAM budget (551 KB/pad), not a duration at the engine rate
@@ -208,14 +226,23 @@ Project-local tuning macros (`config/ProjectConfig.h`):
 
 - `compile-ready`: all five flag rows compile for esp32p4.
 - `uploaded`: sketch flashed to a real CrowPanel; static UI verified.
-- `field-proven`: **current state (V1.2, 2026-07-23).** Display, multi-touch
-  pads, and audible sample playback out of the speaker confirmed on real
-  hardware. This is where the amp-enable polarity bug was found — IO30 is
-  active-LOW, and driving it HIGH mutes the speaker while I2S keeps
-  streaming, so everything "works" and is silent.
+- `field-proven`: reached once, on the **22050 Hz** engine (V1.2, 2026-07-23).
+  Display, multi-touch pads, and audible sample playback out of the speaker
+  were confirmed on real hardware. This is where the amp-enable polarity bug
+  was found — IO30 is active-LOW, and driving it HIGH mutes the speaker while
+  I2S keeps streaming, so everything "works" and is silent.
 
-Remaining proof gaps within `field-proven`: pad-to-sound latency has not been
-captured on video (phone slow-mo across finger → pad flash → sound), and the
-`engine` underrun counter has not been read after 5 min at `bpm 240` with a
-dense pattern. Native USB-CDC serial drops once the app runs (see repo docs),
-so on-hardware proof is visual/audible plus the pre-drop boot log.
+**Current state: `compile-ready`, deliberately downgraded.** The 32 kHz
+migration changed the engine rate, the DMA geometry, the backing-loop playback
+path and the pitch math. That is a materially different binary from the one
+that was heard, so the old row does not carry forward — a 32 kHz sample engine
+with a resampled loop voice is a new claim and starts from zero. Nothing about
+the 22050 result is retracted; it simply is not evidence about this build.
+
+To get back to `field-proven`, in this order: the builtin kit is correct in
+pitch and tone; `engine` reports underruns = 0 after 5 min at `bpm 240` with a
+dense pattern; a 22050 SD loop plays at the right speed and stays locked over
+32 bars. Then the older gaps still stand — pad-to-sound latency has never been
+captured on video (phone slow-mo across finger → pad flash → sound). Native
+USB-CDC serial drops once the app runs (see repo docs), so on-hardware proof
+is visual/audible plus the pre-drop boot log.

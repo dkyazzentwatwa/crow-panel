@@ -33,6 +33,7 @@ Host-side tests (no board needed) and companion firmware:
 
 ```bash
 ./scripts/test-litego.sh --quick        # LiteGo rules fixtures + AI hygiene + bench (g++, ~1s)
+./scripts/test-cypher-tune.sh           # project 09 pitch table + backing-loop tempo lock (g++, ~1s)
 ./scripts/test-cypher-desk.sh           # project 18 WAV/AVI/word-wrap parsers (g++, ~2s)
 ./scripts/test-cypher-desk.sh clip.avi  # run the shipping demuxer over a real file
 ./scripts/compile-flock-system.sh       # Flock catalog checks + protocol fixtures + both companions

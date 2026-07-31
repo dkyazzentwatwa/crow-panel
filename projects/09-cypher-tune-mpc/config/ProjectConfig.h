@@ -3,10 +3,16 @@
 
 #include <AppConfig.h>
 
-// Engine sample rate. All synthesis/mixing happens at this rate; SD WAVs may
-// be any rate 8-48 kHz (the voice resampler converts on the fly).
+// Engine sample rate. All synthesis/mixing happens at this rate; SD WAVs and
+// backing loops may be any rate 8-48 kHz (the voice resampler converts on the
+// fly).
+//
+// 32000, not 22050: an 11 kHz Nyquist makes hats and cymbals dull and is far
+// too low for the oscillator work this engine is growing into. The builtin kit
+// and every shipped loop pack stay at 22050 and are resampled up, which is
+// also the regression test that the resampler is correct.
 #ifndef CYPHER_TUNE_ENGINE_RATE
-#define CYPHER_TUNE_ENGINE_RATE 22050
+#define CYPHER_TUNE_ENGINE_RATE 32000
 #endif
 // Back-compat alias (older docs/scripts referenced the original name).
 // Idle backlight dimming. Only applies while the transport is stopped, so a
@@ -25,24 +31,34 @@
 #endif
 
 // I2S DMA geometry: render block = one DMA descriptor. Latency ~= DESC *
-// BLOCK frames of queued audio (4 * 128 @ 22050 Hz = 23 ms ring; pad-to-
-// speaker worst case ~29 ms). Raise DESC if the underrun counter moves.
+// BLOCK frames of queued audio. Raise DESC if the underrun counter moves.
+//
+// DESC is 6, not 4, because the rate went up: 4 * 128 @ 32000 Hz is a 16 ms
+// ring, which throws away 31% of the underrun margin the 22050 build was
+// proven at. 6 * 128 @ 32000 = 24 ms, matching the old 23 ms, with a ~28 ms
+// worst-case pad-to-speaker. BLOCK stays 128 - it keeps step-boundary
+// splitting fine-grained and leaves acc_/out_ unchanged.
 #ifndef CYPHER_TUNE_BLOCK_FRAMES
 #define CYPHER_TUNE_BLOCK_FRAMES 128
 #endif
 #ifndef CYPHER_TUNE_DMA_DESC
-#define CYPHER_TUNE_DMA_DESC 4
+#define CYPHER_TUNE_DMA_DESC 6
 #endif
 
 #ifndef CYPHER_TUNE_VOICES
 #define CYPHER_TUNE_VOICES 8
 #endif
 
-// Per-pad sample length clamp (2 s at 48 kHz = 187.5 KB).
-// Per-pad length cap, 12.5 s at the engine rate. Kits mix one-shots with whole
-// loops played as pad chops, and the longest of those is 12.29 s - capping
-// shorter would cut a 4-bar loop mid-phrase. A realistic mixed kit lands near
-// 3.5 MB of PSRAM; the pathological all-pads-maxed case is 8.8 MB per bank.
+// Per-pad length cap in SOURCE frames, applied by WavLoader as the file is
+// read at its own rate and BEFORE any resampling - so this is a per-pad PSRAM
+// budget (551 KB), not a duration at the engine rate. Changing the engine rate
+// does not affect it.
+//
+// 275625 is 12.5 s of 22050 Hz source. Kits mix one-shots with whole loops
+// played as pad chops and the longest of those is 12.29 s, so capping shorter
+// would cut a 4-bar loop mid-phrase. A realistic mixed kit lands near 3.5 MB
+// of PSRAM; the pathological all-pads-maxed case is 8.8 MB per bank, and there
+// are two banks so an SD kit can stage while the other plays.
 #ifndef CYPHER_TUNE_MAX_SAMPLE_FRAMES
 #define CYPHER_TUNE_MAX_SAMPLE_FRAMES 275625
 #endif

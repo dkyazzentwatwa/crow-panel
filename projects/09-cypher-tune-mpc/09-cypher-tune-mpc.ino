@@ -5,6 +5,7 @@
 #include "src/Sequencer.h"
 #include "src/BuiltinKit.h"
 #include "src/LoopLibrary.h"
+#include "src/LoopLock.h"
 #include "src/SynthKit.h"
 #include "src/TuneSplash.h"
 #include "src/TuneUi.h"
@@ -199,34 +200,38 @@ bool selectLoop(int8_t index) {
   }
   const LoopLibrary::LoopInfo &info = LoopLibrary::info((uint8_t)index);
   int16_t *pcm = nullptr;
-  uint32_t frames = LoopLibrary::loadLoop((uint8_t)index, &pcm);
+  uint32_t srcRate = 0;
+  uint32_t frames = LoopLibrary::loadLoop((uint8_t)index, &pcm, &srcRate);
   if (frames == 0) {
     Serial.println(String("[loop] failed to load ") + info.name);
     return false;
   }
-  uint32_t stepFrames = LoopLibrary::stepFramesFor(info);
-  // Wrap the loop at exactly stepFrames * bars * 16 rather than at the file's
-  // full length. stepFrames is an integer division, so any remainder would
-  // leave the loop a few frames longer than the grid it drives - tiny, but it
-  // accumulates every cycle until the bed slides off the pattern. Trimming the
-  // remainder (at most 63 frames, under 3 ms) makes the lock exact forever.
-  uint32_t locked = stepFrames * (uint32_t)info.bars * 16;
-  if (locked > 0 && locked <= frames) {
-    frames = locked;
+  // All the trim/lock arithmetic lives in LoopLock so it can be host-tested;
+  // see src/LoopLock.h for why source and engine frames must not be confused.
+  LoopLock::Plan lock = LoopLock::plan(frames, info.bars, srcRate, CYPHER_TUNE_ENGINE_RATE);
+  if (!lock.valid) {
+    Serial.println(String("[loop] unusable geometry for ") + info.name);
+    free(pcm);
+    return false;
   }
+  frames = lock.sourceFrames;
+  uint32_t stepFramesEng = lock.stepFramesEngine;
+  uint64_t incFP = lock.incFP;
+
   currentLoop = index;
-  audioEngine().stageLoop(pcm, frames);
+  audioEngine().stageLoop(pcm, frames, incFP);
   if (audioEngine().running()) {
     EngineCommand cmd = {kCmdLoopSwap, 0, 0};
     audioEngine().post(cmd);
   } else {
     freeRetiredLoop();  // silent build: nothing plays it, drop it again
   }
-  seq.setLockedStepFrames(stepFrames);
+  seq.setLockedStepFrames(stepFramesEng);
   Serial.println(String("[loop] ") + info.title + " " +
                  String(info.bpmTenths / 10.0f, 1) + " BPM, " +
                  String(info.bars) + " bars, " + String(frames * 2 / 1024) +
-                 "KB; step=" + String(stepFrames) + " frames (tempo locked)");
+                 "KB @" + String(srcRate) + "Hz; step=" + String(stepFramesEng) +
+                 " engine frames (tempo locked)");
   return true;
 }
 
@@ -544,7 +549,7 @@ void cmdLoop(const String &args) {
         Serial.println(String("    ") + (idx == currentLoop ? "*" : " ") +
                        l.name + "  " + l.title + "  " +
                        String(l.bpmTenths / 10.0f, 1) + " BPM  " + String(l.bars) +
-                       " bars  " + String(l.frames / 22050.0f, 1) + "s");
+                       " bars  " + String(l.frames / (float)l.srcRate, 1) + "s");
       }
     }
     if (n == 0) {

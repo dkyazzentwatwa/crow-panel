@@ -129,7 +129,7 @@ uint8_t begin() {
   return gCount;
 }
 
-uint32_t loadLoop(uint8_t index, int16_t **pcmOut) {
+uint32_t loadLoop(uint8_t index, int16_t **pcmOut, uint32_t *srcRateOut) {
   if (index >= gCount || pcmOut == nullptr || !WavLoader::beginSd()) {
     return 0;
   }
@@ -140,8 +140,8 @@ uint32_t loadLoop(uint8_t index, int16_t **pcmOut) {
   if (!file) {
     return 0;
   }
-  // Loops are written by our own tool: canonical 44-byte header, 16-bit mono
-  // at the engine rate. Validate the essentials, then read the block whole.
+  // Loops are written by our own tool: canonical 44-byte header, 16-bit mono.
+  // Validate the essentials, then read the block whole.
   uint8_t header[44];
   if (file.read(header, 44) != 44 || memcmp(header, "RIFF", 4) != 0 ||
       memcmp(header + 8, "WAVE", 4) != 0 || memcmp(header + 36, "data", 4) != 0) {
@@ -149,12 +149,21 @@ uint32_t loadLoop(uint8_t index, int16_t **pcmOut) {
     return 0;
   }
   uint16_t channels = (uint16_t)header[22] | ((uint16_t)header[23] << 8);
+  // Bytes 24-27 are the sample rate. This was never read - the loader simply
+  // assumed the loop matched the engine rate, which held only while both were
+  // 22050. The header is authoritative over the catalog's assumption.
+  uint32_t rate = (uint32_t)header[24] | ((uint32_t)header[25] << 8) |
+                  ((uint32_t)header[26] << 16) | ((uint32_t)header[27] << 24);
   uint16_t bits = (uint16_t)header[34] | ((uint16_t)header[35] << 8);
   uint32_t dataBytes = (uint32_t)header[40] | ((uint32_t)header[41] << 8) |
                        ((uint32_t)header[42] << 16) | ((uint32_t)header[43] << 24);
-  if (channels != 1 || bits != 16 || dataBytes < 4) {
+  if (channels != 1 || bits != 16 || dataBytes < 4 || rate < 8000 || rate > 48000) {
     file.close();
     return 0;
+  }
+  gLoops[index].srcRate = rate;
+  if (srcRateOut != nullptr) {
+    *srcRateOut = rate;
   }
   uint32_t frames = dataBytes / 2;
   int16_t *pcm = SampleBank::allocFrames(frames);
@@ -190,7 +199,7 @@ uint32_t loadLoop(uint8_t index, int16_t **pcmOut) {
 namespace LoopLibrary {
 
 uint8_t begin() { return 0; }
-uint32_t loadLoop(uint8_t, int16_t **) { return 0; }
+uint32_t loadLoop(uint8_t, int16_t **, uint32_t *) { return 0; }
 
 }  // namespace LoopLibrary
 
@@ -237,6 +246,20 @@ uint32_t stepFramesFor(const LoopInfo &loop) {
     return 0;
   }
   return loop.frames / steps;
+}
+
+uint32_t stepFramesForEngine(const LoopInfo &loop, uint32_t srcRate) {
+  if (srcRate == 0) {
+    srcRate = loop.srcRate != 0 ? loop.srcRate : kSourceRateDefault;
+  }
+  uint32_t steps = (uint32_t)loop.bars * 16;
+  if (steps == 0 || loop.frames == 0) {
+    return 0;
+  }
+  // Convert the whole loop first and divide once: dividing per step and then
+  // scaling would round away up to a step's worth of drift over 16 bars.
+  uint64_t engineFrames = ((uint64_t)loop.frames * CYPHER_TUNE_ENGINE_RATE) / srcRate;
+  return (uint32_t)(engineFrames / steps);
 }
 
 }  // namespace LoopLibrary

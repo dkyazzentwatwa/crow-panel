@@ -58,7 +58,7 @@ class SampleBank {
  private:
   PadSound pads_[kPadCount];
   char kitName_[16] = "builtin";
-  uint32_t engineRate_ = 22050;
+  uint32_t engineRate_ = CYPHER_TUNE_ENGINE_RATE;
 };
 
 #endif

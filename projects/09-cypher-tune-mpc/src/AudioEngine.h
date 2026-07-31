@@ -93,7 +93,25 @@ class AudioEngine {
   // stageLoop() hands over a PSRAM buffer; post kCmdLoopSwap to adopt it. When
   // kEvtLoopSwapped comes back, takeRetiredLoop() returns the displaced buffer
   // for the loop context to free.
-  void stageLoop(int16_t *pcm, uint32_t frames);
+  //
+  // incFP is the playback increment in Q32.32 - NOT the 16.16 the pad voices
+  // use. Two reasons it needs the extra precision:
+  //
+  //  - it is not just (srcRate / engineRate). The caller derives it from the
+  //    exact cycle length the sequencer will count, so the loop's wrap and the
+  //    step grid stay aligned forever (same reasoning as the length trim in
+  //    selectLoop()).
+  //  - at 16.16 the truncation alone drifts up to ~7 frames per cycle at
+  //    22050 -> 32000, about 10 ms after 50 bars, which is audible on a long
+  //    jam. Q32.32 brings that to under 1e-4 frames per cycle.
+  //
+  // A pad sample is a one-shot a few hundred ms long, so 16.16 is fine there;
+  // a backing loop runs for the whole session, which is why it differs.
+  void stageLoop(int16_t *pcm, uint32_t frames, uint64_t incFP);
+  static uint64_t rateRatioFP(uint32_t srcRate, uint32_t dstRate) {
+    if (srcRate == 0 || dstRate == 0) return (uint64_t)1 << 32;
+    return ((uint64_t)srcRate << 32) / dstRate;
+  }
   int16_t *takeRetiredLoop();
   bool loopActive() const { return loopPcm_ != nullptr; }
   uint32_t loopFrames() const { return loopFrames_; }
@@ -170,9 +188,12 @@ class AudioEngine {
   // context touches the pending/retired slots.
   int16_t *loopPcm_ = nullptr;
   uint32_t loopFrames_ = 0;
-  volatile uint32_t loopPos_ = 0;
+  volatile uint32_t loopPos_ = 0;  // whole frames, for the UI position bar
+  uint64_t loopPosFP_ = 0;         // Q32.32 play cursor (render task only)
+  uint64_t loopIncFP_ = 0;         // Q32.32 increment; 0 = no loop loaded
   int16_t *loopPending_ = nullptr;
   uint32_t loopPendingFrames_ = 0;
+  uint64_t loopPendingIncFP_ = 0;
   int16_t *loopRetired_ = nullptr;
   volatile uint8_t loopVolume_ = 190;
 

@@ -808,7 +808,7 @@ void TuneUi::drawLoops_() {
     Widgets::text(g, x + 12, y + 12, l.title, Widgets::fontM(),
                   active ? t.ink : t.ink);
     String sub = String(l.bpmTenths / 10.0f, 1) + " BPM   " + String(l.bars) +
-                 " bars   " + String(l.frames / 22050.0f, 0) + "s";
+                 " bars   " + String(l.frames / (float)l.srcRate, 0) + "s";
     Widgets::text(g, x + 12, y + 44, sub.c_str(), Widgets::fontS(), t.muted);
     if (active) {
       Widgets::text(g, x + kLoopCellW - 12, y + 44, "PLAYING", Widgets::fontS(),

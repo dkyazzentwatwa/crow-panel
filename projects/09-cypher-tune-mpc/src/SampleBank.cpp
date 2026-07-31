@@ -24,7 +24,7 @@ uint32_t incFP(uint32_t srcRate, uint32_t engineRate) {
 }  // namespace
 
 void SampleBank::beginDefaults(uint32_t engineRate) {
-  engineRate_ = engineRate == 0 ? 22050 : engineRate;
+  engineRate_ = engineRate == 0 ? CYPHER_TUNE_ENGINE_RATE : engineRate;
   freeAll();
   for (uint8_t i = 0; i < kPadCount; i++) {
     PadSound &pad = pads_[i];
