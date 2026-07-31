@@ -55,6 +55,7 @@ class CypherDeskOs {
   void commandSound(const String &args);
   void commandStats(Print &out);
   void commandSearch(const String &args, Print &out);
+  void commandFind(const String &args, Print &out);
   void commandTime(const String &args, Print &out);
   void commandStorage(const String &args, Print &out);
 

@@ -7,6 +7,7 @@
 #include "DeskPrompts.h"
 #include "DeskSettings.h"
 #include "DeskStorage.h"
+#include "DeskTextWrap.h"
 #include "DeskTheme.h"
 #include "DeskTouchKeyboard.h"
 
@@ -36,6 +37,7 @@ class DeskApp {
   void commandSound(const String &args);
   void commandStats(Print &out) const;
   void commandSearch(const String &args, Print &out) const;
+  void commandFind(const String &args, Print &out);
   void commandTime(const String &args, Print &out);
   void commandStorage(const String &args, Print &out);
   void printTouchDiagnostics(Print &out) const;
@@ -54,6 +56,12 @@ class DeskApp {
   DeskNavigator navigator_;
   DeskTouchKeyboard keyboard_;
   DeskEditorState editor_;
+  // Soft word wrap. Rebuilt whenever the buffer changes, so the renderer,
+  // the cursor and tap-to-place all agree on where the lines are.
+  DeskTextWrap wrap_;
+  bool wrapStale_ = true;
+  String findQuery_;
+  uint16_t findMatches_ = 0;
   DeskDocument notes_[CYPHER_DESK_MAX_NOTES];
   DeskFolder folders_[CYPHER_DESK_MAX_FOLDERS];
   uint16_t noteCount_ = 0;
@@ -139,6 +147,11 @@ class DeskApp {
   uint16_t columnForIndex(const String &text, size_t index) const;
   size_t indexForLineAndColumn(const String &text, uint16_t line, uint16_t column) const;
   void ensureCursorVisible();
+  void refreshWrap();
+  // Maps a tap inside the text area onto a buffer index.
+  bool placeCursorAt(int16_t x, int16_t y);
+  // Jumps to the next occurrence after the cursor, wrapping once.
+  bool findNext(const String &needle);
   void resetPreferredColumn();
   uint32_t countWords(const String &text) const;
   String titleFromBuffer() const;

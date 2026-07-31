@@ -7,7 +7,12 @@ constexpr uint16_t CYPHER_DESK_PAGE_SIZE = 48;
 constexpr uint16_t CYPHER_DESK_MAX_NOTES = CYPHER_DESK_PAGE_SIZE;
 constexpr uint8_t CYPHER_DESK_MAX_FOLDERS = 24;
 constexpr uint8_t CYPHER_DESK_MAX_MOCK_NOTES = 20;
-constexpr size_t CYPHER_DESK_MAX_EDITOR_LEN = 12000;
+// 12,000 was a Cardputer-era limit. The ceiling here is not flash but internal
+// RAM: the editor holds the document in an Arduino String, and the save path
+// holds a second copy while it writes. 32,000 is comfortable against ~250 KB of
+// free internal heap; going materially past it wants a PSRAM-backed buffer
+// type instead of String, which is a larger change than raising a constant.
+constexpr size_t CYPHER_DESK_MAX_EDITOR_LEN = 32000;
 
 enum DeskPage {
   kDeskPageDesk,

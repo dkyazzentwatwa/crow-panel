@@ -533,6 +533,7 @@ void CypherDeskOs::commandRitual(const String &args) { ensureWriterOpen(); write
 void CypherDeskOs::commandTheme(const String &args) { ensureWriterOpen(); writer_.writer().commandTheme(args); settings_.begin(); dirty_ = true; }
 void CypherDeskOs::commandSound(const String &args) { ensureWriterOpen(); writer_.writer().commandSound(args); }
 void CypherDeskOs::commandStats(Print &out) { ensureWriterOpen(); writer_.writer().commandStats(out); }
+void CypherDeskOs::commandFind(const String &args, Print &out) { ensureWriterOpen(); writer_.writer().commandFind(args, out); dirty_ = true; }
 void CypherDeskOs::commandSearch(const String &args, Print &out) { ensureWriterOpen(); writer_.writer().commandSearch(args, out); }
 void CypherDeskOs::commandTime(const String &argsValue, Print &out) {
   String args = argsValue; args.trim();

@@ -40,6 +40,7 @@ void cmdAudio(const String &args);
 void cmdRecovery(const String &args);
 void cmdWeather(const String &args);
 void cmdVideo(const String &args);
+void cmdFind(const String &args);
 
 void cmdStatus(const String &args) {
   (void)args;
@@ -118,6 +119,7 @@ void cmdAudio(const String &args) { desk.commandAudio(args, Serial); }
 void cmdRecovery(const String &args) { desk.commandRecovery(args, Serial); }
 void cmdWeather(const String &args) { desk.commandWeather(args, Serial); }
 void cmdVideo(const String &args) { desk.commandVideo(args, Serial); }
+void cmdFind(const String &args) { desk.commandFind(args, Serial); }
 
 void setup() {
   Logger::begin(115200);
@@ -145,6 +147,7 @@ void setup() {
   router.on("sound", "set sound: key <0-3>|ambience <0-4>|volume <0-100>", cmdSound);
   router.on("stats", "print gentle writing totals", cmdStats);
   router.on("search", "search notes: search <text> or search tag <tag>", cmdSearch);
+  router.on("find", "find in the open note: find <text> (repeat to advance)", cmdFind);
   router.on("time", "time sync|timezone|zone <POSIX TZ>|prev|next|confirm", cmdTime);
   router.on("storage", "storage status, rebuild, or eject", cmdStorage);
   router.on("app", "open OS app: app <name>", cmdApp);

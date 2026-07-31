@@ -1,6 +1,7 @@
 #include "DeskApp.h"
 
 #include "DeskKeyboardLayout.h"
+#include "DeskTextWrap.h"
 #include "DeskWidgets.h"
 #include "DeskSystemServices.h"
 #include "DeskTouch.h"
@@ -15,6 +16,19 @@ using namespace DeskUi;
 #endif
 
 namespace {
+// Editor metrics, shared by the renderer, the wrap engine, the cursor bar and
+// tap-to-place. The cursor advances by a fixed kEditorCharW per column, so all
+// four have to agree that columns are uniform.
+constexpr uint16_t kEditorColumns = 78;
+constexpr int16_t kEditorCharW = 11;
+constexpr int16_t kEditorTextX = 42;
+constexpr uint8_t kEditorRows = 8;
+constexpr int16_t kEditorBaseY = 144;
+constexpr int16_t kEditorRowH = 18;
+constexpr uint8_t kFocusRows = 5;
+constexpr int16_t kFocusBaseY = 128;
+constexpr int16_t kFocusRowH = 34;
+
 constexpr int16_t kScreenW = 1024;
 constexpr int16_t kScreenH = 600;
 constexpr int16_t kHeaderH = 82;
@@ -526,18 +540,71 @@ size_t DeskApp::indexForLineAndColumn(const String &text, uint16_t line, uint16_
   while (currentLine < line && index < text.length()) if (text[index++] == '\n') ++currentLine;
   return min(index + column, lineEndForIndex(text, index));
 }
+// The wrap table is rebuilt lazily: a keystroke marks it stale and the next
+// read pays for it, so a burst of typing costs one rebuild rather than one per
+// character.
+void DeskApp::refreshWrap() {
+  if (!wrapStale_) return;
+  wrap_.rebuild(editor_.buffer, kEditorColumns);
+  wrapStale_ = false;
+}
+
 void DeskApp::ensureCursorVisible() {
   editor_.cursor = min(editor_.cursor, editor_.buffer.length());
-  uint16_t line = lineNumberForIndex(editor_.buffer, editor_.cursor);
-  uint16_t column = columnForIndex(editor_.buffer, editor_.cursor);
-  uint8_t visible = focusActive_ ? 5 : 8;
-  if (focusActive_) editor_.topLine = line > 2 ? line - 2 : 0;
-  else {
+  refreshWrap();
+  const uint16_t line = wrap_.lineForIndex(editor_.cursor);
+  const uint8_t visible = focusActive_ ? kFocusRows : kEditorRows;
+  if (focusActive_) {
+    editor_.topLine = line > 2 ? line - 2 : 0;
+  } else {
     if (line < editor_.topLine) editor_.topLine = line;
     if (line >= editor_.topLine + visible) editor_.topLine = line - visible + 1;
   }
-  if (column < editor_.leftColumn) editor_.leftColumn = column;
-  if (column >= editor_.leftColumn + 72) editor_.leftColumn = column - 71;
+  // Text wraps now, so there is no horizontal scroll left to maintain.
+  editor_.leftColumn = 0;
+}
+
+bool DeskApp::placeCursorAt(int16_t x, int16_t y) {
+  refreshWrap();
+  const int16_t baseY = focusActive_ ? kFocusBaseY : kEditorBaseY;
+  const int16_t rowH = focusActive_ ? kFocusRowH : kEditorRowH;
+  const uint8_t rows = focusActive_ ? kFocusRows : kEditorRows;
+  if (y < baseY - rowH || x < kEditorTextX) return false;
+  const int16_t row = (y - (baseY - rowH)) / rowH;
+  if (row < 0 || row >= rows) return false;
+  const uint16_t line = static_cast<uint16_t>(editor_.topLine + row);
+  if (line >= wrap_.lineCount()) return false;
+  // Round to the nearest gap between characters, so tapping the right half of
+  // a glyph puts the caret after it.
+  const uint16_t column =
+      static_cast<uint16_t>((x - kEditorTextX + kEditorCharW / 2) / kEditorCharW);
+  editor_.cursor = wrap_.indexFor(line, column);
+  resetPreferredColumn();
+  ensureCursorVisible();
+  dirty_ = true;
+  return true;
+}
+
+bool DeskApp::findNext(const String &needle) {
+  if (!needle.length()) return false;
+  String haystack = editor_.buffer;
+  String lowered = needle;
+  haystack.toLowerCase();
+  lowered.toLowerCase();
+  findMatches_ = 0;
+  for (int scan = haystack.indexOf(lowered); scan >= 0;
+       scan = haystack.indexOf(lowered, scan + 1)) {
+    ++findMatches_;
+  }
+  if (findMatches_ == 0) return false;
+  int at = haystack.indexOf(lowered, editor_.cursor);
+  if (at < 0) at = haystack.indexOf(lowered);  // wrap once
+  if (at < 0) return false;
+  editor_.cursor = static_cast<size_t>(at) + needle.length();
+  resetPreferredColumn();
+  ensureCursorVisible();
+  dirty_ = true;
+  return true;
 }
 void DeskApp::resetPreferredColumn() { editor_.preferredColumn = columnForIndex(editor_.buffer, editor_.cursor); }
 void DeskApp::insertTextAtCursor(const String &text) {
@@ -547,6 +614,7 @@ void DeskApp::insertTextAtCursor(const String &text) {
   editor_.dirty = true;
   editor_.lastEditMs = millis();
   editor_.document.title = titleFromBuffer();
+  wrapStale_ = true;
   resetPreferredColumn();
   ensureCursorVisible();
   dirty_ = true;
@@ -558,20 +626,25 @@ void DeskApp::deleteAtCursor() {
   editor_.dirty = true;
   editor_.lastEditMs = millis();
   editor_.document.title = titleFromBuffer();
+  wrapStale_ = true;
   resetPreferredColumn();
   ensureCursorVisible();
   dirty_ = true;
 }
 void DeskApp::moveEditorLeft() { if (editor_.cursor) --editor_.cursor; resetPreferredColumn(); ensureCursorVisible(); dirty_ = true; }
 void DeskApp::moveEditorRight() { if (editor_.cursor < editor_.buffer.length()) ++editor_.cursor; resetPreferredColumn(); ensureCursorVisible(); dirty_ = true; }
+// Up/down walk DISPLAY lines, so a wrapped paragraph moves one visible row at
+// a time rather than jumping a whole paragraph.
 void DeskApp::moveEditorUp() {
-  uint16_t line = lineNumberForIndex(editor_.buffer, editor_.cursor);
-  if (line) editor_.cursor = indexForLineAndColumn(editor_.buffer, line - 1, editor_.preferredColumn);
+  refreshWrap();
+  const uint16_t line = wrap_.lineForIndex(editor_.cursor);
+  if (line) editor_.cursor = wrap_.indexFor(line - 1, editor_.preferredColumn);
   ensureCursorVisible(); dirty_ = true;
 }
 void DeskApp::moveEditorDown() {
-  uint16_t line = lineNumberForIndex(editor_.buffer, editor_.cursor);
-  editor_.cursor = indexForLineAndColumn(editor_.buffer, line + 1, editor_.preferredColumn);
+  refreshWrap();
+  const uint16_t line = wrap_.lineForIndex(editor_.cursor);
+  editor_.cursor = wrap_.indexFor(line + 1, editor_.preferredColumn);
   ensureCursorVisible(); dirty_ = true;
 }
 uint32_t DeskApp::countWords(const String &text) const {
@@ -653,6 +726,10 @@ void DeskApp::handleTap(int16_t x, int16_t y) {
         return;
       }
     }
+    // A tap inside the text card places the caret. Before this the cursor
+    // could only be moved with the LEFT/RIGHT keys, and moveEditorUp/Down were
+    // unreachable from glass entirely.
+    if (inside(x, y, 20, 94, 984, 210) && placeCursorAt(x, y)) return;
     return;  // keys are serviced on press edges in tick()
   }
 
@@ -857,6 +934,35 @@ void DeskApp::commandTheme(const String &args) {
 }
 void DeskApp::commandSound(const String &args) { String v = args; v.toLowerCase(); if (v.startsWith("ambience ")) { uint8_t a = v.substring(9).toInt(); settings_.setAmbience(a); if (audio_) audio_->setAmbience(a); } else if (v.startsWith("key ")) { uint8_t k = v.substring(4).toInt(); settings_.setKeySound(k); if (audio_) audio_->setKeySound(k); } else if (v.startsWith("volume ")) { uint8_t volume = v.substring(7).toInt(); settings_.setVolume(volume); if (audio_) audio_->setVolume(volume); } Serial.println(audioStatus()); dirty_ = true; }
 void DeskApp::commandStats(Print &out) const { DeskStats s = storage_.stats(clock_.isoDate()); out.print(F("[stats] today=")); out.print(s.quietMinutesToday); out.print(F("min week=")); out.print(s.quietMinutesWeek); out.print(F("min words=")); out.print(s.wordsAddedWeek); out.print(F(" completed=")); out.print(s.sessionsCompleted); out.print(F(" last=")); out.println(s.lastSession.length() ? s.lastSession : "none yet"); }
+// Find WITHIN the open document, as opposed to `search`, which looks across
+// every note on the card.
+void DeskApp::commandFind(const String &args, Print &out) {
+  String needle = args;
+  needle.trim();
+  if (!needle.length()) {
+    findQuery_ = "";
+    findMatches_ = 0;
+    dirty_ = true;
+    out.println(F("[find] cleared; use: find <text>"));
+    return;
+  }
+  if (navigator_.active() != kDeskPageEditor) {
+    out.println(F("[find] open a note first"));
+    return;
+  }
+  findQuery_ = needle;
+  if (findNext(needle)) {
+    out.print(F("[find] "));
+    out.print(findMatches_);
+    out.print(F(" match(es); cursor at "));
+    out.println(editor_.cursor);
+  } else {
+    out.print(F("[find] no match for "));
+    out.println(needle);
+  }
+  dirty_ = true;
+}
+
 void DeskApp::commandSearch(const String &argsValue, Print &out) const {
   String query = argsValue;
   query.trim();
@@ -1164,29 +1270,37 @@ void DeskApp::drawEditor(Arduino_GFX *g) {
   }
   card(g, t, 20, 94, 984, 210, focusActive_ ? t.success : t.accent);
   if (!focusActive_) smallText(g, 38, 110, editor_.document.path, t.accent3);
-  uint16_t cursorLine = lineNumberForIndex(editor_.buffer, editor_.cursor);
-  uint16_t cursorColumn = columnForIndex(editor_.buffer, editor_.cursor);
-  uint8_t rows = focusActive_ ? 5 : 8;
-  int16_t baseY = focusActive_ ? 128 : 144;
-  int16_t rowH = focusActive_ ? 34 : 18;
+  refreshWrap();
+  const uint16_t cursorLine = wrap_.lineForIndex(editor_.cursor);
+  const uint16_t cursorColumn = wrap_.columnForIndex(editor_.cursor);
+  const uint8_t rows = focusActive_ ? kFocusRows : kEditorRows;
+  const int16_t baseY = focusActive_ ? kFocusBaseY : kEditorBaseY;
+  const int16_t rowH = focusActive_ ? kFocusRowH : kEditorRowH;
   for (uint8_t row = 0; row < rows; ++row) {
-    uint16_t lineNo = editor_.topLine + row;
-    size_t start = indexForLineAndColumn(editor_.buffer, lineNo, 0);
-    size_t end = lineEndForIndex(editor_.buffer, start);
-    String line = editor_.buffer.substring(start, end);
-    uint16_t sliceEnd = editor_.leftColumn + 78;
-    if (sliceEnd > line.length()) sliceEnd = line.length();
-    line = editor_.leftColumn < line.length() ? line.substring(editor_.leftColumn, sliceEnd) : "";
-    int16_t y = baseY + row * rowH;
+    const uint16_t lineNo = static_cast<uint16_t>(editor_.topLine + row);
+    if (lineNo >= wrap_.lineCount()) break;
+    const String line = wrap_.lineText(editor_.buffer, lineNo);
+    const int16_t y = baseY + row * rowH;
     if (focusActive_ && lineNo == cursorLine) g->fillRoundRect(32, y - 21, 960, 30, 8, t.panelHighlight);
     // Every text draw goes through DeskUi so the CJK font is named in exactly
     // one translation unit; see DeskWidgets.cpp.
-    if (line.length()) smallText(g, 42, y - 11, line, t.ink);
-    if (!editor_.buffer.length() && row == 0) smallText(g, 42, y - 11, "Start writing...", t.muted);
+    if (line.length()) smallText(g, kEditorTextX, y - 11, line, t.ink);
     if (lineNo == cursorLine) {
-      int16_t col = cursorColumn >= editor_.leftColumn ? cursorColumn - editor_.leftColumn : 0;
-      g->fillRect(42 + min(col, static_cast<int16_t>(78)) * 11, y - 14, 3, 16, t.accent2);
+      const int16_t column = min(cursorColumn, kEditorColumns);
+      g->fillRect(kEditorTextX + column * kEditorCharW, y - 14, 3, 16, t.accent2);
     }
+  }
+  if (!editor_.buffer.length()) {
+    smallText(g, kEditorTextX, baseY - 11, "Start writing...", t.muted);
+  }
+  if (findQuery_.length()) {
+    smallText(g, 984, 286, String("FIND \"") + findQuery_ + "\"  " + findMatches_ + " match" +
+                               (findMatches_ == 1 ? "" : "es"),
+              findMatches_ ? t.success : t.warning, Widgets::kRight);
+  }
+  if (wrap_.truncated()) {
+    smallText(g, 38, 286, "document longer than the editor can lay out; the tail is not shown",
+              t.warning);
   }
   if (editingScrap_ && !focusActive_) button(g, t, 20, 268, 140, 38, "DISCARD");
   if (keyboardDirty_) { keyboard_.draw(g, t); keyboardDirty_ = false; }
