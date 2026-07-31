@@ -333,7 +333,7 @@ void handleUiEvent(const WirelessEvent &ev) {
 
 // --- Serial commands ---
 void cmdStatus(const String &) {
-  printSystemStatus(Serial, "cypherdrive-active", storage.eventCount());
+  printSystemStatus(Serial, "cypherdrive-active", storage.eventCount(), &router);
   Serial.print(F("[cypherdrive] flags "));
   Serial.println(flagState());
   Serial.print(F("[cypherdrive] scan_runs="));

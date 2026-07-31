@@ -100,7 +100,7 @@ void cmdFeed(const String &args) {
 }
 
 void cmdStatus(const String &) {
-  printSystemStatus(Serial, "fieldops", storage.eventCount());
+  printSystemStatus(Serial, "fieldops", storage.eventCount(), &router);
   const FieldOpsDashboard &d = ui.dashboard();
   Serial.print(F("[fieldops] screen="));
   Serial.print(d.screenName());

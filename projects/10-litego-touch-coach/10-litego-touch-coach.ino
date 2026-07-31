@@ -74,7 +74,7 @@ void cancelAiTurn() {
 }
 
 void cmdStatus(const String &) {
-  printSystemStatus(Serial, "litego-coach", storage.eventCount());
+  printSystemStatus(Serial, "litego-coach", storage.eventCount(), &router);
   Serial.println(String("[go] next=") + String(game.currentPlayer()) +
                  " moves=" + String(game.moveCount()) +
                  " passes=" + String(game.consecutivePasses()) + " level=" + game.levelName() +

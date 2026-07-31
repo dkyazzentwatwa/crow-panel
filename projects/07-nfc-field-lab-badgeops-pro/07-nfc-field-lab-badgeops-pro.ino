@@ -162,7 +162,7 @@ void printBadgeDecision(const String &source) {
 // Serial commands (each also drives the UI so touch and serial stay in parity)
 // --------------------------------------------------------------------------
 
-void cmdStatus(const String &) { printSystemStatus(Serial, "nfc-field-lab", storage.eventCount()); }
+void cmdStatus(const String &) { printSystemStatus(Serial, "nfc-field-lab", storage.eventCount(), &router); }
 void cmdHistory(const String &) { eventLog.printHistory(Serial); }
 
 void cmdScan(const String &) {

@@ -135,7 +135,7 @@ void sampleDetector() {
 }
 
 void printStatus(const String &) {
-  printSystemStatus(Serial, "littlehakr-rf-lab", 0);
+  printSystemStatus(Serial, "littlehakr-rf-lab", 0, &router);
   Serial.printf("[rflab] proof=%s spi=%s nrf=%s status=0x%02X nrf_samples=%lu nrf_hits=%lu cc=%s part=0x%02X ver=0x%02X cc_samples=%lu cc_hits=%lu rssi=%d gdo0=%d gdo2=%d transitions=%lu detector=%s authorized=%s persistence=%s\n",
                 rfLabProofLabel(lab.proof), lab.spiReady ? "ready" : "error",
                 lab.nrfDetected ? "yes" : "no", lab.nrfStatus,

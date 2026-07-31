@@ -74,7 +74,7 @@ void cmdBadges(const String &) {
 }
 
 void cmdStatus(const String &) {
-  printSystemStatus(Serial, "badgeops", storage.eventCount());
+  printSystemStatus(Serial, "badgeops", storage.eventCount(), &router);
   Serial.print(F("[badgeops] reader="));
   Serial.print(badgeReader.driverName());
   Serial.print(F(" ready="));

@@ -262,7 +262,7 @@ bool launchRom(int8_t index) {
 }
 
 void cmdStatus(const String &) {
-  printSystemStatus(Serial, "cypher-boy", 0);
+  printSystemStatus(Serial, "cypher-boy", 0, &router);
   Serial.print(F("[status] flags USE_DISPLAY="));
   Serial.print(USE_DISPLAY);
   Serial.print(F(" USE_GB_SD="));

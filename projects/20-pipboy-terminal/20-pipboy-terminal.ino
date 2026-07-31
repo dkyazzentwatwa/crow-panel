@@ -6,7 +6,7 @@ PipBoyTerminal pipboy;
 SerialCommandRouter router;
 EventLog eventLog;
 
-void cmdStatus(const String &) { printSystemStatus(Serial, "pipboy-terminal", eventLog.size()); pipboy.printStatus(Serial); }
+void cmdStatus(const String &) { printSystemStatus(Serial, "pipboy-terminal", eventLog.size(), &router); pipboy.printStatus(Serial); }
 void cmdPage(const String &args) {
   String value = args; value.toLowerCase(); value.trim();
   if (value == "home") pipboy.page(kPipHome); else if (value == "stat") pipboy.page(kPipStat); else if (value == "map") pipboy.page(kPipMap);

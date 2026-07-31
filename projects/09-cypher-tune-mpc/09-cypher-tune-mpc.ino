@@ -357,7 +357,7 @@ void uiLoopVolSet(void *, uint8_t v) { audioEngine().setLoopVolume(v); }
 
 // --- Serial commands ---
 
-void cmdStatus(const String &) { printSystemStatus(Serial, "cypher-tune-mpc", storage.eventCount()); }
+void cmdStatus(const String &) { printSystemStatus(Serial, "cypher-tune-mpc", storage.eventCount(), &router); }
 void cmdHistory(const String &) { eventLog.printHistory(Serial); }
 
 void cmdPad(const String &args) {

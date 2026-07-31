@@ -8,7 +8,7 @@ EventLog eventLog;
 StorageManager storage;
 
 void cmdStatus(const String &) {
-  printSystemStatus(Serial, "cypher-gamer", storage.eventCount());
+  printSystemStatus(Serial, "cypher-gamer", storage.eventCount(), &router);
   arcade.printFlags(Serial);
 }
 

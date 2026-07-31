@@ -44,7 +44,7 @@ void cmdFind(const String &args);
 
 void cmdStatus(const String &args) {
   (void)args;
-  printSystemStatus(Serial, "cypher-desk-os", eventLog.size());
+  printSystemStatus(Serial, "cypher-desk-os", eventLog.size(), &router);
   desk.printStatus(Serial);
 }
 

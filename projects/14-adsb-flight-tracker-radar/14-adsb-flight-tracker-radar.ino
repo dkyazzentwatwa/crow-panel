@@ -122,7 +122,7 @@ void startWorldTask() {
 #endif
 
 void cmdStatus(const String &) {
-  printSystemStatus(Serial, "adsb-radar", store.count());
+  printSystemStatus(Serial, "adsb-radar", store.count(), &router);
   store.copySnapshot(g_snap);
   Serial.printf("[status] screen=%s source=%s contacts=%u seen=%u range=%ukm poll=%lums\n",
                 ui.screenName(),

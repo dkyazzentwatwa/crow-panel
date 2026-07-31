@@ -174,7 +174,7 @@ void showDetailPage(uint8_t page) {
 }
 
 void cmdStatus(const String &) {
-  printSystemStatus(Serial, "pokedex-panel", eventLog.size());
+  printSystemStatus(Serial, "pokedex-panel", eventLog.size(), &router);
   Serial.print(F("[pokedex] source="));
   Serial.print(catalog.sourceLabel());
   Serial.print(F(" sd_ready="));

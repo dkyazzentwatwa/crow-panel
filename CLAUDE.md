@@ -93,7 +93,7 @@ signatures/, mock-api/, docs/
 
 - **`HardwareProfile.{h,cpp}`** — every board-revision pin group and panel timing in one place: touch, wireless socket, audio, display, hosted-C6 SDIO, camera. **Read pins from the profile; never hardcode a GPIO in a project.** Polarity lives here too (see below).
 - **`AppConfig.h`** — all feature-flag defaults plus GT911 touch-mapping defaults.
-- **`SerialCommandRouter` + `EventLog` + `StatusReport`** — the shared Serial UX. Every sketch answers `help`, `status`, `history` at 115200 baud with **Newline** line endings; lines over 95 chars are dropped.
+- **`SerialCommandRouter` + `EventLog` + `StatusReport`** — the shared Serial UX. Every sketch answers `help`, `status`, `history` at 115200 baud with **Newline** line endings; lines over 95 chars are dropped. The command table holds `CROW_SERIAL_MAX_COMMANDS` (128, `AppConfig.h`) entries; `on()` refuses the rest, and `status`/`help`/the boot log report the drop count. **Never override that macro per project** — it sizes an array inside the class, and since shared `.cpp` files never see `ProjectConfig.h`, an override gives the sketch and the library different object layouts. It was 12 until 2026-07-31, which silently killed 18 of project 09's 30 commands (including the whole transport) and broke seven other projects the same way.
 - **`DisplayBringup` / `TouchInput` (`CrowTouch`) / `DashboardWidgets` (`namespace Widgets`) / `OpsDashboard` / `UiTheme`** — the touch UI foundation. Widgets' touch-chrome names are `kChrome*`-prefixed because projects pull the namespace in wholesale.
 - **`HostedWiFi`** — must run before any Wi-Fi path; see below.
 - **`CameraBringup` + `Sc2336Sensor`** — the MIPI-CSI path.

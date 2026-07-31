@@ -4,12 +4,18 @@
 #include <Arduino.h>
 #include "AppConfig.h"
 #include "HardwareProfile.h"
+#include "SerialCommandRouter.h"
 
 // Header-only ON PURPOSE: the build flags below are macros, so this
 // function must compile inside the sketch translation unit to report the
 // sketch's flag values instead of the shared library's defaults. Include
 // config/ProjectConfig.h before this header (every .ino already does).
-inline void printSystemStatus(Stream &out, const char *appName, uint32_t eventCount) {
+//
+// Pass the sketch's router to have `status` report the command table. That
+// line is worth having because `status` is always registered first, so it
+// still answers even on a build where later commands were dropped.
+inline void printSystemStatus(Stream &out, const char *appName, uint32_t eventCount,
+                              const SerialCommandRouter *router = nullptr) {
   out.print(F("[status] app="));
   out.println(appName);
   out.print(F("[status] uptime_s="));
@@ -54,6 +60,18 @@ inline void printSystemStatus(Stream &out, const char *appName, uint32_t eventCo
   out.println(USE_SD_POKEDEX);
   out.print(F("[status] events="));
   out.println(eventCount);
+  if (router != nullptr) {
+    out.print(F("[status] commands="));
+    out.print(router->commandCount() + 1);  // +1 for the built-in `help`
+    out.print(F("/"));
+    out.print(SerialCommandRouter::kMaxCommands);
+    if (router->droppedCount() > 0) {
+      out.print(F(" DROPPED="));
+      out.print(router->droppedCount());
+      out.print(F(" (those commands will NOT respond)"));
+    }
+    out.println();
+  }
 }
 
 #endif

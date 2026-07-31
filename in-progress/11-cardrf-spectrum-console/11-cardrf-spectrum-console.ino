@@ -60,7 +60,7 @@ bool ingestCardRfLine(const String &line, const String &source) {
 }
 
 void cmdStatus(const String &) {
-  printSystemStatus(Serial, "cardrf-spectrum", storage.eventCount());
+  printSystemStatus(Serial, "cardrf-spectrum", storage.eventCount(), &router);
   Serial.println(String("[cardrf] ") + spectrum.statusDetail());
   Serial.println(String("[cardrf] bridge=") + bridge.status());
 }

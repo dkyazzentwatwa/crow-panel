@@ -56,7 +56,7 @@ Mock and real drivers must feed one pipeline per project (`processPacket` / `pro
 
 `./scripts/check-flag-matrix.sh` is the required regression check; `compile-all.sh` is the quick baseline. LiteGo and Flock have real host-side suites (see the commands above) — extend those rather than flash-and-squint when logic is Arduino-free.
 
-Serial smoke tests run at 115200 baud with line ending **Newline**; every sketch answers `help`, `status`, and `history`, and lines over 95 characters are dropped. For API changes, smoke-test `GET /health`, `POST /events`, `GET /events`, `POST /summary`, `GET /badges`, `POST /badges`, `POST /inspection`, and `GET|POST /gpio`.
+Serial smoke tests run at 115200 baud with line ending **Newline**; every sketch answers `help`, `status`, and `history`, and lines over 95 characters are dropped. The router's table holds `CROW_SERIAL_MAX_COMMANDS` (128, `AppConfig.h`) commands — never override it per project, it sizes an array inside the class and shared `.cpp` files don't see `ProjectConfig.h`, so an override means mismatched object layouts. For API changes, smoke-test `GET /health`, `POST /events`, `GET /events`, `POST /summary`, `GET /badges`, `POST /badges`, `POST /inspection`, and `GET|POST /gpio`.
 
 ## Proof Vocabulary
 

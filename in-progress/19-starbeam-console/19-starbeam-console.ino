@@ -168,7 +168,7 @@ static void runActive() {
 
 // ---------------------------------------------------------------------------
 static void cmdStatus(const String &) {
-  printSystemStatus(Serial, "starbeam-console", 0);
+  printSystemStatus(Serial, "starbeam-console", 0, &router);
   Serial.printf("[starbeam] nrf_present=%u cc_present=%u active=%s running=%s tx=%s coproc=%s\n",
                 st.nrfPresentCount, st.ccPresentCount, starbeamAction(st.active).label,
                 st.running ? "yes" : "no", st.txConfirmed ? "ARMED" : "SAFE",

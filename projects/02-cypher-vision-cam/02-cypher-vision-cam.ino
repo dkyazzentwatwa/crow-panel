@@ -205,7 +205,7 @@ static void pollShutterButton() {
 // the moment the app starts running.
 
 static void cmdStatus(const String &) {
-  printSystemStatus(Serial, "cypher-vision-cam", storage.eventCount());
+  printSystemStatus(Serial, "cypher-vision-cam", storage.eventCount(), &router);
   Serial.print(F("[cam] sensor=SC2336 (MIPI-CSI 2-lane 288Mbps, RAW8 1024x600@30)"));
   Serial.println(USE_CAMERA_DRIVER ? F(" driver=real") : F(" driver=absent"));
   Serial.print(F("[cam] capture="));

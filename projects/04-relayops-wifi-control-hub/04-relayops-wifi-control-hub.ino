@@ -154,7 +154,7 @@ void refreshWorld(const String &which) {
 
 // --- Serial commands ---
 void cmdStatus(const String &) {
-  printSystemStatus(Serial, "relayops", storage.eventCount());
+  printSystemStatus(Serial, "relayops", storage.eventCount(), &router);
 }
 
 void cmdDevices(const String &) {

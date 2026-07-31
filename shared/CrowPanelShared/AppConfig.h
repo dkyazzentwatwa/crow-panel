@@ -166,6 +166,28 @@
 #define CROW_TOUCH_RELEASE_DEBOUNCE_MS 30
 #endif
 
+// Size of the SerialCommandRouter command table. Serial is a first-class
+// control surface on every project here, not a demo affordance, so this is
+// sized to never be the thing that stops you adding a command: 128 entries
+// cost 128 * 12 = 1.5 KB of static RAM per sketch (one router per sketch) on a
+// chip with 768 KB of SRAM.
+//
+// This was 12 from commit 0504e01 until 2026-07-31, and SerialCommandRouter::on()
+// drops registrations past the limit while returning a value no sketch checks.
+// Eight projects had silently dead commands as a result - project 09 lost its
+// entire Serial transport (`play`/`stop`/`record`/`engine`).
+//
+// DO NOT override this in a project's ProjectConfig.h. It sizes an array
+// member inside SerialCommandRouter, and per the three-layer flag rule the
+// shared .cpp files never see ProjectConfig.h - so a project-local override
+// gives the sketch and the library different object layouts. That is memory
+// corruption, not a compile error. If a project ever needs more, either raise
+// the number here for everyone, or pass -DCROW_SERIAL_MAX_COMMANDS via
+// compiler.cpp.extra_flags so every translation unit agrees.
+#ifndef CROW_SERIAL_MAX_COMMANDS
+#define CROW_SERIAL_MAX_COMMANDS 128
+#endif
+
 #ifndef CROWPANEL_HARDWARE_PROFILE
 #define CROWPANEL_HARDWARE_PROFILE CROWPANEL_P4_7IN_V1_2
 #endif

@@ -78,7 +78,7 @@ void printApRow(const WifiApRecord &row) {
 }
 
 void cmdStatus(const String &) {
-  printSystemStatus(Serial, "surveyops", storage.eventCount());
+  printSystemStatus(Serial, "surveyops", storage.eventCount(), &router);
   Serial.println(gpsSource.statusLine());
   Serial.println(wifiScanner.statusLine());
   Serial.println(wigleLogger.statusLine());

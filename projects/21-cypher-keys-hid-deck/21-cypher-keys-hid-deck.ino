@@ -8,7 +8,7 @@ EventLog eventLog;
 
 void cmdStatus(const String &args) {
   (void)args;
-  printSystemStatus(Serial, "cypher-keys", eventLog.size());
+  printSystemStatus(Serial, "cypher-keys", eventLog.size(), &router);
   deck.printStatus(Serial);
 }
 
