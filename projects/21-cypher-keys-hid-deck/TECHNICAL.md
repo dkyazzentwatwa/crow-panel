@@ -589,6 +589,7 @@ the touch UI uses.
 - `click <l|r>` — mouse click
 - `scroll <steps>` — mouse wheel
 - `media <volup|voldn|mute|play|brightup|brightdn>` — consumer-control key
+- `dictate` — tap F5 (macOS dictation/mic key)
 - `sound` — report the key-click profile or pack, volume and I2S state
 - `sound <off|blue|brown|red>` — pick a synthesized switch profile (persists)
 - `sound packs` — list the SD sound packs on the card
@@ -604,6 +605,12 @@ the touch UI uses.
 
 `status` grows a `panel:` line carrying the same brightness / idle-dim / theme /
 view summary that `settings` prints, so there is only one place that formats it.
+
+> Before 2026-07-31 the shared router's command table was capped at 12 entries
+> and silently dropped every later registration, so `dictate`, `theme`, `out`,
+> `ble`, `sound`, `settings`, `bright`, `idledim` and `touch` never dispatched
+> over Serial — the touch UI was unaffected. See `CROW_SERIAL_MAX_COMMANDS`
+> in `AppConfig.h`.
 
 ### Serial smoke (mock, no host)
 

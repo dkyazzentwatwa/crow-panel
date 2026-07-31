@@ -49,6 +49,17 @@ rendering and Cardputer audio are not ported yet.
 | `page [next\|prev\|1-5]` | move through detail pages |
 | `demo` | search `mega` and open the first dramatic card |
 | `source` | show the source repo path and SD layout |
+| `history` | recent events |
+| `grid [ordinal]` | show a grid window |
+| `letter <a-z>` | jump in A-Z order |
+| `sort [dex\|name]` | set browse order |
+| `filter [type\|none]` | set the type filter |
+| `shadows [on\|off]` | toggle shadow forms |
+| `sprite [entry_id]` | sprite decode report |
+
+> Before 2026-07-31 the shared router's command table was capped at 12 entries
+> and silently dropped the rest, so `letter`, `sort`, `filter`, `shadows` and
+> `sprite` never dispatched. See `CROW_SERIAL_MAX_COMMANDS` in `AppConfig.h`.
 
 Useful searches:
 

@@ -122,10 +122,20 @@ port-scan target (empty falls back to the gateway). Never commit real credential
 115200 baud, line ending Newline. Every touch action has a Serial equivalent.
 
 `help` · `status` · `history` · `scan wifi|ble` · `net <n>` · `join <n>` ·
-`leave` · `captive` · `mdns` · `portscan [target]` · `ble <n>` · `connect <n>` ·
+`pass <key>` · `leave` · `captive` · `mdns` · `dns <hostname>` ·
+`portscan [target]` · `oui <mac>` · `ble <n>` · `connect <n>` ·
 `disconnect` · `hid <n>` · `type <text>` · `media play|mute|volup|voldown` ·
-`out` · `logs` · `screen wifi|ble|hid|log` · `page next|prev|<n>` · `touch` ·
-`selftest`.
+`out` · `save wifi|ble` · `logs` · `screen wifi|ble|hid|log` ·
+`page next|prev|<n>` · `touch` · `selftest`.
+
+`pass` sets the key for the next join; `dns` resolves a host; `oui` is a vendor
+lookup from a MAC prefix; `save` exports the selected row to SD. All four are
+passive/client-side and stay inside this project's receive-and-connect
+boundary — no deauth, no evil twin, no credential capture.
+
+> Before 2026-07-31 the shared router's table was capped at 12 commands and
+> silently dropped the rest, so everything from `oui` onward in registration
+> order never dispatched. See `CROW_SERIAL_MAX_COMMANDS` in `AppConfig.h`.
 
 `selftest` drives the full mock flow headlessly (active scan, join + link,
 client tools, BLE scan + connect/enumerate, HID fire, log readback, UI nav across

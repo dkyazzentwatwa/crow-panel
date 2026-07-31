@@ -203,6 +203,14 @@ CTAGS_WORKAROUND=1 ./scripts/check-flag-matrix.sh
 | `touch` | Raw + mapped point, taps, held buttons, screen |
 | `selftest` | Headless PASS/FAIL/SKIP over the whole flow |
 | `status`, `history` | Flags/uptime/heap, recent events |
+| `page next\|prev\|<n>` | Move through ROM-list pages |
+| `stats` | Play time and recency per ROM |
+| `theme next\|prev\|list\|<name>` | Switch UI theme |
+| `bright <40-255>` | Panel backlight |
+
+> Before 2026-07-31 the shared router's command table was capped at 12 entries
+> and silently dropped the rest, so `state`, `ff`, `pause`, `touch` and
+> `selftest` never dispatched. See `CROW_SERIAL_MAX_COMMANDS` in `AppConfig.h`.
 
 ## selftest
 

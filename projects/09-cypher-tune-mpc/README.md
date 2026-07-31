@@ -17,14 +17,19 @@ files present.
 
 ## Status
 
-Compile-ready: baseline, `USE_DISPLAY=1`, `USE_AUDIO=1`,
-`USE_AUDIO=1 USE_MPC_SD=1`, and the combined display+audio builds all compile
-for the real ESP32-P4 target. Nothing has been heard on a speaker yet —
-pad-to-sound latency, amplifier enable, and speaker output still need to be
-verified on the exact board revision. The audio design targets ~26-29 ms
-worst-case pad-to-speaker (see [TECHNICAL.md](TECHNICAL.md) for the math);
-the render task reports an underrun counter so the timing claims can be
-checked on hardware instead of trusted.
+**Hardware-verified (V1.2, 2026-07-23).** Display, multi-touch pads, and audible
+sample playback out of the onboard speaker are all confirmed on a real
+CrowPanel. This is the project that surfaced the amp-enable polarity fix
+(IO30 is active-LOW; driving it HIGH mutes the speaker while I2S keeps
+streaming). Baseline, `USE_DISPLAY=1`, `USE_AUDIO=1`,
+`USE_AUDIO=1 USE_MPC_SD=1` and the combined display+audio builds are all
+green in the flag matrix.
+
+Still unmeasured: pad-to-speaker latency has not been captured on video, and
+the `engine` underrun counter has not been read under a sustained dense
+240 BPM pattern. The audio design targets ~26-29 ms worst-case pad-to-speaker
+(see [TECHNICAL.md](TECHNICAL.md) for the math) and the render task exposes
+that counter precisely so the timing claim can be checked rather than trusted.
 
 ## What you get
 

@@ -241,6 +241,16 @@ EXTRA_FLAGS="-DUSE_DISPLAY=1 -DUSE_CYPHER_DESK_SD=1" \
 
 ## Serial QA
 
+> **These were all broken until 2026-07-31.** The shared `SerialCommandRouter`
+> held 12 commands and `on()` silently refused the rest; this sketch registers
+> 35, so everything from `page` onward in registration order — `scrap`, `focus`,
+> `ritual`, `theme`, `sound`, `stats`, `search`, `find`, `time`, `storage`,
+> `app`, `apps`, `wifi`, `calc`, `calendar`, `contacts`, `alarm`, `media`,
+> `audio`, `recovery`, `weather`, `video`, 23 in total — never dispatched. The
+> touch UI was unaffected. See `CROW_SERIAL_MAX_COMMANDS` in `AppConfig.h`;
+> the table now holds 128 and a non-zero drop count is reported by `status`,
+> `help` and the boot log.
+
 Existing commands remain: `status`, `history`, `files`, `new`, `open`, `type`,
 `save`, `back`, `demo`, and `touch`.
 
