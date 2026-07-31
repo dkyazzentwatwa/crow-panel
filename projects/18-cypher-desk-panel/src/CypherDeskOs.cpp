@@ -9,7 +9,7 @@
 #endif
 
 namespace {
-const DeskAppDescriptor kHomeApps[12] = {
+const DeskAppDescriptor kHomeApps[13] = {
     {kDeskAppWriter, "WRITER", "notes + focus", 0},
     {kDeskAppToday, "TODAY", "daily command desk", 0},
     {kDeskAppCalendar, "CALENDAR", "local events", 0},
@@ -21,6 +21,7 @@ const DeskAppDescriptor kHomeApps[12] = {
     {kDeskAppRecorder, "RECORDER", "hardware guarded", 0},
     {kDeskAppMusic, "MUSIC", "SD library", 0},
     {kDeskAppPodcasts, "PODCASTS", "local episodes", 0},
+    {kDeskAppVideo, "VIDEO", "MJPEG clips", 0},
     {kDeskAppWeather, "WEATHER", "local forecast", 0}};
 
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
@@ -104,6 +105,13 @@ void drawHomeIcon(Arduino_GFX *g, DeskAppId id, int16_t x, int16_t y, uint16_t a
       g->drawCircle(cx, cy, 9, ink);
       g->drawCircle(cx, cy, 14, ink);
       break;
+    case kDeskAppVideo:
+      g->drawRoundRect(x + 12, y + 19, 28, 21, 3, ink);
+      g->drawLine(x + 40, y + 24, x + 44, y + 20, ink);
+      g->drawLine(x + 44, y + 20, x + 44, y + 39, ink);
+      g->drawLine(x + 44, y + 39, x + 40, y + 35, ink);
+      g->drawLine(x + 40, y + 24, x + 40, y + 35, ink);
+      break;
     case kDeskAppWeather:
       g->drawCircle(x + 23, y + 25, 7, ink);
       g->drawLine(x + 23, y + 13, x + 23, y + 17, ink);
@@ -127,7 +135,8 @@ CypherDeskOs::CypherDeskOs()
 
 void CypherDeskOs::registerApplications() {
   DeskApplication *apps[] = {&writer_, &today_, &calendar_, &contacts_, &clock_, &calculator_,
-                             &files_, &settingsApp_, &recorder_, &music_, &podcasts_, &weather_};
+                             &files_, &settingsApp_, &recorder_, &music_, &podcasts_,
+                             &video_,  &weather_};
   for (DeskApplication *app : apps) {
     router_.registerApp(app);
     app->begin(context_);
@@ -214,11 +223,14 @@ void CypherDeskOs::drawActive() {
     // id, so a screen that changed without the OS knowing still repaints.
     DeskUtilityApplication *utilityApp = utility(current);
     DeskMusicApplication *musicApp = music(current);
+    DeskVideoApplication *videoApplication = videoApp(current);
     const bool appDirty = (utilityApp != nullptr && utilityApp->dirty()) ||
-                          (musicApp != nullptr && musicApp->dirty());
+                          (musicApp != nullptr && musicApp->dirty()) ||
+                          (videoApplication != nullptr && videoApplication->dirty());
     if (dirty_ || appDirty) {
       active->draw();
       if (musicApp != nullptr) musicApp->clearDirty();
+      if (videoApplication != nullptr) videoApplication->clearDirty();
     }
   }
   dirty_ = false;
@@ -228,6 +240,10 @@ DeskMusicApplication *CypherDeskOs::music(DeskAppId id) {
   if (id == kDeskAppMusic) return &music_;
   if (id == kDeskAppPodcasts) return &podcasts_;
   return nullptr;
+}
+
+DeskVideoApplication *CypherDeskOs::videoApp(DeskAppId id) {
+  return id == kDeskAppVideo ? &video_ : nullptr;
 }
 void CypherDeskOs::drawHome() {
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
@@ -311,7 +327,7 @@ void CypherDeskOs::printTouchDiagnostics(Print &out) const {
 }
 void CypherDeskOs::commandApp(const String &args, Print &out) {
   DeskAppId id = appIdFromName(args);
-  if (id == kDeskAppCount || !router_.open(id)) out.println(F("[os] app home|writer|today|calendar|contacts|clock|calculator|files|settings|recorder|music|podcasts|weather"));
+  if (id == kDeskAppCount || !router_.open(id)) out.println(F("[os] app home|writer|today|calendar|contacts|clock|calculator|files|settings|recorder|music|podcasts|video|weather"));
   else { out.print(F("[os] opened ")); out.println(router_.currentTitle()); dirty_ = true; }
 }
 void CypherDeskOs::commandApps(Print &out) const { router_.print(out); }
@@ -330,6 +346,10 @@ void CypherDeskOs::commandCalculator(const String &args, Print &out) { calculato
 void CypherDeskOs::commandCalendar(const String &args, Print &out) { calendar_.handleSerial(args, out); }
 void CypherDeskOs::commandContacts(const String &args, Print &out) { contacts_.handleSerial(args, out); }
 void CypherDeskOs::commandAlarm(const String &args, Print &out) { clock_.handleSerial(args, out); }
+void CypherDeskOs::commandVideo(const String &args, Print &out) {
+  video_.command(args, out);
+  dirty_ = true;
+}
 void CypherDeskOs::commandMedia(const String &args, Print &out) {
   // Routes to whichever media app is open so an injected command drives the
   // same state a tap does; defaults to Music.

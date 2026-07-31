@@ -70,8 +70,46 @@
 #define USE_CYPHER_DESK_RECORDER 0
 #endif
 
+// Gates the Music and Podcast apps. This used to be an alias for
+// USE_CYPHER_DESK_AUDIO; it is its own switch now so a silent build can still
+// carry the library UI.
 #ifndef USE_CYPHER_DESK_MEDIA
 #define USE_CYPHER_DESK_MEDIA USE_CYPHER_DESK_AUDIO
+#endif
+
+// MJPEG-in-AVI playback through the P4's hardware JPEG decoder and PPA scaler.
+// Needs display + SD; the audio track needs USE_CYPHER_DESK_AUDIO as well, and
+// a clip without one simply plays silently.
+#ifndef USE_CYPHER_DESK_VIDEO
+#define USE_CYPHER_DESK_VIDEO 0
+#endif
+
+// Decoder buffers are sized from this once at boot. A clip larger than this is
+// refused with its real dimensions in the message rather than half-decoded.
+// 640x480 costs ~614 KB of PSRAM for the pixel buffer.
+#ifndef CYPHER_DESK_VIDEO_MAX_W
+#define CYPHER_DESK_VIDEO_MAX_W 640
+#endif
+#ifndef CYPHER_DESK_VIDEO_MAX_H
+#define CYPHER_DESK_VIDEO_MAX_H 480
+#endif
+
+// MEASURED LIMIT, not a policy choice: video and Wi-Fi do not both fit.
+//
+//   display+sd+audio+media+video+recorder   2.64 MB   83% of the app partition
+//   display+sd+audio+media+recorder+wifi    2.81 MB   89%
+//   all of the above together               3.21 MB  102%  <- does not link
+//
+// The board has 16 MB of flash, and the largest app partition the core ships
+// for 16 MB is the 3 MB one this repo's FQBN already uses (the 4.8 MB and
+// 13 MB tables are 32 MB-flash only). The hosted-C6 Wi-Fi stack plus HTTPS and
+// JSON for weather is ~570 KB on its own.
+//
+// Catching it here turns an eight-minute build ending in a linker overflow
+// into an immediate, explicable failure. Override the guard if you are
+// building against a custom partition table with a larger app slot.
+#if USE_CYPHER_DESK_VIDEO && USE_WIFI && !defined(CYPHER_DESK_ALLOW_VIDEO_WITH_WIFI)
+#error "USE_CYPHER_DESK_VIDEO and USE_WIFI together overflow the 3 MB app partition (~3.21 MB). Pick one, or define CYPHER_DESK_ALLOW_VIDEO_WITH_WIFI with a custom partition table."
 #endif
 
 // Weather is opt-in at the feature level and still requires a user-configured

@@ -1,6 +1,7 @@
 #include "DeskMediaLibrary.h"
 
 #include "DeskSystemServices.h"
+#include "DeskAviReader.h"
 #include "DeskWavReader.h"
 
 #if USE_CYPHER_DESK_SD
@@ -103,10 +104,30 @@ void DeskMediaLibrary::readAudioHeader(Entry &entry) {
 }
 
 void DeskMediaLibrary::readVideoHeader(Entry &entry) {
-  // Filled in by the video player in the phase that adds it; until then a clip
-  // is listed with its size and no claim about whether it will play.
-  entry.format = "AVI";
-  entry.playable = false;
+#if USE_CYPHER_DESK_SD
+  // Parsed once here, at scan time. The list view must not re-open and
+  // re-parse every visible clip on each redraw.
+  File file = SD_MMC.open(entry.path, FILE_READ);
+  if (!file) {
+    entry.format = "cannot open";
+    return;
+  }
+  DeskAviFileSource source(file);
+  DeskAviReader reader;
+  String reason;
+  if (reader.open(source, reason)) {
+    entry.format = reader.info().describe();
+    entry.durationMs = reader.info().durationMs();
+    entry.playable = true;
+  } else {
+    entry.format = reason;
+    entry.playable = false;
+  }
+  reader.close();
+  file.close();
+#else
+  (void)entry;
+#endif
 }
 
 uint8_t DeskMediaLibrary::playableCount() const {

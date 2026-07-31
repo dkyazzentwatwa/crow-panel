@@ -16,7 +16,9 @@ class DeskAppRouter {
   void print(Print &out) const;
 
  private:
-  static constexpr uint8_t kMaxApps = 12;
+  // Was exactly full at 12 when Video was added; 16 leaves room without
+  // costing anything but pointer slots.
+  static constexpr uint8_t kMaxApps = 16;
   static constexpr uint8_t kHistoryDepth = 8;
   DeskApplication *apps_[kMaxApps] = {};
   uint8_t appCount_ = 0;

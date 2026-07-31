@@ -3,6 +3,7 @@
 
 #include "DeskAppRouter.h"
 #include "DeskMusicApplication.h"
+#include "DeskVideoApplication.h"
 #include "DeskEventBus.h"
 #include "DeskSettings.h"
 #include "DeskSystemServices.h"
@@ -28,6 +29,7 @@ class CypherDeskOs {
   void commandContacts(const String &args, Print &out);
   void commandAlarm(const String &args, Print &out);
   void commandMedia(const String &args, Print &out);
+  void commandVideo(const String &args, Print &out);
   void commandAudio(const String &args, Print &out);
   void commandRecovery(const String &args, Print &out);
   void commandWeather(const String &args, Print &out);
@@ -77,6 +79,7 @@ class CypherDeskOs {
   DeskUtilityApplication recorder_;
   DeskMusicApplication music_;
   DeskMusicApplication podcasts_;
+  DeskVideoApplication video_;
   DeskUtilityApplication weather_;
   DeskAppContext context_;
   bool dirty_ = true;
@@ -94,6 +97,7 @@ class CypherDeskOs {
   DeskAppId appIdFromName(String name) const;
   DeskUtilityApplication *utility(DeskAppId id);
   DeskMusicApplication *music(DeskAppId id);
+  DeskVideoApplication *videoApp(DeskAppId id);
 };
 
 #endif

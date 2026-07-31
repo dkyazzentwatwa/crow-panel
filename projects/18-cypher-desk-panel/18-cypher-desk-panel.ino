@@ -39,6 +39,7 @@ void cmdMedia(const String &args);
 void cmdAudio(const String &args);
 void cmdRecovery(const String &args);
 void cmdWeather(const String &args);
+void cmdVideo(const String &args);
 
 void cmdStatus(const String &args) {
   (void)args;
@@ -116,6 +117,7 @@ void cmdMedia(const String &args) { desk.commandMedia(args, Serial); }
 void cmdAudio(const String &args) { desk.commandAudio(args, Serial); }
 void cmdRecovery(const String &args) { desk.commandRecovery(args, Serial); }
 void cmdWeather(const String &args) { desk.commandWeather(args, Serial); }
+void cmdVideo(const String &args) { desk.commandVideo(args, Serial); }
 
 void setup() {
   Logger::begin(115200);
@@ -157,6 +159,7 @@ void setup() {
   router.on("audio", "audio speaker|mic|record [name]|play <path>|stop|volume N|status", cmdAudio);
   router.on("recovery", "recover structured writes: recovery run", cmdRecovery);
   router.on("weather", "weather status|refresh|location <lat> <lon> [label]", cmdWeather);
+  router.on("video", "video list|<n>|play|pause|stop|status", cmdVideo);
 }
 
 void loop() {

@@ -16,6 +16,7 @@ enum DeskAppId : uint8_t {
   kDeskAppRecorder,
   kDeskAppMusic,
   kDeskAppPodcasts,
+  kDeskAppVideo,
   kDeskAppWeather,
   kDeskAppCount
 };
