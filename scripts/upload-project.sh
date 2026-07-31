@@ -64,6 +64,7 @@ echo
 
 # compile --upload keeps the flashed binary consistent with this script's
 # FQBN and library set (arduino-cli upload alone has no --libraries flag).
+set +e
 arduino-cli compile \
   --fqbn "$FQBN" \
   --libraries "$ROOT/shared" \
@@ -72,3 +73,28 @@ arduino-cli compile \
   --upload \
   --port "$PORT" \
   "$PROJECT_DIR"
+STATUS=$?
+set -e
+
+# A machine with broken ctags fails here in a way that looks nothing like its
+# cause: Arduino's sketch preprocessor emits mangled prototypes, so every
+# function in the .ino reports "was not declared in this scope" and the quoted
+# source lines do not match the reported line numbers. That is ~100 lines of
+# output pointing at healthy code. compile-all.sh and check-flag-matrix.sh set
+# the workaround themselves, so this path is the one that surprises people.
+if [[ $STATUS -ne 0 && "${CTAGS_WORKAROUND:-0}" != "1" ]]; then
+  echo
+  echo "-------------------------------------------------------------------"
+  echo "Compile failed and CTAGS_WORKAROUND is not set."
+  echo
+  echo "If the errors above are 'was not declared in this scope' on functions"
+  echo "that plainly exist, or quoted source that does not match the reported"
+  echo "line, that is this machine's broken ctags - not your code. Retry:"
+  echo
+  echo "  CTAGS_WORKAROUND=1 $0 $*"
+  echo
+  echo "See CLAUDE.md, 'Feature flags - the three-layer rule'."
+  echo "-------------------------------------------------------------------"
+fi
+
+exit $STATUS
