@@ -19,6 +19,27 @@ constexpr uint32_t kScopeDecim = CYPHER_TUNE_BLOCK_FRAMES / 16 > 0
                                      ? CYPHER_TUNE_BLOCK_FRAMES / 16
                                      : 1;
 
+// Pitch ratio 2^(semis/12) in Q16, semis -12..+12, indexed by semis + 12.
+// This replaces a powf() call that ran on the render task once per voice
+// start: a ~170-byte libm routine plus a float pow on a real-time path, for
+// 25 possible answers. A table lookup and one 64-bit multiply is both faster
+// and smaller.
+//
+// DRAM_ATTR keeps the table out of flash. That is worth doing on its own -
+// but note it does NOT make the render path cache-safe: renderTask_,
+// mixChunk_ and startVoice_ all live in .flash.text, so a genuinely
+// cache-disabled window would stall the task regardless of this table. The
+// realistic symptom of an NVS write during playback is a DMA underrun, not a
+// fault. Making the path truly cache-independent means IRAM_ATTR across the
+// whole render chain, which is a separate change.
+DRAM_ATTR const uint32_t kPitchRatioQ16[25] = {
+     32768,  34716,  36781,  38968,  41285,
+     43740,  46341,  49097,  52016,  55109,
+     58386,  61858,  65536,  69433,  73562,
+     77936,  82570,  87480,  92682,  98193,
+    104032, 110218, 116772, 123715, 131072,
+};
+
 }  // namespace
 
 bool AudioEngine::begin(const HardwareProfile &profile, SampleBank *bankA,
@@ -295,12 +316,18 @@ void AudioEngine::startVoice_(uint8_t pad, uint8_t velocity, bool fromSequencer)
     }
   }
 
-  float pitchMul = powf(2.0f, sound.pitchSemis / 12.0f);
+  // Clamp defensively: pitchSemis is documented -12..+12 and SampleBank
+  // enforces it, but this indexes a fixed table on the audio task.
+  int32_t semis = sound.pitchSemis;
+  if (semis < -12) semis = -12;
+  if (semis > 12) semis = 12;
+  uint32_t pitchQ16 = kPitchRatioQ16[semis + 12];
+
   uint64_t gain = (uint64_t)velocity * sound.gain * masterVolume_;
   voice->pcm = sound.pcm;
   voice->frames = sound.frames;
   voice->posFP = 0;
-  voice->incFP = (uint32_t)(sound.baseIncFP * pitchMul);
+  voice->incFP = (uint32_t)(((uint64_t)sound.baseIncFP * pitchQ16) >> 16);
   voice->gainQ12 = (int32_t)((gain << 12) / (127ULL * 255 * 255));
   voice->fadeDecQ12 = 0;
   voice->attack = kAttackFrames;
