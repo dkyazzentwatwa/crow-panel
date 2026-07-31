@@ -162,5 +162,9 @@ void setup() {
 void loop() {
   router.poll();
   desk.tick();
-  delay(12);
+  // Tight loop for input latency. The old delay(12) here starved the audio
+  // pump - it woke less often than the DMA ring drained. Touch is throttled to
+  // CYPHER_DESK_TOUCH_POLL_MS inside tick(), redraws only happen when something
+  // is dirty, and the mixer runs on its own task, so this just yields.
+  delay(2);
 }

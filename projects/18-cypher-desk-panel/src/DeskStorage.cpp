@@ -1,5 +1,7 @@
 #include "DeskStorage.h"
 
+#include "DeskSystemServices.h"
+
 #if USE_CYPHER_DESK_SD
 #include <SD_MMC.h>
 #endif
@@ -40,16 +42,19 @@ time_t dateEpoch(const String &date) {
 }
 }  // namespace
 
-void DeskStorage::begin() {
+void DeskStorage::begin(DeskStorageService *service) {
+  service_ = service;
   persistent_ = false;
   ejected_ = false;
   if (mockNoteCount_ == 0) seedMock();
 
 #if USE_CYPHER_DESK_SD
-  bool alreadyMounted = SD_MMC.cardType() != CARD_NONE;
-  if (!alreadyMounted && !SD_MMC.begin("/sdcard", CYPHER_DESK_SDMMC_1BIT != 0)) {
-    status_ = "SD mount failed; RAM demo active (nonpersistent)";
-    Logger::error("cypher-desk", status_);
+  // The card is already mounted (or known absent) by the time we get here -
+  // CypherDeskOs::begin() runs storage_.begin() first, and it is the only
+  // caller of SD_MMC.begin()/end() in the product.
+  if (service_ == nullptr || !service_->mounted()) {
+    status_ = "SD unavailable; RAM demo active (nonpersistent)";
+    Logger::warn("cypher-desk", status_);
     return;
   }
   persistent_ = true;
@@ -61,7 +66,6 @@ void DeskStorage::begin() {
     if (!ensureDirectory(path)) {
       status_ = "SD workspace create failed; RAM demo active (nonpersistent)";
       persistent_ = false;
-      SD_MMC.end();
       Logger::error("cypher-desk", status_);
       return;
     }
@@ -304,39 +308,12 @@ String DeskStorage::readTextFile(const String &path, size_t maxLen) const {
 }
 
 bool DeskStorage::atomicWrite(const String &path, const String &body) const {
-#if USE_CYPHER_DESK_SD
-  String directory = parentPath(path);
-  if (!ensureDirectory(directory)) return false;
-  String temp = path + ".tmp";
-  String backup = path + ".bak";
-  SD_MMC.remove(temp);
-  SD_MMC.remove(backup);
-  File file = SD_MMC.open(temp, FILE_WRITE);
-  if (!file) return false;
-  bool ok = file.print(body) == body.length();
-  file.flush();
-  file.close();
-  if (!ok) {
-    SD_MMC.remove(temp);
-    return false;
-  }
-  bool hadOriginal = SD_MMC.exists(path);
-  if (hadOriginal && !SD_MMC.rename(path, backup)) {
-    SD_MMC.remove(temp);
-    return false;
-  }
-  if (!SD_MMC.rename(temp, path)) {
-    if (hadOriginal) SD_MMC.rename(backup, path);
-    SD_MMC.remove(temp);
-    return false;
-  }
-  if (hadOriginal) SD_MMC.remove(backup);
-  return true;
-#else
-  (void)path;
-  (void)body;
-  return false;
-#endif
+  // One implementation for the product, in DeskStorageService: temp -> verify
+  // byte count -> rename original to .bak -> rename temp into place -> drop
+  // .bak, with rollback on failure and a boot-time recovery pass. The copy that
+  // used to live here skipped the low-space guard and never reported a short
+  // write as an SD error state.
+  return service_ != nullptr && service_->atomicWrite(path, body);
 }
 
 bool DeskStorage::saveTextFile(const String &path, const String &body) {
@@ -513,12 +490,18 @@ bool DeskStorage::exportCopy(const String &path, const String &isoDate, String &
 
 bool DeskStorage::safeEject() {
 #if USE_CYPHER_DESK_SD
-  if (persistent_) {
+  if (persistent_ && service_ != nullptr) {
+    // Flush the note index first, then let the one mount owner unmount. This
+    // used to call SD_MMC.end() directly, which left DeskStorageService still
+    // reporting a mounted card it no longer had.
     saveMetadata();
-    SD_MMC.end();
+    if (!service_->safeEject()) {
+      status_ = "SD eject refused; card not mounted";
+      return false;
+    }
     persistent_ = false;
     ejected_ = true;
-    status_ = "SD safely ejected; reboot to remount";
+    status_ = "SD safely ejected; remount before writing";
     return true;
   }
 #endif

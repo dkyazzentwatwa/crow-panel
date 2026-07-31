@@ -6,7 +6,8 @@
 void DeskWriterApplication::begin(DeskAppContext &context) { context_ = &context; }
 void DeskWriterApplication::onEnter() {
   if (!begun_) {
-    writer_.begin(false, context_ != nullptr ? context_->wifi : nullptr);
+    writer_.begin(false, context_ != nullptr ? context_->wifi : nullptr,
+                  context_ != nullptr ? context_->storage : nullptr);
     begun_ = true;
   } else writer_.reloadPreferences();
   if (context_ != nullptr && context_->events != nullptr)

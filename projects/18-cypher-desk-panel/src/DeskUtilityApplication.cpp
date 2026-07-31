@@ -24,7 +24,10 @@ DeskCalendarEvent gCalendar[kMaxCalendarEvents];
 DeskContactRecord gContacts[kMaxContacts];
 uint8_t gCalendarCount = 0;
 uint8_t gContactCount = 0;
-bool gDataLoaded = false;
+// Which SD mount generation these records came from. UINT32_MAX means "never
+// read". This used to be a plain bool, which meant a card inserted after boot
+// left Calendar and Contacts permanently empty.
+uint32_t gLoadedGeneration = 0xFFFFFFFFu;
 
 const char *appTitle(DeskAppId id) {
   switch (id) {
@@ -97,8 +100,13 @@ const char *monthName(uint8_t month) {
   return month >= 1 && month <= 12 ? names[month - 1] : "Month";
 }
 void loadLocalData(DeskStorageService *storage) {
-  if (gDataLoaded || storage == nullptr) return;
-  gDataLoaded = true;
+  if (storage == nullptr) return;
+  const uint32_t generation = storage->mountGeneration();
+  if (gLoadedGeneration == generation) return;
+  gLoadedGeneration = generation;
+  // A reload replaces the records rather than appending to them.
+  gCalendarCount = 0;
+  gContactCount = 0;
   String body = storage->readText(CYPHER_DESK_CALENDAR_DIR "/events.tsv");
   if (body.startsWith("# cypher-desk-calendar schema=1\n")) {
     int start = body.indexOf('\n') + 1;
@@ -204,6 +212,8 @@ void DeskUtilityApplication::onEnter() {
   dirty_ = true;
   selected_ = 0;
   filePreview_ = "";
+  // Cheap no-op unless the card was mounted since the last read.
+  if (context_ != nullptr) loadLocalData(context_->storage);
   if (appId_ == kDeskAppFiles) refreshFiles();
   if (appId_ == kDeskAppCalendar) initializeCalendarMonth();
   if (appId_ == kDeskAppMusic) { fileDirectory_ = CYPHER_DESK_MUSIC_DIR; refreshFiles(); }

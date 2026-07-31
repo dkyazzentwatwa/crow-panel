@@ -30,6 +30,9 @@
 #ifndef CYPHER_DESK_PODCASTS_DIR
 #define CYPHER_DESK_PODCASTS_DIR CYPHER_DESK_ROOT_DIR "/podcasts"
 #endif
+#ifndef CYPHER_DESK_VIDEO_DIR
+#define CYPHER_DESK_VIDEO_DIR CYPHER_DESK_ROOT_DIR "/video"
+#endif
 #ifndef CYPHER_DESK_DOCUMENTS_DIR
 #define CYPHER_DESK_DOCUMENTS_DIR CYPHER_DESK_ROOT_DIR "/documents"
 #endif
@@ -105,6 +108,12 @@
 
 #ifndef CYPHER_DESK_AUDIO_SAMPLE_RATE
 #define CYPHER_DESK_AUDIO_SAMPLE_RATE 16000
+#endif
+
+// Polling the GT911 faster than the panel refreshes just returns empty frames,
+// so 16 ms is the floor worth paying for. Matches project 21.
+#ifndef CYPHER_DESK_TOUCH_POLL_MS
+#define CYPHER_DESK_TOUCH_POLL_MS 16
 #endif
 
 #ifndef CYPHER_DESK_TOUCH_MIN_X

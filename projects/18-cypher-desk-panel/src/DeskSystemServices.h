@@ -26,6 +26,7 @@ class DeskTouchService {
   int16_t lastX_ = 0;
   int16_t lastY_ = 0;
   uint32_t count_ = 0;
+  uint32_t lastPollMs_ = 0;
   DeskTouchEvent event_;
   int16_t mapX(int16_t rawX, int16_t rawY) const;
   int16_t mapY(int16_t rawX, int16_t rawY) const;
@@ -49,7 +50,11 @@ class DeskStorageService {
   uint64_t totalBytes() const;
   uint64_t freeBytes() const;
   uint8_t freePercent() const;
+  const char *cardLabel() const;
   bool lowSpace() const;
+  // Bumps every time the card transitions from unmounted to mounted, so views
+  // that cached SD-backed data can tell they need to reload.
+  uint32_t mountGeneration() const;
   bool safeEject();
   bool remount();
   bool ensureDirectory(const String &path);
@@ -71,6 +76,7 @@ class DeskStorageService {
   DeskEventBus *events_ = nullptr;
   DeskSdState state_ = kDeskSdNotPresent;
   uint32_t lastPollMs_ = 0;
+  uint32_t mountGeneration_ = 0;
   bool deliberatelyEjected_ = false;
   bool mountCard();
   void setState(DeskSdState state, const String &reason);

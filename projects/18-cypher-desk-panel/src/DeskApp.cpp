@@ -47,9 +47,10 @@ const char *pageName(DeskPage page) {
 
 const DeskThemePalette &DeskApp::theme() const { return deskTheme(settings_.theme()); }
 
-void DeskApp::begin(bool initializeDisplay, DeskWifiService *wifi) {
+void DeskApp::begin(bool initializeDisplay, DeskWifiService *wifi,
+                    DeskStorageService *storageService) {
   settings_.begin();
-  storage_.begin();
+  storage_.begin(storageService);
   clock_.begin(&settings_, wifi);
   prompts_.begin();
   String replacement = storage_.readTextFile(String(CYPHER_DESK_ROOT_DIR) + "/prompts.txt", 48000);

@@ -4,9 +4,14 @@
 #include "../config/ProjectConfig.h"
 #include "DeskTypes.h"
 
+class DeskStorageService;
+
 class DeskStorage {
  public:
-  void begin();
+  // The Writer's note store no longer mounts anything. DeskStorageService owns
+  // SD_MMC.begin()/end() for the whole product; passing it here is what stops
+  // the two stacks from ejecting the card out from under each other.
+  void begin(DeskStorageService *service);
   bool persistent() const;
   bool ejected() const;
   const String &status() const;
@@ -52,6 +57,7 @@ class DeskStorage {
 
  private:
   static constexpr uint16_t kMaxMetadata = 160;
+  DeskStorageService *service_ = nullptr;
   bool persistent_ = false;
   bool ejected_ = false;
   bool metadataDirty_ = false;

@@ -13,7 +13,8 @@
 
 class DeskApp {
  public:
-  void begin(bool initializeDisplay = true, class DeskWifiService *wifi = nullptr);
+  void begin(bool initializeDisplay = true, class DeskWifiService *wifi = nullptr,
+             class DeskStorageService *storageService = nullptr);
   void tick();
   bool consumeOsHomeRequest();
   void reloadPreferences();

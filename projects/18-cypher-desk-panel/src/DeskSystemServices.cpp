@@ -133,6 +133,12 @@ int16_t DeskTouchService::mapY(int16_t rawX, int16_t rawY) const {
 }
 void DeskTouchService::tick() {
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
+  // loop() no longer paces this with delay(12), so gate the I2C read here.
+  // Polling the GT911 faster than the panel refreshes returns empty frames and
+  // costs bus time the display bring-up wants.
+  const uint32_t now = millis();
+  if (now - lastPollMs_ < CYPHER_DESK_TOUCH_POLL_MS) return;
+  lastPollMs_ = now;
   int16_t rawX = 0;
   int16_t rawY = 0;
   bool pressed = CrowDisplay::touchPoint(rawX, rawY);
@@ -156,8 +162,16 @@ bool DeskTouchService::take(DeskTouchEvent &event) {
 }
 uint32_t DeskTouchService::count() const { return count_; }
 
+uint32_t DeskStorageService::mountGeneration() const { return mountGeneration_; }
 void DeskStorageService::setState(DeskSdState state, const String &reason) {
   if (state_ == state && reason.isEmpty()) return;
+  // Every unmounted -> mounted edge is a new generation. Views that cached
+  // SD-backed records compare against this instead of latching a "loaded once"
+  // flag, which is why calendar and contacts stayed empty when a card was
+  // inserted after boot.
+  const bool wasMounted = state_ == kDeskSdMounted || state_ == kDeskSdFull;
+  const bool nowMounted = state == kDeskSdMounted || state == kDeskSdFull;
+  if (nowMounted && !wasMounted) ++mountGeneration_;
   state_ = state;
   if (events_ != nullptr && reason.length()) events_->publish(kDeskEventStorage, reason);
   if (reason.length()) Logger::info("desk-storage", reason);
@@ -179,9 +193,18 @@ bool DeskStorageService::mountCard() {
     setState(kDeskSdNotPresent, "no SD card detected");
     return false;
   }
+  // A card that mounts but reports no capacity is the signature of a
+  // filesystem the core's FAT driver cannot read - almost always exFAT, which
+  // is what a modern desktop formats a >32 GB card as by default. Saying so is
+  // far more useful than a generic mount failure.
+  if (SD_MMC.totalBytes() == 0) {
+    setState(kDeskSdUnsupportedFilesystem, "card is not FAT32; reformat as FAT32");
+    return false;
+  }
   const char *directories[] = {
       CYPHER_DESK_ROOT_DIR, CYPHER_DESK_NOTES_DIR, CYPHER_DESK_RECORDINGS_DIR,
-      CYPHER_DESK_MUSIC_DIR, CYPHER_DESK_PODCASTS_DIR, CYPHER_DESK_DOCUMENTS_DIR,
+      CYPHER_DESK_MUSIC_DIR, CYPHER_DESK_PODCASTS_DIR, CYPHER_DESK_VIDEO_DIR,
+      CYPHER_DESK_AUDIO_DIR, CYPHER_DESK_DOCUMENTS_DIR,
       CYPHER_DESK_CALENDAR_DIR, CYPHER_DESK_CONTACTS_DIR, CYPHER_DESK_EXPORTS_DIR,
       CYPHER_DESK_BACKUPS_DIR, CYPHER_DESK_CACHE_DIR, CYPHER_DESK_DATA_DIR};
   for (const char *directory : directories) {
@@ -483,8 +506,24 @@ uint8_t DeskStorageService::recoverTransactions() {
   return 0;
 #endif
 }
+const char *DeskStorageService::cardLabel() const {
+#if USE_CYPHER_DESK_SD
+  switch (SD_MMC.cardType()) {
+    case CARD_MMC: return "MMC";
+    case CARD_SD: return "SDSC";
+    case CARD_SDHC: return "SDHC/SDXC";
+    case CARD_NONE: return "none";
+    default: return "unknown";
+  }
+#else
+  return "disabled";
+#endif
+}
 void DeskStorageService::print(Print &out) const {
   out.print(F("[storage] state=")); out.print(stateLabel());
+  out.print(F(" card=")); out.print(cardLabel());
+  out.print(F(" total_mb=")); out.print(static_cast<uint32_t>(totalBytes() / (1024ULL * 1024ULL)));
+  out.print(F(" free_mb=")); out.print(static_cast<uint32_t>(freeBytes() / (1024ULL * 1024ULL)));
   out.print(F(" free_percent=")); out.print(freePercent());
   out.print(F(" low_space=")); out.println(lowSpace() ? "yes" : "no");
 }
