@@ -2,7 +2,6 @@
 #define CYPHER_DESK_PANEL_APP_H
 
 #include "../config/ProjectConfig.h"
-#include "DeskAudio.h"
 #include "DeskClock.h"
 #include "DeskNavigator.h"
 #include "DeskPrompts.h"
@@ -14,7 +13,8 @@
 class DeskApp {
  public:
   void begin(bool initializeDisplay = true, class DeskWifiService *wifi = nullptr,
-             class DeskStorageService *storageService = nullptr);
+             class DeskStorageService *storageService = nullptr,
+             class DeskAudioService *audio = nullptr);
   void tick();
   bool consumeOsHomeRequest();
   void reloadPreferences();
@@ -45,7 +45,10 @@ class DeskApp {
   DeskStorage storage_;
   DeskSettings settings_;
   DeskClock clock_;
-  DeskAudio audio_;
+  // The OS owns audio now: one DeskAudioService over one I2S channel. The
+  // Writer used to carry its own DeskAudio with a second I2S instance on the
+  // same pins, arbitrated by nothing.
+  class DeskAudioService *audio_ = nullptr;
   DeskPrompts prompts_;
   DeskNavigator navigator_;
   DeskTouchKeyboard keyboard_;
@@ -91,6 +94,12 @@ class DeskApp {
   int16_t lastTouchY_ = 0;
 
   const DeskThemePalette &theme() const;
+  // Null-safe views onto the shared audio service. The Writer can be opened in
+  // a build with no audio backend at all, so every read goes through these.
+  void applyAudioPreferences();
+  String audioStatus() const;
+  const char *audioAmbienceName() const;
+  const char *audioKeySoundName() const;
   void route(DeskPage page);
   void refreshNotes();
   uint16_t searchArchive(uint16_t offset, DeskDocument *out, uint16_t maxCount, bool *hasMore) const;

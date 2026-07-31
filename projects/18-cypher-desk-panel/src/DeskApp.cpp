@@ -1,5 +1,7 @@
 #include "DeskApp.h"
 
+#include "DeskSystemServices.h"
+
 #include <CrowPanelShared.h>
 
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
@@ -47,18 +49,35 @@ const char *pageName(DeskPage page) {
 
 const DeskThemePalette &DeskApp::theme() const { return deskTheme(settings_.theme()); }
 
+void DeskApp::applyAudioPreferences() {
+  if (audio_ == nullptr) return;
+  audio_->setKeySound(settings_.keySound());
+  audio_->setVolume(settings_.volume());
+  audio_->setAmbience(settings_.ambience());
+}
+String DeskApp::audioStatus() const {
+  return audio_ != nullptr ? audio_->status() : String("audio unavailable");
+}
+const char *DeskApp::audioAmbienceName() const {
+  return audio_ != nullptr ? audio_->ambienceName()
+                           : DeskAudioService::ambienceName(settings_.ambience());
+}
+const char *DeskApp::audioKeySoundName() const {
+  return audio_ != nullptr ? audio_->keySoundName() : DeskKeyClick::soundName(settings_.keySound());
+}
+
 void DeskApp::begin(bool initializeDisplay, DeskWifiService *wifi,
-                    DeskStorageService *storageService) {
+                    DeskStorageService *storageService, DeskAudioService *audio) {
+  audio_ = audio;
   settings_.begin();
   storage_.begin(storageService);
   clock_.begin(&settings_, wifi);
   prompts_.begin();
   String replacement = storage_.readTextFile(String(CYPHER_DESK_ROOT_DIR) + "/prompts.txt", 48000);
   if (replacement.length()) prompts_.loadReplacement(replacement);
-  audio_.begin();
-  audio_.setKeySound(settings_.keySound());
-  audio_.setVolume(settings_.volume());
-  audio_.setAmbience(settings_.ambience());
+  // The service is already up - CypherDeskOs::begin() started it before the
+  // Writer ever opens. Just apply the stored preferences.
+  applyAudioPreferences();
   keyboard_.reset();
   navigator_.reset();
   refreshNotes();
@@ -76,15 +95,12 @@ bool DeskApp::consumeOsHomeRequest() {
 
 void DeskApp::reloadPreferences() {
   settings_.begin();
-  audio_.setKeySound(settings_.keySound());
-  audio_.setVolume(settings_.volume());
-  audio_.setAmbience(settings_.ambience());
+  applyAudioPreferences();
   dirty_ = true;
 }
 
 void DeskApp::tick() {
   clock_.tick();
-  audio_.tick();
   autosaveEditor();
   static uint32_t lastSecond = 0;
   if (focusActive_ && !focusPaused_) {
@@ -259,7 +275,7 @@ void DeskApp::completeConfirm(bool accepted) {
     navigator_.dock(kDeskPageDesk);
     refreshNotes();
   } else if (action == kConfirmSafeEject) {
-    audio_.setAmbience(0);
+    if (audio_) audio_->setAmbience(0);
     bool ok = storage_.safeEject();
     navigator_.dock(kDeskPageSettings);
     setMessage(ok ? "SD IS SAFE" : "NOTHING TO EJECT", storage_.status(), kDeskPageSettings);
@@ -562,7 +578,7 @@ String DeskApp::titleFromBuffer() const {
 void DeskApp::handleKeyboardTap(int16_t x, int16_t y, bool inputMode) {
   DeskKeyEvent key = keyboard_.hitTest(x, y);
   if (key.action == kDeskKeyNone) return;
-  audio_.triggerKey();
+  if (audio_) audio_->keyPress();
   if (key.action == kDeskKeyShift || key.action == kDeskKeySymbols) {
     keyboard_.applyModeAction(key.action);
     dirty_ = true;
@@ -736,7 +752,7 @@ void DeskApp::handleTap(int16_t x, int16_t y) {
     }
     if (inside(x, y, 372, 404, 150, 56)) { settings_.setTheme(nextDeskTheme(settings_.theme())); dirty_ = true; return; }
     if (inside(x, y, 538, 404, 150, 56)) {
-      settings_.setAmbience((settings_.ambience() + 1) % 5); audio_.setAmbience(settings_.ambience()); dirty_ = true; return;
+      settings_.setAmbience((settings_.ambience() + 1) % 5); if (audio_) audio_->setAmbience(settings_.ambience()); dirty_ = true; return;
     }
     if (inside(x, y, 716, 398, 260, 68)) { writeFromPrompt(); return; }
   }
@@ -747,8 +763,8 @@ void DeskApp::handleTap(int16_t x, int16_t y) {
     if (inside(x, y, 56, 290, 410, 64)) { beginTextInput(kDeskInputWifiPassword, ""); return; }
     if (inside(x, y, 56, 372, 196, 64)) { clock_.previousDay(); dirty_ = true; return; }
     if (inside(x, y, 270, 372, 196, 64)) { clock_.nextDay(); dirty_ = true; return; }
-    if (inside(x, y, 540, 126, 410, 64)) { settings_.setKeySound((settings_.keySound() + 1) % 4); audio_.setKeySound(settings_.keySound()); dirty_ = true; return; }
-    if (inside(x, y, 540, 208, 410, 64)) { settings_.setAmbience((settings_.ambience() + 1) % 5); audio_.setAmbience(settings_.ambience()); dirty_ = true; return; }
+    if (inside(x, y, 540, 126, 410, 64)) { settings_.setKeySound((settings_.keySound() + 1) % 4); if (audio_) audio_->setKeySound(settings_.keySound()); dirty_ = true; return; }
+    if (inside(x, y, 540, 208, 410, 64)) { settings_.setAmbience((settings_.ambience() + 1) % 5); if (audio_) audio_->setAmbience(settings_.ambience()); dirty_ = true; return; }
     if (inside(x, y, 540, 290, 196, 64)) { clock_.confirmDate(); dirty_ = true; return; }
     if (inside(x, y, 754, 290, 196, 64)) { clock_.requestSync(); dirty_ = true; return; }
     if (inside(x, y, 540, 372, 410, 64)) { askConfirm(kConfirmSafeEject, "SAFE EJECT SD?", "Writes will stop until reboot."); return; }
@@ -775,7 +791,7 @@ void DeskApp::printStatus(Print &out) const {
   out.print(F(" timeSource=")); out.print(clock_.sourceLabel());
   out.print(F(" dirty=")); out.println(editor_.dirty ? F("yes") : F("no"));
   out.print(F("[desk] storage=")); out.println(storage_.status());
-  out.print(F("[desk] audio=")); out.println(audio_.status());
+  out.print(F("[desk] audio=")); out.println(audioStatus());
   out.println(F("[proof] touch=field-proven previous build; writer expansion=compile target; SD/time/audio require bench proof"));
 }
 void DeskApp::printFiles(Print &out) const {
@@ -807,7 +823,7 @@ void DeskApp::commandScrap() { openScrap(); }
 void DeskApp::commandFocus(const String &args) { int minutes = args.toInt(); if (minutes == 10 || minutes == 20 || minutes == 30 || minutes == 45) startFocus(minutes); else route(kDeskPageFocus); }
 void DeskApp::commandRitual(const String &args) { String v = args; v.toLowerCase(); if (v == "shuffle") prompts_.shuffle(); else if (v == "write") writeFromPrompt(); else route(kDeskPageRitual); dirty_ = true; }
 void DeskApp::commandTheme(const String &args) { String v = args; v.trim(); settings_.setTheme(v.length() ? deskThemeFromName(v) : nextDeskTheme(settings_.theme())); dirty_ = true; }
-void DeskApp::commandSound(const String &args) { String v = args; v.toLowerCase(); if (v.startsWith("ambience ")) { uint8_t a = v.substring(9).toInt(); settings_.setAmbience(a); audio_.setAmbience(a); } else if (v.startsWith("key ")) { uint8_t k = v.substring(4).toInt(); settings_.setKeySound(k); audio_.setKeySound(k); } else if (v.startsWith("volume ")) { uint8_t volume = v.substring(7).toInt(); settings_.setVolume(volume); audio_.setVolume(volume); } Serial.println(audio_.status()); dirty_ = true; }
+void DeskApp::commandSound(const String &args) { String v = args; v.toLowerCase(); if (v.startsWith("ambience ")) { uint8_t a = v.substring(9).toInt(); settings_.setAmbience(a); if (audio_) audio_->setAmbience(a); } else if (v.startsWith("key ")) { uint8_t k = v.substring(4).toInt(); settings_.setKeySound(k); if (audio_) audio_->setKeySound(k); } else if (v.startsWith("volume ")) { uint8_t volume = v.substring(7).toInt(); settings_.setVolume(volume); if (audio_) audio_->setVolume(volume); } Serial.println(audioStatus()); dirty_ = true; }
 void DeskApp::commandStats(Print &out) const { DeskStats s = storage_.stats(clock_.isoDate()); out.print(F("[stats] today=")); out.print(s.quietMinutesToday); out.print(F("min week=")); out.print(s.quietMinutesWeek); out.print(F("min words=")); out.print(s.wordsAddedWeek); out.print(F(" completed=")); out.print(s.sessionsCompleted); out.print(F(" last=")); out.println(s.lastSession.length() ? s.lastSession : "none yet"); }
 void DeskApp::commandSearch(const String &argsValue, Print &out) const {
   String query = argsValue;
@@ -1104,7 +1120,7 @@ void DeskApp::drawRitual(Arduino_GFX *g) {
   button(g, t, 40, 404, 150, 56, "SHUFFLE");
   button(g, t, 206, 404, 150, 56, String(settings_.focusMinutes()) + " MIN");
   button(g, t, 372, 404, 150, 56, theme().name);
-  button(g, t, 538, 404, 150, 56, audio_.ambienceName());
+  button(g, t, 538, 404, 150, 56, audioAmbienceName());
   button(g, t, 716, 398, 260, 68, "WRITE FROM THIS", true);
   drawDock(g);
 }
@@ -1116,8 +1132,8 @@ void DeskApp::drawSettings(Arduino_GFX *g) {
   button(g, t, 56, 208, 410, 64, "WI-FI SSID  //  " + String(settings_.wifiSsid().length() ? settings_.wifiSsid() : "not set"));
   button(g, t, 56, 290, 410, 64, "WI-FI PASSWORD  //  " + String(settings_.wifiPassword().length() ? "********" : "not set"));
   button(g, t, 56, 372, 196, 64, "PREVIOUS DAY"); button(g, t, 270, 372, 196, 64, "NEXT DAY");
-  button(g, t, 540, 126, 410, 64, "KEYS  //  " + String(audio_.keySoundName()));
-  button(g, t, 540, 208, 410, 64, "AMBIENCE  //  " + String(audio_.ambienceName()));
+  button(g, t, 540, 126, 410, 64, "KEYS  //  " + String(audioKeySoundName()));
+  button(g, t, 540, 208, 410, 64, "AMBIENCE  //  " + String(audioAmbienceName()));
   button(g, t, 540, 290, 196, 64, "CONFIRM DATE"); button(g, t, 754, 290, 196, 64, "SYNC TIME");
   button(g, t, 540, 372, 410, 64, "SAFE EJECT SD", false);
   smallText(g, 56, 470, clock_.isoDate() + " // " + clock_.status(), t.muted);

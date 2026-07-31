@@ -2,7 +2,9 @@
 #define CYPHER_DESK_SYSTEM_SERVICES_H
 
 #include "../config/ProjectConfig.h"
+#include "DeskAudioEngine.h"
 #include "DeskEventBus.h"
+#include "DeskKeyClick.h"
 #include "DeskOsTypes.h"
 #include <Arduino.h>
 
@@ -200,6 +202,11 @@ enum DeskAudioOwner : uint8_t {
   kDeskAudioOwnerRecorder
 };
 
+// Owns the arbitration and the SD side of audio. All I2S lives one level down
+// in DeskAudioEngine, which is the single owner of the peripheral.
+//
+// THREADING: every method here runs in loop context and is the only thing that
+// touches the card. The engine's mixer task never opens a file.
 class DeskAudioService {
  public:
   void begin(DeskEventBus *events);
@@ -213,10 +220,47 @@ class DeskAudioService {
   bool startMicrophoneTest(uint16_t durationMs = 5000);
   bool startRecording(const String &name = "");
   bool stopRecording();
-  bool playWav(const String &path);
+
+  // Any PCM WAV the reader admits: 8 kHz to 48 kHz, mono or stereo, 8- or
+  // 16-bit. The mixer resamples, so nothing is rejected for being the wrong
+  // shape any more.
+  bool playWav(const String &path, DeskAudioOwner owner = kDeskAudioOwnerMusic,
+               bool loop = false);
   void stopPlayback();
   bool playing() const;
+  bool paused() const;
+  void setPaused(bool paused);
+  bool seekMs(uint32_t positionMs);
   String playbackPath() const;
+  String playbackFormat() const;
+  uint32_t playbackDurationMs() const;
+  uint32_t playbackPositionMs() const;
+
+  // Raw PCM from a source that is not a file on its own - the video player's
+  // interleaved audio chunks. Returns bytes accepted; a short return means the
+  // ring is full and the caller should retry with the remainder.
+  bool openRawStream(uint32_t sampleRate, uint16_t channels, uint16_t bits,
+                     DeskAudioOwner owner);
+  size_t pushRaw(const uint8_t *bytes, size_t length);
+  uint32_t rawFreeFrames() const;
+  // Output frames of the current stream already heard. The video clock.
+  uint64_t streamPlayedFrames() const;
+  uint32_t underruns() const;
+
+  // Typing sounds.
+  void setKeySound(uint8_t sound);
+  uint8_t keySound() const;
+  const char *keySoundName() const;
+  void keyPress();
+  void keyRelease();
+
+  // Writer ambience: one of the looping WAVs under CYPHER_DESK_AUDIO_DIR.
+  bool setAmbience(uint8_t ambience);
+  uint8_t ambience() const;
+  const char *ambienceName() const;
+  static const char *ambienceName(uint8_t ambience);
+  static constexpr uint8_t kAmbienceCount = 5;
+
   String recordingPath() const;
   uint32_t recordingDurationMs() const;
   void setVolume(uint8_t volume);
@@ -229,24 +273,36 @@ class DeskAudioService {
 
  private:
   DeskEventBus *events_ = nullptr;
+  DeskAudioEngine engine_;
+  DeskKeyClick keyClick_;
   DeskAudioOwner owner_ = kDeskAudioOwnerNone;
   bool recording_ = false;
-  bool speakerReady_ = false;
-  bool microphoneReady_ = false;
   bool testRecording_ = false;
   bool testTone_ = false;
   bool playback_ = false;
+  bool paused_ = false;
+  bool loop_ = false;
   uint32_t testStartedMs_ = 0;
   uint32_t testDurationMs_ = 0;
-  uint32_t toneSample_ = 0;
+  uint32_t toneFrame_ = 0;
   uint32_t recordedBytes_ = 0;
-  uint32_t playbackBytes_ = 0;
-  uint32_t playbackRemaining_ = 0;
+  uint32_t playbackDataStart_ = 0;
+  uint32_t playbackDataBytes_ = 0;
+  uint32_t playbackConsumed_ = 0;
+  uint32_t playbackRate_ = 0;
+  uint16_t playbackChannels_ = 0;
+  uint16_t playbackBits_ = 0;
+  uint8_t ambience_ = 0;
   uint8_t volume_ = 70;
   uint32_t lastLevel_ = 0;
   String recordingPath_;
   String playbackPath_;
+  String playbackFormat_;
   String testStatus_ = "not started";
+
+  void pumpPlayback();
+  void pumpRecorder();
+  void pumpTone();
 };
 
 #endif

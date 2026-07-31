@@ -23,23 +23,15 @@
 #include <WiFiClientSecure.h>
 #endif
 
-#if (USE_CYPHER_DESK_AUDIO || USE_CYPHER_DESK_RECORDER) && defined(ARDUINO_ARCH_ESP32)
-#include <ESP_I2S.h>
-#define CYPHER_DESK_AUDIO_BACKEND 1
-#endif
-#ifndef CYPHER_DESK_AUDIO_BACKEND
-#define CYPHER_DESK_AUDIO_BACKEND 0
-#endif
+// All I2S now lives in DeskAudioEngine (raw IDF i2s_std), which
+// DeskSystemServices.h pulls in along with CYPHER_DESK_AUDIO_BACKEND.
+#include "DeskWavReader.h"
 
 namespace {
 constexpr int16_t kScreenW = 1024;
 constexpr int16_t kScreenH = 600;
 constexpr const char *kPreferencesNamespace = "cypher-desk";
 
-#if CYPHER_DESK_AUDIO_BACKEND
-I2SClass gDeskServiceSpeaker;
-I2SClass gDeskServiceMic;
-#endif
 #if USE_CYPHER_DESK_SD
 File gDeskRecordingFile;
 File gDeskPlaybackFile;
@@ -987,99 +979,122 @@ String DeskTimeService::dateText() const {
   return String(output);
 }
 bool DeskTimeService::synced() const { return synced_; }
-
 void DeskAudioService::begin(DeskEventBus *events) {
   events_ = events;
-#if CYPHER_DESK_AUDIO_BACKEND
-  const HardwareProfile &profile = activeHardwareProfile();
-#if USE_CYPHER_DESK_AUDIO
-  pinMode(profile.audio.control, OUTPUT);
-  digitalWrite(profile.audio.control, profile.audio.controlActiveHigh ? HIGH : LOW);
-  gDeskServiceSpeaker.setPins(profile.audio.bclk, profile.audio.lrclk, profile.audio.sdata);
-  speakerReady_ = gDeskServiceSpeaker.begin(I2S_MODE_STD, 16000,
-                                             I2S_DATA_BIT_WIDTH_16BIT,
-                                             I2S_SLOT_MODE_STEREO);
-#endif
+  engine_.begin(Serial);
+  engine_.setVolume(volume_);
+  keyClick_.begin(Serial);
 #if USE_CYPHER_DESK_RECORDER
-  gDeskServiceMic.setPinsPdmRx(profile.audio.micClk, profile.audio.micDin);
-  microphoneReady_ = gDeskServiceMic.begin(I2S_MODE_PDM_RX, 16000,
-                                            I2S_DATA_BIT_WIDTH_16BIT,
-                                            I2S_SLOT_MODE_MONO);
+  engine_.beginMicrophone();
 #endif
-  if (!speakerReady_ && !microphoneReady_) testStatus_ = "audio init failed";
-#else
-  testStatus_ = "audio backend disabled";
-#endif
+  testStatus_ = engine_.ready() ? "audio ready" : engine_.status();
 }
+
 void DeskAudioService::tick() {
-#if CYPHER_DESK_AUDIO_BACKEND
-  if (testTone_) {
-    if (testDurationMs_ && millis() - testStartedMs_ >= testDurationMs_) {
-      testTone_ = false;
-      owner_ = kDeskAudioOwnerNone;
-      testStatus_ = "speaker test complete";
+  pumpTone();
+  pumpPlayback();
+  pumpRecorder();
+}
+
+// --- SD -> engine pump -----------------------------------------------------
+// This is the only place that reads audio off the card. It runs in loop
+// context; the mixer task drains what it queues here and never opens a file.
+void DeskAudioService::pumpPlayback() {
+#if USE_CYPHER_DESK_SD
+  if (!playback_ || paused_) return;
+  // Refill in chunks so a single call cannot monopolise the frame. The ring is
+  // ~1.5 s deep, so falling behind by a few frames is invisible.
+  static uint8_t buffer[2048];
+  const uint32_t sourceFrameBytes = playbackChannels_ * (playbackBits_ / 8);
+  uint32_t roomFrames = engine_.streamFreeSourceFrames();
+  while (roomFrames > 0 && gDeskPlaybackFile) {
+    uint32_t wanted = roomFrames * sourceFrameBytes;
+    if (wanted > sizeof(buffer)) wanted = sizeof(buffer);
+    const uint32_t remaining = playbackDataBytes_ - playbackConsumed_;
+    if (wanted > remaining) wanted = remaining;
+    if (wanted == 0) break;
+
+    const size_t got = gDeskPlaybackFile.read(buffer, wanted);
+    if (got == 0) break;
+    const size_t accepted = engine_.pushStream(buffer, got);
+    playbackConsumed_ += accepted;
+    if (accepted < got) {
+      // The ring filled mid-buffer. Rewind the file to the first unconsumed
+      // byte so nothing is dropped, and pick it up next tick.
+      gDeskPlaybackFile.seek(playbackDataStart_ + playbackConsumed_);
+      break;
+    }
+    if (playbackConsumed_ >= playbackDataBytes_) break;
+    roomFrames = engine_.streamFreeSourceFrames();
+  }
+
+  if (playbackConsumed_ >= playbackDataBytes_) {
+    if (loop_) {
+      playbackConsumed_ = 0;
+      gDeskPlaybackFile.seek(playbackDataStart_);
     } else {
-      int16_t stereo[128 * 2];
-      for (uint16_t i = 0; i < 128; ++i) {
-        int16_t sample = ((((toneSample_ + i) * 440UL) / 16000UL) & 1) ? 5000 : -5000;
-        stereo[i * 2] = sample; stereo[i * 2 + 1] = sample;
-      }
-      toneSample_ += 128;
-      gDeskServiceSpeaker.write(reinterpret_cast<const uint8_t *>(stereo), sizeof(stereo));
+      // Input is done; let the queue drain before releasing the owner so the
+      // last second of a track is actually heard.
+      engine_.endStreamInput();
+      if (!engine_.streamActive()) stopPlayback();
     }
-  }
-  if (testRecording_) {
-    uint8_t buffer[512];
-    int available = gDeskServiceMic.available();
-    if (available > 0) {
-      size_t wanted = static_cast<size_t>(available) < sizeof(buffer) ? available : sizeof(buffer);
-      size_t got = 0;
-      while (got < wanted) {
-        int sampleByte = gDeskServiceMic.read();
-        if (sampleByte < 0) break;
-        buffer[got++] = static_cast<uint8_t>(sampleByte);
-      }
-      if (got) {
-#if USE_CYPHER_DESK_SD
-        if (gDeskRecordingFile) gDeskRecordingFile.write(buffer, got);
-#endif
-        recordedBytes_ += got;
-        int16_t *samples = reinterpret_cast<int16_t *>(buffer);
-        uint32_t peak = 0;
-        for (size_t i = 0; i < got / 2; ++i) {
-          uint32_t magnitude = samples[i] < 0 ? -static_cast<int32_t>(samples[i]) : samples[i];
-          if (magnitude > peak) peak = magnitude;
-        }
-        lastLevel_ = peak;
-      }
-    }
-    if (testDurationMs_ && millis() - testStartedMs_ >= testDurationMs_) {
-      stopRecording();
-      testStatus_ = String("microphone test complete; ") + recordedBytes_ + " bytes";
-    }
-  }
-  if (playback_) {
-#if USE_CYPHER_DESK_SD
-    int16_t mono[128] = {};
-    size_t wanted = playbackRemaining_ < sizeof(mono) ? playbackRemaining_ : sizeof(mono);
-    size_t got = gDeskPlaybackFile ? gDeskPlaybackFile.read(reinterpret_cast<uint8_t *>(mono), wanted) : 0;
-    if (got) {
-      playbackRemaining_ -= got;
-      int16_t stereo[256];
-      for (uint16_t i = 0; i < 128; ++i) {
-        int32_t sample = static_cast<int32_t>(mono[i]) * volume_ / 100;
-        stereo[i * 2] = constrain(sample, -32768, 32767);
-        stereo[i * 2 + 1] = stereo[i * 2];
-      }
-      gDeskServiceSpeaker.write(reinterpret_cast<const uint8_t *>(stereo), sizeof(stereo));
-    }
-    if (!got || playbackRemaining_ == 0) stopPlayback();
-#else
-    stopPlayback();
-#endif
   }
 #endif
 }
+
+void DeskAudioService::pumpRecorder() {
+#if USE_CYPHER_DESK_RECORDER && USE_CYPHER_DESK_SD
+  if (!testRecording_) return;
+  uint8_t buffer[512];
+  const size_t got = engine_.readMicrophone(buffer, sizeof(buffer));
+  if (got) {
+    if (gDeskRecordingFile) gDeskRecordingFile.write(buffer, got);
+    recordedBytes_ += got;
+    const int16_t *samples = reinterpret_cast<const int16_t *>(buffer);
+    uint32_t peak = 0;
+    for (size_t i = 0; i < got / 2; ++i) {
+      const int32_t value = samples[i];
+      const uint32_t magnitude = value < 0 ? static_cast<uint32_t>(-value) : static_cast<uint32_t>(value);
+      if (magnitude > peak) peak = magnitude;
+    }
+    lastLevel_ = peak;
+  }
+  if (testDurationMs_ && millis() - testStartedMs_ >= testDurationMs_) {
+    const uint32_t bytes = recordedBytes_;
+    stopRecording();
+    testStatus_ = String("microphone test complete; ") + bytes + " bytes";
+  }
+#endif
+}
+
+void DeskAudioService::pumpTone() {
+  if (!testTone_) return;
+  if (testDurationMs_ && millis() - testStartedMs_ >= testDurationMs_) {
+    testTone_ = false;
+    engine_.endStreamInput();
+    owner_ = kDeskAudioOwnerNone;
+    testStatus_ = "speaker test complete";
+    return;
+  }
+  // Generate straight into the streaming voice at the output rate, so the test
+  // exercises the same path music does rather than a private code route.
+  int16_t block[256];
+  uint32_t room = engine_.streamFreeSourceFrames();
+  while (room >= 256) {
+    for (uint16_t i = 0; i < 256; ++i) {
+      // 440 Hz square, well below full scale.
+      const uint32_t period = DeskAudioEngine::kOutputRate / 440;
+      block[i] = ((toneFrame_ + i) % period) < (period / 2) ? 5000 : -5000;
+    }
+    toneFrame_ += 256;
+    const size_t pushed = engine_.pushStream(reinterpret_cast<const uint8_t *>(block), sizeof(block));
+    if (pushed < sizeof(block)) break;
+    room = engine_.streamFreeSourceFrames();
+  }
+}
+
+// --- Arbitration -----------------------------------------------------------
+
 bool DeskAudioService::acquire(DeskAudioOwner owner) {
   if (owner_ != kDeskAudioOwnerNone && owner_ != owner) return false;
   owner_ = owner;
@@ -1092,21 +1107,29 @@ void DeskAudioService::release(DeskAudioOwner owner) {
   owner_ = kDeskAudioOwnerNone;
 }
 DeskAudioOwner DeskAudioService::owner() const { return owner_; }
-bool DeskAudioService::speakerAvailable() const { return speakerReady_; }
-bool DeskAudioService::microphoneAvailable() const { return microphoneReady_; }
+bool DeskAudioService::speakerAvailable() const { return engine_.ready(); }
+bool DeskAudioService::microphoneAvailable() const { return engine_.microphoneReady(); }
+
 bool DeskAudioService::startSpeakerTest(uint16_t durationMs) {
-  if (!speakerReady_ || owner_ != kDeskAudioOwnerNone) return false;
-  owner_ = kDeskAudioOwnerMusic; testTone_ = true; testStartedMs_ = millis(); toneSample_ = 0;
-  testDurationMs_ = durationMs; testStatus_ = "speaker test running"; return true;
+  if (!speakerAvailable() || owner_ != kDeskAudioOwnerNone) return false;
+  if (!engine_.openStream(DeskAudioEngine::kOutputRate, 1, 16)) return false;
+  owner_ = kDeskAudioOwnerMusic;
+  testTone_ = true;
+  testStartedMs_ = millis();
+  toneFrame_ = 0;
+  testDurationMs_ = durationMs;
+  testStatus_ = "speaker test running";
+  return true;
 }
 bool DeskAudioService::startMicrophoneTest(uint16_t durationMs) {
   if (!startRecording("audio-test")) return false;
-  testRecording_ = true; testDurationMs_ = durationMs;
+  testRecording_ = true;
+  testDurationMs_ = durationMs;
   testStatus_ = "microphone test running";
   return true;
 }
 bool DeskAudioService::startRecording(const String &nameValue) {
-  if (!microphoneReady_ || owner_ != kDeskAudioOwnerNone) return false;
+  if (!microphoneAvailable() || owner_ != kDeskAudioOwnerNone) return false;
 #if USE_CYPHER_DESK_SD
   if (SD_MMC.cardType() == CARD_NONE) { testStatus_ = "insert SD card for recording"; return false; }
   String name = nameValue;
@@ -1119,6 +1142,7 @@ bool DeskAudioService::startRecording(const String &nameValue) {
   if (!gDeskRecordingFile) { testStatus_ = "recording file open failed"; recordingPath_ = ""; return false; }
   uint8_t blank[44] = {}; gDeskRecordingFile.write(blank, sizeof(blank));
 #else
+  (void)nameValue;
   testStatus_ = "SD required for recording"; return false;
 #endif
   owner_ = kDeskAudioOwnerRecorder; recording_ = true; testRecording_ = true;
@@ -1136,66 +1160,204 @@ bool DeskAudioService::stopRecording() {
   testStatus_ = String("recording saved; ") + recordedBytes_ + " bytes";
   return true;
 }
-bool DeskAudioService::playWav(const String &path) {
-  if (!speakerReady_ || owner_ != kDeskAudioOwnerNone) return false;
+
+// --- Playback --------------------------------------------------------------
+
+bool DeskAudioService::playWav(const String &path, DeskAudioOwner owner, bool loop) {
+  if (!speakerAvailable()) { testStatus_ = "speaker unavailable"; return false; }
+  if (owner_ != kDeskAudioOwnerNone && owner_ != owner) { testStatus_ = "audio in use"; return false; }
 #if USE_CYPHER_DESK_SD
   if (SD_MMC.cardType() == CARD_NONE) { testStatus_ = "insert SD card for playback"; return false; }
+  stopPlayback();
   gDeskPlaybackFile = SD_MMC.open(path, FILE_READ);
   if (!gDeskPlaybackFile) { testStatus_ = "WAV open failed"; return false; }
-  char riff[4] = {}, wave[4] = {};
-  bool formatOk = false;
-  if (gDeskPlaybackFile.readBytes(riff, 4) != 4 || readLe32(gDeskPlaybackFile) == 0 ||
-      gDeskPlaybackFile.readBytes(wave, 4) != 4 || memcmp(riff, "RIFF", 4) || memcmp(wave, "WAVE", 4)) {
-    gDeskPlaybackFile.close(); testStatus_ = "invalid WAV"; return false;
+
+  DeskWavFileSource source(gDeskPlaybackFile);
+  DeskWavFormat format;
+  String reason;
+  if (!DeskWav::parse(source, format, reason)) {
+    gDeskPlaybackFile.close();
+    testStatus_ = reason;
+    return false;
   }
-  while (gDeskPlaybackFile.available()) {
-    char id[4] = {};
-    if (gDeskPlaybackFile.readBytes(id, 4) != 4) break;
-    uint32_t size = readLe32(gDeskPlaybackFile);
-    if (!memcmp(id, "fmt ", 4)) {
-      uint16_t format = readLe16(gDeskPlaybackFile);
-      uint16_t channels = readLe16(gDeskPlaybackFile);
-      uint32_t rate = readLe32(gDeskPlaybackFile);
-      gDeskPlaybackFile.seek(gDeskPlaybackFile.position() + 6);
-      uint16_t bits = readLe16(gDeskPlaybackFile);
-      if (size > 16) gDeskPlaybackFile.seek(gDeskPlaybackFile.position() + size - 16);
-      formatOk = format == 1 && channels == 1 && rate == CYPHER_DESK_AUDIO_SAMPLE_RATE && bits == 16;
-    } else if (!memcmp(id, "data", 4) && formatOk) {
-      playbackBytes_ = size; playbackRemaining_ = size; playbackPath_ = path;
-      playback_ = true; owner_ = kDeskAudioOwnerMusic; testStatus_ = "WAV playback running"; return true;
-    } else gDeskPlaybackFile.seek(gDeskPlaybackFile.position() + size);
+  if (!engine_.openStream(format.sampleRate, format.channels, format.bitsPerSample)) {
+    gDeskPlaybackFile.close();
+    testStatus_ = "mixer refused this format";
+    return false;
   }
-  gDeskPlaybackFile.close(); testStatus_ = "unsupported WAV"; return false;
+  playbackDataStart_ = format.dataStart;
+  playbackDataBytes_ = format.dataBytes;
+  playbackConsumed_ = 0;
+  playbackRate_ = format.sampleRate;
+  playbackChannels_ = format.channels;
+  playbackBits_ = format.bitsPerSample;
+  playbackFormat_ = format.describe();
+  playbackPath_ = path;
+  loop_ = loop;
+  paused_ = false;
+  playback_ = true;
+  owner_ = owner;
+  testStatus_ = String("playing ") + playbackFormat_;
+  return true;
 #else
-  (void)path; testStatus_ = "SD required for playback"; return false;
+  (void)path; (void)owner; (void)loop;
+  testStatus_ = "SD required for playback"; return false;
 #endif
 }
+
 void DeskAudioService::stopPlayback() {
   if (!playback_) return;
 #if USE_CYPHER_DESK_SD
   if (gDeskPlaybackFile) gDeskPlaybackFile.close();
 #endif
-  playback_ = false; playbackRemaining_ = 0; owner_ = kDeskAudioOwnerNone;
-  testStatus_ = "WAV playback complete";
+  engine_.closeStream();
+  playback_ = false;
+  paused_ = false;
+  loop_ = false;
+  playbackConsumed_ = 0;
+  playbackDataBytes_ = 0;
+  if (owner_ != kDeskAudioOwnerRecorder) owner_ = kDeskAudioOwnerNone;
+  testStatus_ = "playback stopped";
 }
-bool DeskAudioService::playing() const { return playback_; }
+
+bool DeskAudioService::playing() const { return playback_ && !paused_; }
+bool DeskAudioService::paused() const { return paused_; }
+void DeskAudioService::setPaused(bool paused) {
+  if (!playback_) return;
+  paused_ = paused;
+  // Leaving the queue in place means resume is instant; the mixer simply runs
+  // dry and emits silence while paused.
+  if (paused) engine_.closeStream();
+#if USE_CYPHER_DESK_SD
+  if (!paused && engine_.openStream(playbackRate_, playbackChannels_, playbackBits_)) {
+    gDeskPlaybackFile.seek(playbackDataStart_ + playbackConsumed_);
+  }
+#endif
+}
+
+bool DeskAudioService::seekMs(uint32_t positionMs) {
+#if USE_CYPHER_DESK_SD
+  if (!playback_ || playbackRate_ == 0) return false;
+  const uint32_t frameBytes = playbackChannels_ * (playbackBits_ / 8);
+  uint64_t byteOffset = (static_cast<uint64_t>(positionMs) * playbackRate_ / 1000ULL) * frameBytes;
+  if (byteOffset > playbackDataBytes_) byteOffset = playbackDataBytes_;
+  byteOffset -= byteOffset % frameBytes;
+  engine_.closeStream();
+  if (!engine_.openStream(playbackRate_, playbackChannels_, playbackBits_)) return false;
+  playbackConsumed_ = static_cast<uint32_t>(byteOffset);
+  return gDeskPlaybackFile.seek(playbackDataStart_ + playbackConsumed_);
+#else
+  (void)positionMs;
+  return false;
+#endif
+}
+
 String DeskAudioService::playbackPath() const { return playbackPath_; }
+String DeskAudioService::playbackFormat() const { return playbackFormat_; }
+uint32_t DeskAudioService::playbackDurationMs() const {
+  if (playbackRate_ == 0 || playbackChannels_ == 0) return 0;
+  const uint32_t frameBytes = playbackChannels_ * (playbackBits_ / 8);
+  return static_cast<uint32_t>((static_cast<uint64_t>(playbackDataBytes_ / frameBytes) * 1000ULL) /
+                               playbackRate_);
+}
+uint32_t DeskAudioService::playbackPositionMs() const {
+  if (playbackRate_ == 0 || playbackChannels_ == 0) return 0;
+  const uint32_t frameBytes = playbackChannels_ * (playbackBits_ / 8);
+  // Report what has been HEARD, not what has been read off the card - the ring
+  // holds up to 1.5 s, so a read-based progress bar would run ahead of the
+  // music by a visible margin.
+  const uint32_t queued = engine_.streamQueuedFrames();
+  uint32_t readFrames = playbackConsumed_ / frameBytes;
+  const uint32_t queuedSourceFrames =
+      static_cast<uint32_t>((static_cast<uint64_t>(queued) * playbackRate_) /
+                            DeskAudioEngine::kOutputRate);
+  readFrames = readFrames > queuedSourceFrames ? readFrames - queuedSourceFrames : 0;
+  return static_cast<uint32_t>((static_cast<uint64_t>(readFrames) * 1000ULL) / playbackRate_);
+}
+
+// --- Raw stream (video audio) ---------------------------------------------
+
+bool DeskAudioService::openRawStream(uint32_t sampleRate, uint16_t channels, uint16_t bits,
+                                     DeskAudioOwner owner) {
+  if (!speakerAvailable()) return false;
+  if (owner_ != kDeskAudioOwnerNone && owner_ != owner) return false;
+  stopPlayback();
+  if (!engine_.openStream(sampleRate, channels, bits)) return false;
+  owner_ = owner;
+  playbackRate_ = sampleRate;
+  playbackChannels_ = channels;
+  playbackBits_ = bits;
+  playbackFormat_ = String(sampleRate / 1000) + " kHz " + (channels == 1 ? "mono" : "stereo");
+  return true;
+}
+size_t DeskAudioService::pushRaw(const uint8_t *bytes, size_t length) {
+  return engine_.pushStream(bytes, length);
+}
+uint32_t DeskAudioService::rawFreeFrames() const { return engine_.streamFreeSourceFrames(); }
+uint64_t DeskAudioService::streamPlayedFrames() const { return engine_.streamPlayedFrames(); }
+uint32_t DeskAudioService::underruns() const { return engine_.streamUnderruns(); }
+
+// --- Typing sounds ---------------------------------------------------------
+
+void DeskAudioService::setKeySound(uint8_t sound) { keyClick_.setSound(sound); }
+uint8_t DeskAudioService::keySound() const { return keyClick_.sound(); }
+const char *DeskAudioService::keySoundName() const { return keyClick_.soundName(); }
+void DeskAudioService::keyPress() { keyClick_.press(engine_, volume_); }
+void DeskAudioService::keyRelease() { keyClick_.release(engine_, volume_); }
+
+// --- Writer ambience -------------------------------------------------------
+
+const char *DeskAudioService::ambienceName(uint8_t ambience) {
+  static const char *const kNames[kAmbienceCount] = {"Off", "Rainy Cafe", "Vinyl Room", "Fireplace",
+                                                     "Brown Noise"};
+  return kNames[ambience < kAmbienceCount ? ambience : 0];
+}
+const char *DeskAudioService::ambienceName() const { return ambienceName(ambience_); }
+uint8_t DeskAudioService::ambience() const { return ambience_; }
+
+bool DeskAudioService::setAmbience(uint8_t ambience) {
+  static const char *const kFiles[kAmbienceCount] = {"", "rainy-cafe.wav", "vinyl-room.wav",
+                                                     "fireplace.wav", "brown-noise.wav"};
+  ambience_ = ambience < kAmbienceCount ? ambience : 0;
+  if (owner_ == kDeskAudioOwnerWriter) stopPlayback();
+  if (ambience_ == 0) return true;
+  const String path = String(CYPHER_DESK_AUDIO_DIR) + "/" + kFiles[ambience_];
+  if (!playWav(path, kDeskAudioOwnerWriter, /*loop=*/true)) {
+    // Say which loop is missing rather than silently reverting to Off.
+    testStatus_ = String(ambienceName(ambience_)) + ": " + testStatus_;
+    ambience_ = 0;
+    return false;
+  }
+  return true;
+}
+
+// --- Reporting -------------------------------------------------------------
+
 String DeskAudioService::recordingPath() const { return recordingPath_; }
 uint32_t DeskAudioService::recordingDurationMs() const { return recording_ ? millis() - testStartedMs_ : 0; }
-void DeskAudioService::setVolume(uint8_t volume) { volume_ = volume > 100 ? 100 : volume; }
+void DeskAudioService::setVolume(uint8_t volume) {
+  volume_ = volume > 100 ? 100 : volume;
+  engine_.setVolume(volume_);
+}
 uint8_t DeskAudioService::volume() const { return volume_; }
 String DeskAudioService::testStatus() const { return testStatus_; }
 uint32_t DeskAudioService::inputLevel() const { return lastLevel_; }
 bool DeskAudioService::recording() const { return recording_; }
 String DeskAudioService::status() const {
   if (recording_) return "recording";
-  if (!speakerAvailable() && !microphoneAvailable()) return "audio hardware unavailable";
+  if (!speakerAvailable() && !microphoneAvailable()) return engine_.status();
+  if (playback_) return paused_ ? "paused" : String("playing ") + playbackFormat_;
   return owner_ == kDeskAudioOwnerNone ? "idle" : "audio in use";
 }
 void DeskAudioService::print(Print &out) const {
   out.print(F("[audio] owner=")); out.print(owner_);
   out.print(F(" speaker=")); out.print(speakerAvailable() ? "ready" : "unavailable");
   out.print(F(" microphone=")); out.print(microphoneAvailable() ? "ready" : "unavailable");
+  out.print(F(" engine=")); out.print(engine_.status());
+  out.print(F(" key_sound=")); out.print(keySoundName());
+  out.print(F(" ambience=")); out.print(ambienceName());
+  out.print(F(" volume=")); out.print(volume_);
+  out.print(F(" underruns=")); out.print(engine_.streamUnderruns());
   out.print(F(" level=")); out.print(lastLevel_);
   out.print(F(" test=")); out.print(testStatus_);
   out.print(F(" status=")); out.println(status());

@@ -106,8 +106,29 @@
 #define CYPHER_DESK_AUTOSAVE_MS 1800
 #endif
 
+// Legacy rate for the ambience loops and recorder WAVs this project shipped
+// with. Content at this rate still plays - the mixer resamples it.
 #ifndef CYPHER_DESK_AUDIO_SAMPLE_RATE
 #define CYPHER_DESK_AUDIO_SAMPLE_RATE 16000
+#endif
+
+// The I2S channel runs at one fixed rate for the life of the sketch and every
+// source is resampled up to it. Reconfiguring the clock per track would mean
+// stopping the channel mid-playback, and it would make the played-frame counter
+// useless as a video sync clock.
+#ifndef CYPHER_DESK_AUDIO_OUT_RATE
+#define CYPHER_DESK_AUDIO_OUT_RATE 44100
+#endif
+
+// Software ring between the SD reader (loop context) and the mixer task, in
+// output frames. Must be a power of two. 65536 frames is ~1.5 s at 44.1 kHz -
+// enough to ride out a full-screen redraw or a slow directory read.
+#ifndef CYPHER_DESK_AUDIO_RING_FRAMES
+#define CYPHER_DESK_AUDIO_RING_FRAMES 65536
+#endif
+
+#ifndef CYPHER_DESK_AUDIO_MIC_RATE
+#define CYPHER_DESK_AUDIO_MIC_RATE 16000
 #endif
 
 // Polling the GT911 faster than the panel refreshes just returns empty frames,
