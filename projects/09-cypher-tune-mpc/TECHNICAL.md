@@ -225,7 +225,14 @@ Project-local tuning macros (`config/ProjectConfig.h`):
 ## Proof
 
 - `compile-ready`: all five flag rows compile for esp32p4.
-- `uploaded`: sketch flashed to a real CrowPanel; static UI verified.
+- `uploaded`: **current state (2026-07-31).** Flashed with
+  `USE_DISPLAY=1 USE_AUDIO=1 USE_MPC_SD=1`. The status strip reads
+  `i2s 32k u0` and the builtin kit is correct in pitch and tone, which
+  confirms the 32 kHz migration and the pad resampler on real hardware.
+  Two gaps keep this short of `field-proven`: the underrun counter has not
+  been read under sustained load (`DMA_DESC` 4 → 6 was chosen by arithmetic,
+  not measured), and the backing-loop path — the riskiest change in the
+  migration — has not been exercised at all.
 - `field-proven`: reached once, on the **22050 Hz** engine (V1.2, 2026-07-23).
   Display, multi-touch pads, and audible sample playback out of the speaker
   were confirmed on real hardware. This is where the amp-enable polarity bug

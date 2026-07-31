@@ -17,18 +17,32 @@ files present.
 
 ## Status
 
-**Compile-ready, after being hardware-verified once.** Display, multi-touch
-pads and audible sample playback out of the onboard speaker were all confirmed
-on a real CrowPanel on 2026-07-23 (V1.2) — this is the project that surfaced
-the amp-enable polarity fix, where IO30 is active-LOW and driving it HIGH mutes
-the speaker while I2S keeps streaming.
+**Uploaded and audible at 32 kHz (2026-07-31); not yet field-proven.**
 
-That result was on the **22050 Hz** engine. The engine now runs at **32 kHz**,
-with different DMA geometry, a resampled backing-loop voice and table-based
-pitch math, so it is a materially different binary and the proof state was
-deliberately reset rather than carried forward. Nothing about the earlier
-result is retracted; it just is not evidence about this build. All five flag
-combinations compile green.
+The engine moved from 22050 Hz to **32 kHz** with different DMA geometry, a
+resampled backing-loop voice and table-based pitch math. That is a materially
+different binary from the one heard on 2026-07-23, so the proof state was
+deliberately reset rather than carried forward — the earlier result stands on
+its own terms as field-proven *at 22050*, and this build starts from zero.
+
+Confirmed on hardware so far: the panel's status strip reads `i2s 32k u0`, and
+the builtin kit plays with correct pitch and tone — so the rate migration and
+the pad resampler are real, not just green in a compile.
+
+Still unverified, and stated plainly because the docs are the point:
+- the underrun counter under **sustained load**. `DMA_DESC` went 4 → 6 to hold
+  the margin at the higher rate, but that number came from arithmetic, not
+  from a measurement.
+- **backing-loop playback.** The loop path is the riskiest change in this work
+  — a WAV header field the loader never read, a new resampler, and Q32.32 lock
+  math — and it has not been exercised on hardware at all.
+
+All flag combinations compile green (119/119 in the flag matrix), and
+`./scripts/test-cypher-tune.sh` covers the pitch table and the loop lock
+arithmetic on the host (479 checks).
+
+This project also surfaced the amp-enable polarity fix: IO30 is active-LOW,
+and driving it HIGH mutes the speaker while I2S keeps streaming.
 
 The audio design targets ~28 ms worst-case pad-to-speaker (see
 [TECHNICAL.md](TECHNICAL.md) for the math), and the render task exposes an
