@@ -36,6 +36,7 @@ in-progress/03-badgeops-nfc-rfid-system
 in-progress/11-cardrf-spectrum-console
 in-progress/16-cypher-flock-panel
 in-progress/19-starbeam-console
+in-progress/23-cypher-stick
 PROJECTS
 }
 
