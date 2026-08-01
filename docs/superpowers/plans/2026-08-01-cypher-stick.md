@@ -1292,6 +1292,11 @@ class StickEngine {
   uint32_t sends() const { return sends_; }
   uint8_t hat() const { return hat_; }
   uint32_t buttons() const { return buttons_; }
+  // Per-key physical touch, independent of SOCD. The renderer highlights from
+  // THIS, not from hat/buttons: under up-priority, Left+Right resolves the hat
+  // to centre, and highlighting from the hat would leave both keys dark while
+  // two fingers are visibly on the glass.
+  uint32_t keysHeld() const { return keysHeld_; }
   uint32_t worstPollUs() const { return worstPollUs_; }
   void resetBench() { worstPollUs_ = 0; }
 
@@ -1308,6 +1313,7 @@ class StickEngine {
   uint32_t sends_ = 0;
   uint8_t hat_ = 0;
   uint32_t buttons_ = 0;
+  uint32_t keysHeld_ = 0;
   uint32_t worstPollUs_ = 0;
 };
 
@@ -1358,6 +1364,7 @@ void StickEngine::poll() {
   const uint8_t hat = socdResolve(s.up, s.down, s.left, s.right,
                                   profile_->socdPolicy, socd_);
 
+  keysHeld_ = s.keysHeld;  // physical touch, for the renderer — not SOCD-filtered
   if (hat != hat_ || s.buttons != buttons_) {
     hat_ = hat;
     buttons_ = s.buttons;
@@ -1639,6 +1646,16 @@ bool stickProfileDeserialize(const uint8_t *buf, uint32_t len, StickProfile &p);
 // Bytes a serialised profile occupies.
 uint32_t stickProfileSize(const StickProfile &p);
 
+// Re-establish every invariant the in-memory model relies on but the on-card
+// bytes cannot be trusted to hold: clamp keyCount to STICK_LAYOUT_MAX_KEYS,
+// clamp socdPolicy, and NUL-terminate every key label and the profile name.
+//
+// This exists because a label is passed straight to Widgets::text(), which
+// takes a `const char *` and reads until a terminator — an unterminated label
+// from a corrupt or hand-edited card would read past the key struct inside the
+// renderer. Call this on every deserialised profile before it is used.
+void stickProfileSanitize(StickProfile &p);
+
 #endif
 ```
 
@@ -1812,13 +1829,29 @@ bool stickProfileDeserialize(const uint8_t *buf, uint32_t len, StickProfile &p) 
 
   memset(&p, 0, sizeof p);
   memcpy(p.name, h.name, sizeof p.name);
-  p.name[sizeof p.name - 1] = '\0';
   p.keyCount = (uint8_t)h.keyCount;
   p.socdPolicy = h.socdPolicy;
   memcpy(p.keys, buf + sizeof h, (size_t)h.keyCount * sizeof(StickKey));
+  stickProfileSanitize(p);  // labels from the card are not trusted to terminate
   return true;
 }
 ```
+
+And in `StickLayout.cpp`, since that is where the struct's invariants live:
+
+```cpp
+void stickProfileSanitize(StickProfile &p) {
+  if (p.keyCount > STICK_LAYOUT_MAX_KEYS) p.keyCount = STICK_LAYOUT_MAX_KEYS;
+  if (p.socdPolicy > kSocdUpPriority) p.socdPolicy = kSocdNeutral;
+  p.name[sizeof p.name - 1] = '\0';
+  for (uint8_t i = 0; i < p.keyCount; i++) {
+    p.keys[i].label[sizeof p.keys[i].label - 1] = '\0';
+  }
+}
+```
+
+Add a test that a profile whose label bytes are all non-NUL comes back
+terminated, and that a `keyCount` of 200 is clamped rather than trusted.
 
 - [ ] **Step 7: Run to verify it passes**
 
@@ -2059,12 +2092,17 @@ class StickRender {
   void begin(const StickProfile *profile);
   // Repaint everything (mode change, profile change).
   void drawAll();
-  // Repaint only what changed since the last call. `buttons`/`hat` come from
-  // StickEngine; reading them across cores is safe because they are scalars.
-  void update(uint32_t buttons, uint8_t hat);
+  // Repaint only what changed since the last call. `keysHeld` is StickEngine's
+  // per-key physical-touch mask; reading it across cores is safe because it is
+  // a scalar.
+  //
+  // It is deliberately NOT derived from hat/buttons. Inverting those back to
+  // per-key state is lossy: keys sharing a bind, kBindNone keys, and — on the
+  // DEFAULT profile — Left+Right under up-priority, which resolves the hat to
+  // centre and would leave both keys dark with two fingers on the glass.
+  void update(uint32_t keysHeld);
 
  private:
-  bool isKeyPressed(uint8_t idx, uint32_t buttons, uint8_t hat) const;
   void drawKey(uint8_t idx, bool pressed);
 
   const StickProfile *profile_ = nullptr;
@@ -2088,28 +2126,6 @@ void StickRender::begin(const StickProfile *profile) {
   profile_ = profile;
   lastMask_ = 0;
   drawnOnce_ = false;
-}
-
-bool StickRender::isKeyPressed(uint8_t idx, uint32_t buttons, uint8_t hat) const {
-  const uint8_t bind = profile_->keys[idx].bind;
-  switch (bind) {
-    case kBindUp:
-      return hat == kHatUp || hat == kHatUpLeft || hat == kHatUpRight;
-    case kBindDown:
-      return hat == kHatDown || hat == kHatDownLeft || hat == kHatDownRight;
-    case kBindLeft:
-      return hat == kHatLeft || hat == kHatUpLeft || hat == kHatDownLeft;
-    case kBindRight:
-      return hat == kHatRight || hat == kHatUpRight || hat == kHatDownRight;
-    case kBindNone:
-      return false;
-    default:
-      if (bind >= kBindButton0) {
-        const uint8_t b = bind - kBindButton0;
-        return b < 32 && (buttons & (1u << b));
-      }
-      return false;
-  }
 }
 
 void StickRender::drawKey(uint8_t idx, bool pressed) {
@@ -2159,16 +2175,15 @@ void StickRender::drawAll() {
   drawnOnce_ = true;
 }
 
-void StickRender::update(uint32_t buttons, uint8_t hat) {
+void StickRender::update(uint32_t keysHeld) {
   if (!profile_) return;
   if (!drawnOnce_) {
     drawAll();
     return;
   }
-  uint32_t mask = 0;
-  for (uint8_t i = 0; i < profile_->keyCount; i++) {
-    if (isKeyPressed(i, buttons, hat)) mask |= (1u << i);
-  }
+  // StickEngine already computed which keys are physically held; do not try to
+  // reconstruct it from hat/buttons (see the header for why that is lossy).
+  const uint32_t mask = keysHeld;
   const uint32_t changed = mask ^ lastMask_;
   if (!changed) return;
   for (uint8_t i = 0; i < profile_->keyCount; i++) {
@@ -2191,7 +2206,7 @@ In `loop()`:
 
 ```cpp
 void loop() {
-  gRender.update(gEngine.buttons(), gEngine.hat());
+  gRender.update(gEngine.keysHeld());
   gRouter.poll();
 }
 ```
@@ -2335,14 +2350,19 @@ void StickEditor::nudgeSize(int16_t delta) {
 void StickEditor::cycleBind() {
   if (selected_ < 0 || !profile_) return;
   StickKey &k = profile_->keys[selected_];
-  // Order: Up, Down, Left, Right, then buttons 0..7, then wrap.
-  if (k.bind < kBindRight) {
-    k.bind++;
-  } else if (k.bind == kBindRight) {
-    k.bind = kBindButton0;
-  } else if (k.bind < kBindButton0 + 7) {
-    k.bind++;
+  // Order: Up, Down, Left, Right, then every button, then wrap.
+  //
+  // Uses the shared predicates from StickLayout.h rather than open-coding the
+  // bounds. An earlier draft wrapped at kBindButton0 + 7, which meant a profile
+  // loaded from SD with button 12 bound fell through every branch and jumped to
+  // kBindUp, silently making buttons 8..31 unreachable from the editor.
+  if (stickBindIsDirection(k.bind)) {
+    k.bind = (k.bind == kBindRight) ? kBindButton0 : (uint8_t)(k.bind + 1);
+  } else if (stickBindIsButton(k.bind)) {
+    const uint8_t next = (uint8_t)(k.bind + 1);
+    k.bind = stickBindIsButton(next) ? next : kBindUp;
   } else {
+    // Reserved (4..15) or kBindNone: treat as unbound and restart the cycle.
     k.bind = kBindUp;
   }
   draw();
@@ -2433,7 +2453,7 @@ void loop() {
   if (gEditor.isOpen()) {
     gEditor.tick(gUiTouch.down(), gUiTouch.x(), gUiTouch.y());
   } else {
-    gRender.update(gEngine.buttons(), gEngine.hat());
+    gRender.update(gEngine.keysHeld());
   }
   gRouter.poll();
 }
@@ -2662,7 +2682,7 @@ void loop() {
   if (gEditor.isOpen()) {
     gEditor.tick(gUiTouch.down(), gUiTouch.x(), gUiTouch.y());
   } else {
-    gRender.update(gEngine.buttons(), gEngine.hat());
+    gRender.update(gEngine.keysHeld());
     const uint32_t mask = gRender.pressedMask();
     if (mask & ~gPrevMask) gAudio.click();  // something newly went down
     gPrevMask = mask;
