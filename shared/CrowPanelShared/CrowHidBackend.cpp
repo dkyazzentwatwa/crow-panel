@@ -163,6 +163,25 @@ void HidBackend::tapKey(uint8_t mods, uint8_t key) {
   record("key " + hidModPrefix(mods) + hidKeyName(key));
 }
 
+void HidBackend::gamepadState(uint8_t hat, uint32_t buttons) {
+  if (!gamepadBegun_) {
+    gamepad_.begin();
+    gamepadBegun_ = true;
+  }
+  // Change detection: the stick task calls this every poll, and an unchanged
+  // state must not cost a USB report.
+  if (gamepadStateValid_ && hat == lastHat_ && buttons == lastButtons_) return;
+  lastHat_ = hat;
+  lastButtons_ = buttons;
+  gamepadStateValid_ = true;
+  gamepad_.sendState(hat, buttons);
+  reports_++;
+}
+
+bool HidBackend::gamepadLive() const { return gamepad_.ready(); }
+
+uint32_t HidBackend::gamepadReports() const { return gamepad_.reports(); }
+
 void HidBackend::typeText(const String &text) {
   if (text.length() == 0) return;
   HidTransport *t = active();

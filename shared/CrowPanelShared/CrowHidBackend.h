@@ -5,6 +5,7 @@
 #include "CrowHidTypes.h"
 #include "CrowUsbTransport.h"
 #include "CrowBleTransport.h"
+#include "CrowGamepadTransport.h"
 #include <Arduino.h>
 
 class Print;
@@ -53,6 +54,14 @@ class HidBackend {
   void mouseClick(uint8_t button);
   void mouseScroll(int8_t amount);
 
+  // Gamepad (project 23). Deliberately bypasses tapKey()/kHoldMs: a fightstick
+  // is all holds, and the 24 ms auto-release that makes the macro deck work
+  // would make holding back to block impossible. Change-detected — a repeated
+  // identical state costs nothing.
+  void gamepadState(uint8_t hat, uint32_t buttons);
+  bool gamepadLive() const;
+  uint32_t gamepadReports() const;
+
   // Fire a macro slot by kind (Combo / Consumer / Text).
   void fireMacro(const MacroSlot &slot);
 
@@ -100,6 +109,12 @@ class HidBackend {
   bool consumerHeld_ = false;
   uint32_t consumerReleaseDueMs_ = 0;
   HidTransport *consumerHeldOn_ = nullptr;
+
+  GamepadTransport gamepad_;
+  bool gamepadBegun_ = false;
+  uint8_t lastHat_ = 0;
+  uint32_t lastButtons_ = 0;
+  bool gamepadStateValid_ = false;
 };
 
 // Human-readable modifier prefix, e.g. "Cmd+Shift+". Shared by the backend and
