@@ -25,12 +25,8 @@ class StickEngine {
   void poll();
 
   // Diagnostics, read from the render side. Plain scalars so reading them from
-  // another core is safe without a lock -- but that only covers the reads.
-  // resetBench() below is a cross-core WRITE that races poll()'s own
-  // read-modify-write of worstPollUs_: an interleaved poll can land its
-  // stale "worse" value back after the reset clears it. Benign for a
-  // diagnostic counter -- do not treat it as an exact reset (same caveat as
-  // HidBackend::reports_, see CrowHidBackend.h).
+  // another core is safe without a lock -- but that covers the READS below
+  // only; see resetBench() for the one write in this group.
   uint32_t polls() const { return polls_; }
   // Engine-observed state TRANSITIONS, not USB reports sent. These diverge:
   // HidBackend sends unconditionally on the very first gamepadState() call
@@ -47,6 +43,11 @@ class StickEngine {
   // two fingers are visibly on the glass.
   uint32_t keysHeld() const { return keysHeld_; }
   uint32_t worstPollUs() const { return worstPollUs_; }
+  // Cross-core WRITE, unlike every getter above -- it races poll()'s own
+  // read-modify-write of worstPollUs_ on the stick task, so an interleaved
+  // poll can land its stale "worse" value back right after the reset clears
+  // it. Fine for a diagnostic; do not treat it as an exact reset (same
+  // caveat as HidBackend::reports_ -- see CrowHidBackend.h).
   void resetBench() { worstPollUs_ = 0; }
 
   void setEnabled(bool on) { enabled_ = on; }
