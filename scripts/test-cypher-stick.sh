@@ -17,6 +17,7 @@ mkdir -p "$OUT"
 "$CXX" -std=c++17 -O2 -Wall -Wextra -Werror \
   "$PROJECT/test/host_main.cpp" \
   "$PROJECT/src/SocdCleaner.cpp" \
+  "$PROJECT/src/StickLayout.cpp" \
   -o "$OUT/cypher-stick-tests"
 
 "$OUT/cypher-stick-tests" "$@"

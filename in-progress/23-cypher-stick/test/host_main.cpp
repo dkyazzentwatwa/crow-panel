@@ -1,5 +1,5 @@
-// Host-side tests for project 23's SOCD cleaner. Compiles the SHIPPING
-// sources, not copies — SocdCleaner.h and StickLayout.h (Task 3) are
+// Host-side tests for project 23's SOCD cleaner and layout model. Compiles
+// the SHIPPING sources, not copies — SocdCleaner.h and StickLayout.h are
 // deliberately free of Arduino.h so this is possible. Run via
 // scripts/test-cypher-stick.sh; no board required.
 //
@@ -15,6 +15,7 @@
 // bug, not a cosmetic one. These tests pin that resolution logic.
 
 #include "../src/SocdCleaner.h"
+#include "../src/StickLayout.h"
 
 #include <cstddef>
 #include <cstdio>
@@ -329,6 +330,136 @@ static void testSocdAllTransitionsLegal() {
   }
 }
 
+static void testHitTest() {
+  std::printf("layout: hit testing\n");
+  StickProfile p;
+  stickDefaultProfile(p);
+  check(p.keyCount == 10, "default profile has 4 directions + 6 buttons");
+
+  // A point in the middle of key 0 hits key 0.
+  const StickKey &k = p.keys[0];
+  check(stickHitTest(p, k.x + k.w / 2, k.y + k.h / 2) == 0, "centre of key 0");
+  // Far outside everything.
+  check(stickHitTest(p, 5, 5) == -1, "top-left corner hits nothing");
+
+  // Edge inclusivity needs a RECT key: the default profile's keys are round,
+  // so their bounding-box corners are correctly outside the shape.
+  StickProfile r;
+  r.keyCount = 1;
+  r.socdPolicy = kSocdNeutral;
+  r.keys[0] = {"R", 200, 200, 100, 100, kShapeRect, 0, kBindButton0, 'a'};
+  check(stickHitTest(r, 200, 200) == 0, "top-left edge inclusive");
+  check(stickHitTest(r, 300, 200) == -1, "right edge exclusive");
+}
+
+static void testHitTestOverlapPrefersLater() {
+  std::printf("layout: overlapping keys — later wins\n");
+  StickProfile p;
+  p.keyCount = 2;
+  p.socdPolicy = kSocdNeutral;
+  p.keys[0] = {"A", 100, 100, 100, 100, kShapeRect, 0, kBindButton0, 'a'};
+  p.keys[1] = {"B", 150, 150, 100, 100, kShapeRect, 0, kBindButton0 + 1, 'b'};
+  check(stickHitTest(p, 175, 175) == 1, "overlap region resolves to key 1");
+  check(stickHitTest(p, 110, 110) == 0, "key 0 only region");
+}
+
+static void testResolveIgnoresMisses() {
+  std::printf("layout: contacts outside every key are dropped\n");
+  StickProfile p;
+  p.keyCount = 2;
+  p.socdPolicy = kSocdNeutral;
+  p.keys[0] = {"L", 100, 100, 80, 80, kShapeRect, 0, kBindLeft, 'a'};
+  p.keys[1] = {"P", 400, 100, 80, 80, kShapeRect, 0, kBindButton0, 'b'};
+
+  const int hits[3] = {0, -1, 1};  // middle contact is a resting palm
+  StickState s = stickResolve(p, hits, 3);
+  check(s.left, "left direction held");
+  check(s.buttons == 1u, "button 0 held, nothing else");
+  check(!s.up && !s.down && !s.right, "no other directions");
+}
+
+static void testResolveEmpty() {
+  std::printf("layout: no contacts -> nothing held\n");
+  StickProfile p;
+  stickDefaultProfile(p);
+  StickState s = stickResolve(p, nullptr, 0);
+  check(s.buttons == 0u, "no buttons");
+  check(!s.up && !s.down && !s.left && !s.right, "no directions");
+}
+
+// The three below exist because Task 2's review found that tests which only
+// assert the cases you thought of miss whole branches. These pin branches the
+// obvious tests do not reach.
+
+static void testRoundShapeHitTest() {
+  std::printf("layout: round keys reject the bounding-box corners\n");
+  StickProfile p;
+  p.keyCount = 1;
+  p.socdPolicy = kSocdNeutral;
+  p.keys[0] = {"O", 100, 100, 100, 100, kShapeRound, 0, kBindButton0, 'a'};
+  check(stickHitTest(p, 150, 150) == 0, "dead centre hits");
+  check(stickHitTest(p, 150, 105) == 0, "top mid-edge hits");
+  check(stickHitTest(p, 105, 105) == -1, "top-left corner is inside the box but outside the circle");
+  check(stickHitTest(p, 195, 195) == -1, "bottom-right corner likewise");
+  // Same rect as a square key must accept the corner — proves the shape branch
+  // is what rejected it, not the bounds check.
+  p.keys[0].shape = kShapeRect;
+  check(stickHitTest(p, 105, 105) == 0, "as a rect, the corner hits");
+}
+
+static void testResolveRejectsOutOfRangeIndex() {
+  std::printf("layout: hit indices past keyCount are ignored, not read\n");
+  StickProfile p;
+  p.keyCount = 1;
+  p.socdPolicy = kSocdNeutral;
+  p.keys[0] = {"P", 0, 0, 50, 50, kShapeRect, 0, kBindButton0, 'a'};
+  const int hits[2] = {0, 7};  // 7 is past keyCount — must not be dereferenced
+  StickState s = stickResolve(p, hits, 2);
+  check(s.buttons == 1u, "only the valid key registered");
+}
+
+static void testResolveIgnoresButtonIndexAbove31() {
+  std::printf("layout: a bind past button 31 cannot shift out of the mask\n");
+  StickProfile p;
+  p.keyCount = 1;
+  p.socdPolicy = kSocdNeutral;
+  // kBindButton0 + 32 would be a 1u << 32 shift: undefined behaviour.
+  p.keys[0] = {"X", 0, 0, 50, 50, kShapeRect, 0, (uint8_t)(kBindButton0 + 32), 'a'};
+  const int hits[1] = {0};
+  StickState s = stickResolve(p, hits, 1);
+  check(s.buttons == 0u, "out-of-range button contributes nothing");
+}
+
+// Step 7's sanity check: a layout the player cannot reach, or where two keys
+// physically overlap the same finger space, is a real defect, not a cosmetic
+// one. Pins both properties for the shipping default profile.
+static void testDefaultProfileFitsPanelAndDoesNotOverlap() {
+  std::printf("layout: default profile keys are fully on-panel and non-overlapping\n");
+  const int16_t kPanelW = 1024, kPanelH = 600;
+  StickProfile p;
+  stickDefaultProfile(p);
+
+  for (uint8_t i = 0; i < p.keyCount; i++) {
+    const StickKey &k = p.keys[i];
+    char d[64];
+    std::snprintf(d, sizeof d, "key %u (%s) at (%d,%d) %dx%d", i, k.label, k.x, k.y, k.w, k.h);
+    check(k.x >= 0 && k.y >= 0 && k.x + k.w <= kPanelW && k.y + k.h <= kPanelH,
+          "key sits fully within the 1024x600 panel", d);
+  }
+
+  for (uint8_t i = 0; i < p.keyCount; i++) {
+    for (uint8_t j = (uint8_t)(i + 1); j < p.keyCount; j++) {
+      const StickKey &a = p.keys[i];
+      const StickKey &b = p.keys[j];
+      const bool overlap = a.x < b.x + b.w && b.x < a.x + a.w &&
+                            a.y < b.y + b.h && b.y < a.y + a.h;
+      char d[64];
+      std::snprintf(d, sizeof d, "key %u (%s) vs key %u (%s)", i, a.label, j, b.label);
+      check(!overlap, "bounding boxes do not overlap", d);
+    }
+  }
+}
+
 int main() {
   std::printf("[host] SocdCleaner: single-poll resolution semantics\n");
   testSocdSingleDirections();
@@ -349,6 +480,16 @@ int main() {
 
   std::printf("\n[host] SocdCleaner: exhaustive transition sweep\n");
   testSocdAllTransitionsLegal();
+
+  std::printf("\n[host] StickLayout: hit-testing and resolution\n");
+  testHitTest();
+  testHitTestOverlapPrefersLater();
+  testResolveIgnoresMisses();
+  testResolveEmpty();
+  testRoundShapeHitTest();
+  testResolveRejectsOutOfRangeIndex();
+  testResolveIgnoresButtonIndexAbove31();
+  testDefaultProfileFitsPanelAndDoesNotOverlap();
 
   std::printf("\n%d checks, %d failures\n", gRun, gFail);
   if (gFail == 0) {
