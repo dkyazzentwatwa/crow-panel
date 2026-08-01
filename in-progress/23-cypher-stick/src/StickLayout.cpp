@@ -34,24 +34,29 @@ int stickHitTest(const StickProfile &p, int16_t x, int16_t y) {
 }
 
 StickState stickResolve(const StickProfile &p, const int *hits, int hitCount) {
-  StickState s = {0, false, false, false, false};
+  StickState s = {0, 0, false, false, false, false};
   for (int i = 0; i < hitCount; i++) {
     const int idx = hits[i];
     if (idx < 0 || idx >= (int)p.keyCount) continue;  // palm / stray contact
+
+    // Set for every valid hit regardless of bind (including kBindNone) —
+    // this is the only signal that survives SOCD collapsing two opposing
+    // directions to neutral while both keys are still physically held. See
+    // StickState::keysHeld.
+    s.keysHeld |= (1u << idx);
+
     const uint8_t bind = p.keys[idx].bind;
-    switch (bind) {
-      case kBindUp: s.up = true; break;
-      case kBindDown: s.down = true; break;
-      case kBindLeft: s.left = true; break;
-      case kBindRight: s.right = true; break;
-      case kBindNone: break;
-      default:
-        if (bind >= kBindButton0) {
-          const uint8_t b = bind - kBindButton0;
-          if (b < 32) s.buttons |= (1u << b);
-        }
-        break;
+    if (stickBindIsDirection(bind)) {
+      switch (bind) {
+        case kBindUp: s.up = true; break;
+        case kBindDown: s.down = true; break;
+        case kBindLeft: s.left = true; break;
+        case kBindRight: s.right = true; break;
+      }
+    } else if (stickBindIsButton(bind)) {
+      s.buttons |= (1u << stickBindButton(bind));
     }
+    // kBindNone and the reserved 4-15 range contribute nothing further.
   }
   return s;
 }
@@ -81,6 +86,13 @@ void stickDefaultProfile(StickProfile &p) {
     {"MK", 540 + s + g,        ly,             kBindButton0 + 4, 'k'},
     {"HK", 540 + 2 * (s + g),  ly,             kBindButton0 + 5, 'l'},
   };
+  // The loop bound below is p.keyCount, computed AT RUNTIME from this same
+  // array — -Werror cannot catch a seed table that outgrows StickProfile's
+  // fixed-size `keys` array (e.g. a future "add START/SELECT" edit past 20
+  // seeds), which would silently overwrite keyCount and socdPolicy with no
+  // diagnostic. This catches it at compile time instead.
+  static_assert(sizeof seeds / sizeof seeds[0] <= STICK_LAYOUT_MAX_KEYS,
+                "seed table outgrew StickProfile::keys");
 
   p.keyCount = (uint8_t)(sizeof seeds / sizeof seeds[0]);
   for (uint8_t i = 0; i < p.keyCount; i++) {
@@ -91,9 +103,10 @@ void stickDefaultProfile(StickProfile &p) {
     k.y = seeds[i].y;
     k.w = s;
     k.h = s;
-    k.shape = kShapeRound;
     k.color = 0;
+    k.shape = kShapeRound;
     k.bind = seeds[i].bind;
     k.key = seeds[i].key;
+    k.reserved = 0;
   }
 }

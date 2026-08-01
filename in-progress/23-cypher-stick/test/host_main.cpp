@@ -19,6 +19,7 @@
 
 #include <cstddef>
 #include <cstdio>
+#include <cstring>
 
 static int gFail = 0;
 static int gRun = 0;
@@ -78,6 +79,8 @@ static bool hatMatchesHeld(uint8_t hat, bool up, bool down, bool left, bool righ
   if (ir && !right) return false;
   return true;
 }
+
+// ---- SocdCleaner: single-poll resolution semantics -------------------------
 
 static void testSocdSingleDirections() {
   std::printf("socd: single directions pass through on every policy\n");
@@ -155,6 +158,8 @@ static void testSocdUnknownPolicyDegradesToNeutral() {
 // direction was held before this poll, so there is no "first" - the tie must
 // stay neutral, and stay neutral for as long as both are held, not just on
 // the poll where the tie happened.
+// ---- SocdCleaner: persistent-winner state across polls ---------------------
+
 static void testSocdFirstInputSimultaneousStaysCenter() {
   std::printf("socd: first-input, L+R pressed on the SAME poll stays centered for the whole hold\n");
   SocdMemory m;
@@ -286,6 +291,8 @@ static void testSocdUpPriorityStoreResetsOnPolicySwitch() {
         "switch back to last-input: standing winner was cleared, not left at 'down'");
 }
 
+// ---- SocdCleaner: exhaustive transition sweep -------------------------------
+
 // Exhaustive sweep over PAIRS of polls: one SocdMemory is shared across both
 // calls in a pair (hoisted out of the per-poll resolve), so this reaches the
 // prev-state seeding and the earliest a standing winner can be SET (poll 2)
@@ -330,6 +337,24 @@ static void testSocdAllTransitionsLegal() {
   }
 }
 
+// ---- StickLayout: hit-testing and resolution --------------------------------
+
+// Building a StickProfile field-by-field (`StickProfile p; p.keyCount = N;
+// ...`) leaves `name` and every key slot at or beyond `keyCount` at whatever
+// was already on the stack — harmless for hit-testing today, since those
+// tests never read `name` or the unused slots, but Task 9 serialises the
+// WHOLE profile (name included) to SD, and a fixture built that way would
+// exercise a round-trip test against 16 bytes of poison instead of real
+// data. Zero first, then fill in only what the test cares about.
+static StickProfile makeProfile(uint8_t keyCount, uint8_t socdPolicy, const char *name = "") {
+  StickProfile p;
+  std::memset(&p, 0, sizeof p);
+  std::strncpy(p.name, name, sizeof p.name - 1);
+  p.keyCount = keyCount;
+  p.socdPolicy = socdPolicy;
+  return p;
+}
+
 static void testHitTest() {
   std::printf("layout: hit testing\n");
   StickProfile p;
@@ -344,32 +369,26 @@ static void testHitTest() {
 
   // Edge inclusivity needs a RECT key: the default profile's keys are round,
   // so their bounding-box corners are correctly outside the shape.
-  StickProfile r;
-  r.keyCount = 1;
-  r.socdPolicy = kSocdNeutral;
-  r.keys[0] = {"R", 200, 200, 100, 100, kShapeRect, 0, kBindButton0, 'a'};
+  StickProfile r = makeProfile(1, kSocdNeutral);
+  r.keys[0] = {"R", 200, 200, 100, 100, 0, kShapeRect, kBindButton0, 'a', 0};
   check(stickHitTest(r, 200, 200) == 0, "top-left edge inclusive");
   check(stickHitTest(r, 300, 200) == -1, "right edge exclusive");
 }
 
 static void testHitTestOverlapPrefersLater() {
   std::printf("layout: overlapping keys — later wins\n");
-  StickProfile p;
-  p.keyCount = 2;
-  p.socdPolicy = kSocdNeutral;
-  p.keys[0] = {"A", 100, 100, 100, 100, kShapeRect, 0, kBindButton0, 'a'};
-  p.keys[1] = {"B", 150, 150, 100, 100, kShapeRect, 0, kBindButton0 + 1, 'b'};
+  StickProfile p = makeProfile(2, kSocdNeutral);
+  p.keys[0] = {"A", 100, 100, 100, 100, 0, kShapeRect, kBindButton0, 'a', 0};
+  p.keys[1] = {"B", 150, 150, 100, 100, 0, kShapeRect, kBindButton0 + 1, 'b', 0};
   check(stickHitTest(p, 175, 175) == 1, "overlap region resolves to key 1");
   check(stickHitTest(p, 110, 110) == 0, "key 0 only region");
 }
 
 static void testResolveIgnoresMisses() {
   std::printf("layout: contacts outside every key are dropped\n");
-  StickProfile p;
-  p.keyCount = 2;
-  p.socdPolicy = kSocdNeutral;
-  p.keys[0] = {"L", 100, 100, 80, 80, kShapeRect, 0, kBindLeft, 'a'};
-  p.keys[1] = {"P", 400, 100, 80, 80, kShapeRect, 0, kBindButton0, 'b'};
+  StickProfile p = makeProfile(2, kSocdNeutral);
+  p.keys[0] = {"L", 100, 100, 80, 80, 0, kShapeRect, kBindLeft, 'a', 0};
+  p.keys[1] = {"P", 400, 100, 80, 80, 0, kShapeRect, kBindButton0, 'b', 0};
 
   const int hits[3] = {0, -1, 1};  // middle contact is a resting palm
   StickState s = stickResolve(p, hits, 3);
@@ -385,18 +404,18 @@ static void testResolveEmpty() {
   StickState s = stickResolve(p, nullptr, 0);
   check(s.buttons == 0u, "no buttons");
   check(!s.up && !s.down && !s.left && !s.right, "no directions");
+  check(s.keysHeld == 0u, "no keys held");
 }
 
-// The three below exist because Task 2's review found that tests which only
-// assert the cases you thought of miss whole branches. These pin branches the
-// obvious tests do not reach.
+// The next three tests (testRoundShapeHitTest, testResolveRejectsOutOfRangeIndex,
+// testResolveIgnoresButtonIndexAbove31) exist because Task 2's review found
+// that tests which only assert the cases you thought of miss whole branches.
+// These pin branches the obvious tests do not reach.
 
 static void testRoundShapeHitTest() {
   std::printf("layout: round keys reject the bounding-box corners\n");
-  StickProfile p;
-  p.keyCount = 1;
-  p.socdPolicy = kSocdNeutral;
-  p.keys[0] = {"O", 100, 100, 100, 100, kShapeRound, 0, kBindButton0, 'a'};
+  StickProfile p = makeProfile(1, kSocdNeutral);
+  p.keys[0] = {"O", 100, 100, 100, 100, 0, kShapeRound, kBindButton0, 'a', 0};
   check(stickHitTest(p, 150, 150) == 0, "dead centre hits");
   check(stickHitTest(p, 150, 105) == 0, "top mid-edge hits");
   check(stickHitTest(p, 105, 105) == -1, "top-left corner is inside the box but outside the circle");
@@ -409,22 +428,19 @@ static void testRoundShapeHitTest() {
 
 static void testResolveRejectsOutOfRangeIndex() {
   std::printf("layout: hit indices past keyCount are ignored, not read\n");
-  StickProfile p;
-  p.keyCount = 1;
-  p.socdPolicy = kSocdNeutral;
-  p.keys[0] = {"P", 0, 0, 50, 50, kShapeRect, 0, kBindButton0, 'a'};
+  StickProfile p = makeProfile(1, kSocdNeutral);
+  p.keys[0] = {"P", 0, 0, 50, 50, 0, kShapeRect, kBindButton0, 'a', 0};
   const int hits[2] = {0, 7};  // 7 is past keyCount — must not be dereferenced
   StickState s = stickResolve(p, hits, 2);
   check(s.buttons == 1u, "only the valid key registered");
+  check(s.keysHeld == 1u, "only key 0's bit is set");
 }
 
 static void testResolveIgnoresButtonIndexAbove31() {
   std::printf("layout: a bind past button 31 cannot shift out of the mask\n");
-  StickProfile p;
-  p.keyCount = 1;
-  p.socdPolicy = kSocdNeutral;
+  StickProfile p = makeProfile(1, kSocdNeutral);
   // kBindButton0 + 32 would be a 1u << 32 shift: undefined behaviour.
-  p.keys[0] = {"X", 0, 0, 50, 50, kShapeRect, 0, (uint8_t)(kBindButton0 + 32), 'a'};
+  p.keys[0] = {"X", 0, 0, 50, 50, 0, kShapeRect, (uint8_t)(kBindButton0 + 32), 'a', 0};
   const int hits[1] = {0};
   StickState s = stickResolve(p, hits, 1);
   check(s.buttons == 0u, "out-of-range button contributes nothing");
@@ -474,7 +490,7 @@ static void testDefaultProfileContract() {
   check(p.socdPolicy == kSocdUpPriority, "default profile resolves SOCD with up-priority");
 
   int dirCounts[4] = {0, 0, 0, 0};  // up, down, left, right
-  int buttonCounts[32] = {0};
+  int buttonCounts[kBindButtonCount] = {0};
   int buttonBoundKeys = 0;
 
   for (uint8_t i = 0; i < p.keyCount; i++) {
@@ -491,19 +507,16 @@ static void testDefaultProfileContract() {
     }
     check(terminated, "label is NUL-terminated within its buffer", d);
 
-    switch (k.bind) {
-      case kBindUp: dirCounts[0]++; break;
-      case kBindDown: dirCounts[1]++; break;
-      case kBindLeft: dirCounts[2]++; break;
-      case kBindRight: dirCounts[3]++; break;
-      case kBindNone: break;
-      default:
-        if (k.bind >= kBindButton0) {
-          buttonBoundKeys++;
-          const uint8_t b = k.bind - kBindButton0;
-          if (b < 32) buttonCounts[b]++;
-        }
-        break;
+    if (stickBindIsDirection(k.bind)) {
+      switch (k.bind) {
+        case kBindUp: dirCounts[0]++; break;
+        case kBindDown: dirCounts[1]++; break;
+        case kBindLeft: dirCounts[2]++; break;
+        case kBindRight: dirCounts[3]++; break;
+      }
+    } else if (stickBindIsButton(k.bind)) {
+      buttonBoundKeys++;
+      buttonCounts[stickBindButton(k.bind)]++;
     }
   }
 
@@ -518,7 +531,7 @@ static void testDefaultProfileContract() {
     std::snprintf(d, sizeof d, "button index %d", b);
     check(buttonCounts[b] == 1, "button index appears on exactly one key", d);
   }
-  for (int b = 6; b < 32; b++) {
+  for (int b = 6; b < kBindButtonCount; b++) {
     char d[32];
     std::snprintf(d, sizeof d, "button index %d", b);
     check(buttonCounts[b] == 0, "no key binds a button index outside 0-5", d);
@@ -531,14 +544,47 @@ static void testDefaultProfileContract() {
 // case happens to sit above it in the switch.
 static void testResolveKindNoneContributesNothing() {
   std::printf("layout: a kBindNone key resolves to nothing\n");
-  StickProfile p;
-  p.keyCount = 1;
-  p.socdPolicy = kSocdNeutral;
-  p.keys[0] = {"N", 0, 0, 50, 50, kShapeRect, 0, kBindNone, 'a'};
+  StickProfile p = makeProfile(1, kSocdNeutral);
+  p.keys[0] = {"N", 0, 0, 50, 50, 0, kShapeRect, kBindNone, 'a', 0};
   const int hits[1] = {0};
   StickState s = stickResolve(p, hits, 1);
   check(s.buttons == 0u, "no buttons set");
   check(!s.up && !s.down && !s.left && !s.right, "no directions set");
+  check(s.keysHeld == 1u, "the key's contact is still tracked in keysHeld");
+}
+
+// This is the case Task 11's renderer would otherwise render invisibly: the
+// default profile's SOCD policy is kSocdUpPriority, under which holding both
+// Left and Right collapses the horizontal axis to neutral (see
+// SocdCleaner.cpp / testSocdUpPriority). A renderer that inferred "which
+// keys are pressed" purely from the resolved hat would see kHatCenter and
+// highlight NEITHER key, even though the player has two fingers down.
+// keysHeld is read from the raw hit list, before SOCD ever runs, so it does
+// not have this blind spot. Left/Right are found by bind rather than
+// hardcoded index so this survives a relayout.
+static void testKeysHeldSurvivesSocdCancellation() {
+  std::printf("layout: keysHeld stays set for both keys even when SOCD cancels the hat to center\n");
+  StickProfile p;
+  stickDefaultProfile(p);
+
+  int leftIdx = -1, rightIdx = -1;
+  for (uint8_t i = 0; i < p.keyCount; i++) {
+    if (p.keys[i].bind == kBindLeft) leftIdx = i;
+    if (p.keys[i].bind == kBindRight) rightIdx = i;
+  }
+  check(leftIdx >= 0 && rightIdx >= 0, "default profile has both a Left and a Right key");
+
+  const int hits[2] = {leftIdx, rightIdx};
+  StickState s = stickResolve(p, hits, 2);
+  check(s.left && s.right, "both directions read as held");
+  check((s.keysHeld & (1u << leftIdx)) != 0, "left key's bit is set in keysHeld");
+  check((s.keysHeld & (1u << rightIdx)) != 0, "right key's bit is set in keysHeld");
+
+  SocdMemory mem;
+  const uint8_t hat = socdResolve(s.up, s.down, s.left, s.right, p.socdPolicy, mem);
+  check(hat == kHatCenter,
+        "SOCD still collapses left+right to center under up-priority — keysHeld is the fix, "
+        "not a change to that resolution");
 }
 
 int main() {
@@ -573,6 +619,7 @@ int main() {
   testDefaultProfileFitsPanelAndDoesNotOverlap();
   testDefaultProfileContract();
   testResolveKindNoneContributesNothing();
+  testKeysHeldSurvivesSocdCancellation();
 
   std::printf("\n%d checks, %d failures\n", gRun, gFail);
   if (gFail == 0) {
