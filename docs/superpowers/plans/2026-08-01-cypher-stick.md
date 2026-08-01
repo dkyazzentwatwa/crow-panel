@@ -1668,13 +1668,45 @@ static void testProfileRoundTrip() {
   check(stickProfileDeserialize(buf, n, out), "deserialise succeeded");
   check(out.keyCount == in.keyCount, "key count survived");
   check(out.socdPolicy == in.socdPolicy, "socd policy survived");
+  check(strcmp(out.name, in.name) == 0, "profile name survived");
+  // memcmp the whole key rather than spot-checking x/y/bind: w, h, shape,
+  // color and key are just as load-bearing, and a field-by-field check only
+  // ever pins the fields someone remembered to list.
   for (uint8_t i = 0; i < in.keyCount; i++) {
     char d[64];
     std::snprintf(d, sizeof d, "key %u", i);
-    check(out.keys[i].x == in.keys[i].x && out.keys[i].y == in.keys[i].y &&
-              out.keys[i].bind == in.keys[i].bind,
-          "key survived", d);
+    check(memcmp(&out.keys[i], &in.keys[i], sizeof(StickKey)) == 0,
+          "key survived byte for byte", d);
   }
+}
+
+static void testProfileRejectsBadPolicy() {
+  std::printf("profiles: an out-of-range SOCD policy is rejected\n");
+  StickProfile in;
+  stickDefaultProfile(in);
+  uint8_t buf[2048];
+  const uint32_t n = stickProfileSerialize(in, buf, sizeof buf);
+  // socdPolicy sits at offset 8 (magic 4 + version 2 + keyCount 2).
+  buf[8] = 99;
+  StickProfile out;
+  check(!stickProfileDeserialize(buf, n, out), "policy 99 rejected");
+}
+
+static void testProfileEmptyRoundTrip() {
+  std::printf("profiles: a zero-key profile round-trips\n");
+  StickProfile in;
+  memset(&in, 0, sizeof in);
+  strncpy(in.name, "Empty", sizeof in.name - 1);
+  in.keyCount = 0;
+  in.socdPolicy = kSocdNeutral;
+
+  uint8_t buf[2048];
+  const uint32_t n = stickProfileSerialize(in, buf, sizeof buf);
+  check(n == sizeof(ProfileFileHeader), "header only, no key payload");
+  StickProfile out;
+  check(stickProfileDeserialize(buf, n, out), "empty profile deserialises");
+  check(out.keyCount == 0, "still zero keys");
+  check(strcmp(out.name, "Empty") == 0, "name survived");
 }
 
 static void testProfileRejectsGarbage() {
@@ -1716,6 +1748,8 @@ Call them in `main()`:
   testProfileRoundTrip();
   testProfileRejectsGarbage();
   testProfileTooSmallBuffer();
+  testProfileRejectsBadPolicy();
+  testProfileEmptyRoundTrip();
 ```
 
 - [ ] **Step 4: Add the source to the test script**
