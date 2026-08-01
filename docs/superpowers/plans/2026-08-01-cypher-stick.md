@@ -24,6 +24,26 @@
 2. **Flags gating shared-library code must be passed as `-D`.** `shared/CrowPanelShared/*.cpp` never sees a project's `ProjectConfig.h`. A flag set only in `ProjectConfig.h` will appear to work in the sketch and be silently off inside the shared library.
 3. **Never wrap a feature-flagged library include in `__has_include`.** It disables the feature and still builds green. Verify linkage by checking `<build-path>/libraries/`, not by a green compile.
 
+**The testing standard for every host-tested task in this plan.** Task 2's
+review established it the hard way: its first version passed 96 checks while
+three real code mutations survived untouched, because two-thirds of those checks
+asserted a property the type system already guaranteed.
+
+Before calling any test task done, mutate the implementation and confirm a test
+fails. Specifically:
+
+- **Assert behaviour, not invariants that cannot be violated.** "The result is
+  in range 0..8" is worthless if the function structurally cannot return
+  anything else.
+- **Prefer properties over point cases.** "The hat never contains a direction
+  that is not held" caught two wrong-diagonal mutations that four hand-written
+  point assertions missed.
+- **Test both sides of anything symmetric.** Task 2 tested the horizontal axis
+  thoroughly and the vertical axis not at all, so deleting `mem.prevUp = up;`
+  passed every check while deleting `mem.prevLeft` failed nine.
+- **Carry state across calls when the function is stateful.** A fresh state
+  object per loop iteration only ever explores first-call behaviour.
+
 **Shared-API names that are easy to guess wrong** (each of these was verified
 against the header while writing this plan):
 
@@ -671,6 +691,49 @@ static void testResolveEmpty() {
   check(s.buttons == 0u, "no buttons");
   check(!s.up && !s.down && !s.left && !s.right, "no directions");
 }
+
+// The three below exist because Task 2's review found that tests which only
+// assert the cases you thought of miss whole branches. These pin branches the
+// obvious tests do not reach.
+
+static void testRoundShapeHitTest() {
+  std::printf("layout: round keys reject the bounding-box corners\n");
+  StickProfile p;
+  p.keyCount = 1;
+  p.socdPolicy = kSocdNeutral;
+  p.keys[0] = {"O", 100, 100, 100, 100, kShapeRound, 0, kBindButton0, 'a'};
+  check(stickHitTest(p, 150, 150) == 0, "dead centre hits");
+  check(stickHitTest(p, 150, 105) == 0, "top mid-edge hits");
+  check(stickHitTest(p, 105, 105) == -1, "top-left corner is inside the box but outside the circle");
+  check(stickHitTest(p, 195, 195) == -1, "bottom-right corner likewise");
+  // Same rect as a square key must accept the corner — proves the shape branch
+  // is what rejected it, not the bounds check.
+  p.keys[0].shape = kShapeRect;
+  check(stickHitTest(p, 105, 105) == 0, "as a rect, the corner hits");
+}
+
+static void testResolveRejectsOutOfRangeIndex() {
+  std::printf("layout: hit indices past keyCount are ignored, not read\n");
+  StickProfile p;
+  p.keyCount = 1;
+  p.socdPolicy = kSocdNeutral;
+  p.keys[0] = {"P", 0, 0, 50, 50, kShapeRect, 0, kBindButton0, 'a'};
+  const int hits[2] = {0, 7};  // 7 is past keyCount — must not be dereferenced
+  StickState s = stickResolve(p, hits, 2);
+  check(s.buttons == 1u, "only the valid key registered");
+}
+
+static void testResolveIgnoresButtonIndexAbove31() {
+  std::printf("layout: a bind past button 31 cannot shift out of the mask\n");
+  StickProfile p;
+  p.keyCount = 1;
+  p.socdPolicy = kSocdNeutral;
+  // kBindButton0 + 32 would be a 1u << 32 shift: undefined behaviour.
+  p.keys[0] = {"X", 0, 0, 50, 50, kShapeRect, 0, (uint8_t)(kBindButton0 + 32), 'a'};
+  const int hits[1] = {0};
+  StickState s = stickResolve(p, hits, 1);
+  check(s.buttons == 0u, "out-of-range button contributes nothing");
+}
 ```
 
 Call them in `main()` before the summary printf:
@@ -680,6 +743,9 @@ Call them in `main()` before the summary printf:
   testHitTestOverlapPrefersLater();
   testResolveIgnoresMisses();
   testResolveEmpty();
+  testRoundShapeHitTest();
+  testResolveRejectsOutOfRangeIndex();
+  testResolveIgnoresButtonIndexAbove31();
 ```
 
 - [ ] **Step 3: Add the new source to the test script**
