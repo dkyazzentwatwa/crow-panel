@@ -14,12 +14,26 @@
 #define STICK_MAX_PROFILES 8
 #endif
 
-// A lift is committed after this many consecutive empty polls. 1 keeps latency
-// at one poll; raise ONLY if hardware shows the GT911 dropping frames mid-hold.
-// Project 21 uses a 30 ms wall-clock timer here; that is ~2 frames and is
-// exactly what this project exists to avoid.
-#ifndef STICK_LIFT_CONFIRM_POLLS
-#define STICK_LIFT_CONFIRM_POLLS 1
+// Press and release are deliberately asymmetric, and conflating them was the
+// original design error here.
+//
+// A PRESS commits on the first poll that sees contact. That is the latency this
+// project exists for, and nothing debounces it.
+//
+// A RELEASE cannot work that way. Project 21 documents, from this panel, that
+// the GT911 "briefly drops/re-reports a contact (flicker) during a real touch",
+// and sized its 30 ms debounce to "bridge a few dropped 8 ms frames". That is
+// on-hardware evidence, not caution. Committing a lift on the first empty poll
+// would turn every flicker into a spurious release — a dropped block or a
+// dropped charge, which is worse than a late one.
+//
+// So a lift is confirmed only after this long with no contact. Wall-clock
+// rather than a poll count, so it stays correct if STICK_POLL_MS changes.
+// 24 ms is slightly tighter than project 21's 30 ms because we sample ~4x more
+// often and can distinguish a real lift sooner. Lower it ONLY with hardware
+// evidence that flicker is absent — the repo's existing evidence says it is not.
+#ifndef STICK_LIFT_CONFIRM_MS
+#define STICK_LIFT_CONFIRM_MS 24
 #endif
 
 // Stick task cadence on core 1. The GT911 reports at 100 Hz, so polling much

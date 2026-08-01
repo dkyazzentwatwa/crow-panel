@@ -1052,16 +1052,18 @@ In both files, replace `KeysTouch` → `StickTouch`, `CYPHER_KEYS_KEYS_TOUCH_H` 
 // Multi-contact touch tracking for the fightstick, forked from project 21's
 // KeysTouch and retuned for latency.
 //
-// Two changes, and they are the whole point of this project:
-//   - polls every STICK_POLL_MS (2 ms) instead of 16 ms
-//   - commits a lift after STICK_LIFT_CONFIRM_POLLS empty polls instead of a
-//     30 ms wall-clock timer
+// The real change is the POLL RATE, not the debounce: every STICK_POLL_MS
+// (2 ms) instead of 16 ms, so a press reaches the host ~14 ms sooner.
 //
-// P21's 30 ms debounce exists so one dropped GT911 frame mid-press cannot read
-// as a lift. That is right for a macro deck and wrong here: 30 ms is ~2 frames,
-// and a fightstick that releases late drops blocks. If hardware shows dropped
-// frames, raise STICK_LIFT_CONFIRM_POLLS — do not reintroduce a wall-clock
-// timer.
+// The release debounce is KEPT, and keeping it is deliberate. Project 21 sized
+// its 30 ms window to "bridge a few dropped 8 ms frames" of observed GT911
+// flicker on this panel. Dropping that to one poll would convert every flicker
+// into a spurious release — in a fighting game, a dropped block or a lost
+// charge. A late release is survivable; a phantom one is not. STICK_LIFT_
+// CONFIRM_MS is 24 ms, slightly tighter than P21 only because we sample ~4x
+// more often.
+//
+// So: presses are fast, releases are safe, and the two are not symmetric.
 //
 // The GT911 tracks at most 5 contacts. That ceiling is hardware.
 ```
@@ -1070,39 +1072,31 @@ In both files, replace `KeysTouch` → `StickTouch`, `CYPHER_KEYS_KEYS_TOUCH_H` 
 
 In `StickTouch.cpp`, find the poll-interval check using `CYPHER_KEYS_TOUCH_POLL_MS` and change it to `STICK_POLL_MS`.
 
-- [ ] **Step 5: Replace the release debounce with a poll counter**
+- [ ] **Step 5: Retarget the release debounce (do NOT remove it)**
 
-In `StickTouch.h`, in the `Contact` struct, replace:
-
-```cpp
-    bool releasePending = false;
-    uint32_t releasePendingSinceMs = 0;
-```
-
-with:
-
-```cpp
-    bool releasePending = false;
-    uint8_t emptyPolls = 0;  // consecutive polls with no contact for this slot
-```
-
-In `StickTouch.cpp`, replace the wall-clock debounce logic with:
+Keep the `Contact` struct's `releasePending` / `releasePendingSinceMs` fields
+exactly as `KeysTouch` has them — the wall-clock mechanism is correct and
+load-bearing. Only the constant changes, from
+`CYPHER_KEYS_TOUCH_RELEASE_DEBOUNCE_MS` (30) to `STICK_LIFT_CONFIRM_MS` (24):
 
 ```cpp
     if (!c.seenThisPoll && c.active) {
-      c.releasePending = true;
-      if (++c.emptyPolls >= STICK_LIFT_CONFIRM_POLLS) {
+      if (!c.releasePending) {
+        c.releasePending = true;
+        c.releasePendingSinceMs = now;
+      } else if (now - c.releasePendingSinceMs >= STICK_LIFT_CONFIRM_MS) {
         c.active = false;
         c.releasedEdge = true;
         c.releasePending = false;
-        c.emptyPolls = 0;
         c.owner = -1;
       }
     } else if (c.seenThisPoll) {
       c.releasePending = false;
-      c.emptyPolls = 0;
     }
 ```
+
+Verify that a PRESS still takes effect on the very first poll that sees the
+contact — no debounce on the press path. That asymmetry is the entire design.
 
 - [ ] **Step 6: Lift the GT911 sample throttle that would defeat all of this**
 
@@ -1342,12 +1336,20 @@ static void cmdBench(const String &args) {
   gEngine.resetBench();
 }
 
+// CLAUDE.md: every sketch answers help, status, and history. begin() registers
+// help itself; status and history are ours.
+static void cmdHistory(const String &args) {
+  (void)args;
+  gEvents.printHistory(Serial);
+}
+
 void setup() {
   Serial.begin(115200);
   delay(200);
   gRouter.begin(Serial, "Cypher Stick");
   gRouter.on("status", "stick status", cmdStatus);
   gRouter.on("bench", "worst observed poll time", cmdBench);
+  gRouter.on("history", "recent events", cmdHistory);
 
   stickDefaultProfile(gProfile);
 
@@ -2828,10 +2830,13 @@ These are permanent properties of the hardware, not bugs to be fixed later:
   contacts. A resting palm consumes one of them.
 - **PC and Nintendo Switch only.** PS5 and Xbox require passthrough
   authentication and will never work with this.
-- **Projected ~15 ms input latency** versus ~1–2 ms for a physical
-  GP2040-CE leverless — roughly one frame behind at 60 fps. Run `bench` on
-  hardware to measure our half of that; the GT911's internal ~10 ms cannot be
-  measured from here.
+- **Projected ~13 ms press latency and ~37 ms release latency**, versus ~1–2 ms
+  for both on a physical GP2040-CE leverless — roughly one frame behind on
+  press, two on release. The gap is deliberate: this panel's touch controller is
+  documented to drop contacts mid-touch, so a release is confirmed over 24 ms
+  rather than trusted immediately. A late release is survivable; a phantom one
+  costs you a block. Run `bench` on hardware to measure our half; the GT911's
+  internal ~10 ms cannot be measured from here.
 
 ## Deliberately not included
 

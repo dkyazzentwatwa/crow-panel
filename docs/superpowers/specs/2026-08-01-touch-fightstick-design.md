@@ -29,17 +29,40 @@ must say so.
 
 ## Constraints, measured and fixed
 
-| Stage | Project 21 today | Target here | Fixed by |
+**Press and release have different budgets, and an earlier draft of this spec
+wrongly quoted the press figure as if it covered both.**
+
+| Stage | Project 21 | Target here | Fixed by |
 |---|---|---|---|
 | GT911 sense + report | ~10 ms | ~10 ms | hardware (100 Hz report rate, <5 ms response) |
 | Our I2C poll | 16 ms | ~2 ms | `StickTouch` polls every loop — **and** `CROW_TOUCH_SAMPLE_MS`, since `DisplayBringup.cpp:97` throttles real GT911 samples to a hardcoded 8 ms that would otherwise return cached data four polls running |
-| Release confirm | 30 ms | ~2 ms | 1 empty poll instead of a wall-clock timer |
 | USB interrupt endpoint | 1 ms | 1 ms | `TUD_HID_INOUT_DESCRIPTOR(..., 1)` in core 3.3.8 |
-| **Total** | **~57 ms ≈ 3.4 frames** | **~15 ms ≈ 0.9 frames** | |
+| **Press total** | **~27 ms ≈ 1.6 frames** | **~13 ms ≈ 0.8 frames** | |
+| Release confirm | 30 ms | 24 ms | **kept deliberately — see below** |
+| **Release total** | **~57 ms ≈ 3.4 frames** | **~37 ms ≈ 2.2 frames** | |
 
-A GP2040-CE leverless is ~1–2 ms. The honest claim is therefore **under one
-frame behind a real leverless**, and even that is a *projection* until measured
-on hardware.
+A GP2040-CE leverless is ~1–2 ms on both. So the honest claim is **under one
+frame behind on press, roughly two frames behind on release** — and both are
+*projections* until measured on hardware.
+
+**Why the release debounce stays.** An earlier draft called project 21's 30 ms
+release debounce latency conservatism and proposed cutting it to a single poll.
+That was wrong, and the repo already contained the evidence: P21's
+`ProjectConfig.h` records that the GT911 on this panel "briefly drops/re-reports
+a contact (flicker) during a real touch", and sizes 30 ms to "bridge a few
+dropped 8 ms frames". Committing a lift on the first empty poll would convert
+every flicker into a phantom release — a dropped block or a lost charge. A late
+release is survivable; a phantom one is not.
+
+So the two paths are deliberately asymmetric: **presses commit on the first poll
+that sees contact, releases are confirmed over `STICK_LIFT_CONFIRM_MS` (24 ms)**.
+The 24 is slightly tighter than P21's 30 only because we sample ~4x more often.
+It may be lowered only with hardware evidence that flicker is absent.
+
+Note that the flicker risk is currently *masked*: `sampleTouch()` early-returns
+while keeping `cachedPointCount` intact, so at today's 8 ms throttle a 2 ms poll
+merely re-reads the same non-empty sample. The exposure begins the moment
+`CROW_TOUCH_SAMPLE_MS` drops to 2 and every poll becomes a real I2C read.
 
 Hard limits that cannot be designed away:
 
