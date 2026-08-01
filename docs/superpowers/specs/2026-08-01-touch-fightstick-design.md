@@ -32,7 +32,7 @@ must say so.
 | Stage | Project 21 today | Target here | Fixed by |
 |---|---|---|---|
 | GT911 sense + report | ~10 ms | ~10 ms | hardware (100 Hz report rate, <5 ms response) |
-| Our I2C poll | 16 ms | ~2 ms | `StickTouch` polls every loop |
+| Our I2C poll | 16 ms | ~2 ms | `StickTouch` polls every loop — **and** `CROW_TOUCH_SAMPLE_MS`, since `DisplayBringup.cpp:97` throttles real GT911 samples to a hardcoded 8 ms that would otherwise return cached data four polls running |
 | Release confirm | 30 ms | ~2 ms | 1 empty poll instead of a wall-clock timer |
 | USB interrupt endpoint | 1 ms | 1 ms | `TUD_HID_INOUT_DESCRIPTOR(..., 1)` in core 3.3.8 |
 | **Total** | **~57 ms ≈ 3.4 frames** | **~15 ms ≈ 0.9 frames** | |
@@ -193,9 +193,22 @@ Other flags: `USE_DISPLAY`, `USE_USB_HID` (keyboard output mode),
   management.
 
 Output toggle mirrors project 21's `OUT` control: `PAD` (`USBHIDGamepad`) or
-`KEY` (existing keyboard transport), persisted to NVS. Keyboard mode exists both
-for PC titles that prefer it and as a working fallback if the gamepad descriptor
-misbehaves on a given host.
+`KEY` (keyboard). Keyboard mode exists both for PC titles that prefer it and as
+a working fallback if the gamepad descriptor misbehaves on a given host.
+
+**Correction (2026-08-01, found while writing the implementation plan):** an
+earlier draft of this section called keyboard mode "nearly free since the code
+already exists". That was wrong. Every existing keyboard path is *tap*-only —
+`UsbTransport::keyUp()` is `gKeyboard.releaseAll()` and there is no per-key
+release anywhere in the stack, so holding one key while pressing another is
+exactly what it cannot do. Keyboard mode needs `supportsHeldKeys()` /
+`keyPressHeld()` / `keyReleaseHeld()` added to `HidTransport` as virtual methods
+with default no-op bodies (non-breaking for BLE and projects 05/21), plus a
+diffing `HidBackend::keyboardHeldState()`. See Task 15 of the plan.
+
+Keyboard mode also bypasses SOCD cleaning by design: the host sees raw keys, as
+it would from a physical keyboard, and only the gamepad hat carries the
+structural guarantee.
 
 BLE is **not** offered. It adds latency to a project whose entire premise is
 latency, and project 21 already established that BLE mouse reports panic this
