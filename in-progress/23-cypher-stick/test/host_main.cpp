@@ -460,6 +460,87 @@ static void testDefaultProfileFitsPanelAndDoesNotOverlap() {
   }
 }
 
+// Geometry alone (fits the panel, doesn't overlap) does not pin the layout
+// that ships on first boot: it says nothing about which key does what. This
+// derives the "what" contract from the profile itself — counting binds into
+// buckets rather than asserting "key 3 is Up" — so a future relayout that
+// keeps the contract (one of each direction, six distinct buttons, all round,
+// up-priority SOCD) does not break this test just for moving keys around.
+static void testDefaultProfileContract() {
+  std::printf("layout: default profile matches the shipping contract\n");
+  StickProfile p;
+  stickDefaultProfile(p);
+
+  check(p.socdPolicy == kSocdUpPriority, "default profile resolves SOCD with up-priority");
+
+  int dirCounts[4] = {0, 0, 0, 0};  // up, down, left, right
+  int buttonCounts[32] = {0};
+  int buttonBoundKeys = 0;
+
+  for (uint8_t i = 0; i < p.keyCount; i++) {
+    const StickKey &k = p.keys[i];
+    char d[64];
+    std::snprintf(d, sizeof d, "key %u (%s)", i, k.label);
+
+    check(k.shape == kShapeRound, "key is round", d);
+
+    check(k.label[0] != '\0', "label is non-empty", d);
+    bool terminated = false;
+    for (std::size_t j = 0; j < sizeof k.label; j++) {
+      if (k.label[j] == '\0') { terminated = true; break; }
+    }
+    check(terminated, "label is NUL-terminated within its buffer", d);
+
+    switch (k.bind) {
+      case kBindUp: dirCounts[0]++; break;
+      case kBindDown: dirCounts[1]++; break;
+      case kBindLeft: dirCounts[2]++; break;
+      case kBindRight: dirCounts[3]++; break;
+      case kBindNone: break;
+      default:
+        if (k.bind >= kBindButton0) {
+          buttonBoundKeys++;
+          const uint8_t b = k.bind - kBindButton0;
+          if (b < 32) buttonCounts[b]++;
+        }
+        break;
+    }
+  }
+
+  check(dirCounts[0] == 1, "exactly one key binds Up");
+  check(dirCounts[1] == 1, "exactly one key binds Down");
+  check(dirCounts[2] == 1, "exactly one key binds Left");
+  check(dirCounts[3] == 1, "exactly one key binds Right");
+
+  check(buttonBoundKeys == 6, "exactly six button-bound keys");
+  for (int b = 0; b < 6; b++) {
+    char d[32];
+    std::snprintf(d, sizeof d, "button index %d", b);
+    check(buttonCounts[b] == 1, "button index appears on exactly one key", d);
+  }
+  for (int b = 6; b < 32; b++) {
+    char d[32];
+    std::snprintf(d, sizeof d, "button index %d", b);
+    check(buttonCounts[b] == 0, "no key binds a button index outside 0-5", d);
+  }
+}
+
+// Regression guard: a settings-screen key can be set to "unbound"
+// (kBindNone) without being removed from the profile. It must contribute
+// nothing to the resolved state — not even by falling through to whichever
+// case happens to sit above it in the switch.
+static void testResolveKindNoneContributesNothing() {
+  std::printf("layout: a kBindNone key resolves to nothing\n");
+  StickProfile p;
+  p.keyCount = 1;
+  p.socdPolicy = kSocdNeutral;
+  p.keys[0] = {"N", 0, 0, 50, 50, kShapeRect, 0, kBindNone, 'a'};
+  const int hits[1] = {0};
+  StickState s = stickResolve(p, hits, 1);
+  check(s.buttons == 0u, "no buttons set");
+  check(!s.up && !s.down && !s.left && !s.right, "no directions set");
+}
+
 int main() {
   std::printf("[host] SocdCleaner: single-poll resolution semantics\n");
   testSocdSingleDirections();
@@ -490,6 +571,8 @@ int main() {
   testResolveRejectsOutOfRangeIndex();
   testResolveIgnoresButtonIndexAbove31();
   testDefaultProfileFitsPanelAndDoesNotOverlap();
+  testDefaultProfileContract();
+  testResolveKindNoneContributesNothing();
 
   std::printf("\n%d checks, %d failures\n", gRun, gFail);
   if (gFail == 0) {

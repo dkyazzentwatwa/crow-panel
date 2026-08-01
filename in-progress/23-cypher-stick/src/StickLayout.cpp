@@ -18,9 +18,10 @@ int stickHitTest(const StickProfile &p, int16_t x, int16_t y) {
       const int32_t dy = y - cy;
       // Normalised ellipse test in fixed point, no floating point on the
       // stick task. The numerator is widened to 64-bit before squaring:
-      // dx/dy are bounded by the panel (currently 1024x600), and
-      // dx*dx*10000 alone can already exceed INT32_MAX for a key more than
-      // ~460px wide, well within what an editor could someday produce.
+      // dx is bounded by the key's half-width (rx), and dx*dx*10000 alone
+      // can already exceed INT32_MAX once dx reaches 464 — i.e. a key
+      // WIDTH of ~928px, well within what an editor could someday produce
+      // on a 1024-wide panel.
       const int64_t ex = (int64_t)dx * dx * 10000;
       const int64_t ey = (int64_t)dy * dy * 10000;
       if (ex / (rx * rx) + ey / (ry * ry) > 10000) {
