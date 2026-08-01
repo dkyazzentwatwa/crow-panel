@@ -8,8 +8,11 @@
 // Deliberately free of Arduino.h so scripts/test-cypher-stick.sh compiles the
 // SHIPPING source, not a copy of it.
 //
-// Values match TinyUSB's HAT_* constants exactly; CrowGamepadTransport
-// static_asserts that they still agree.
+// Values match Arduino-ESP32's HAT_* constants (USBHIDGamepad.h) exactly.
+// TinyUSB itself spells the same values GAMEPAD_HAT_*/GAMEPAD_HAT_CENTERED;
+// this project talks to the Arduino-ESP32 HID API, so HAT_* is the one that
+// matters here. CrowGamepadTransport (Task 5) will static_assert that they
+// still agree — nothing enforces that today.
 enum StickHat : uint8_t {
   kHatCenter = 0,
   kHatUp = 1,
