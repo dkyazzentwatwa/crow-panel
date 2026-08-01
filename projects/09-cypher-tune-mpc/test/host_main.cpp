@@ -5,6 +5,8 @@
 // scripts/test-cypher-tune.sh; no board required.
 
 #include "../src/LoopLock.h"
+#include "../src/dsp/Envelope.h"
+#include "../src/dsp/Svf.h"
 
 #include <cmath>
 #include <cstdint>
@@ -152,12 +154,204 @@ static void testNoLoopRegression() {
   check(p.incFP == ((uint64_t)1 << 32), "unity increment at matched rates", d);
 }
 
+static const uint32_t kRate = 32000;
+
+// A filter that diverges does not produce a polite artifact - it produces a
+// full-scale burst into a small speaker amp. This sweeps the ENTIRE control
+// space with full-scale noise and asserts nothing ever leaves its bounds. It is
+// the single highest-value test in this file, because the failure it guards
+// against is hardware-only and destructive.
+static void testSvfStability() {
+  std::printf("SVF stability sweep (the speaker-saving one)\n");
+  Dsp::initSvfTables(kRate);
+
+  uint32_t rng = 12345;
+  auto noise = [&rng]() {
+    rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5;
+    return (int32_t)((int16_t)(rng & 0xFFFF)) << 8;  // full-scale, Q23.8
+  };
+
+  int worstType = -1, worstCut = -1, worstRes = -1;
+  int32_t worstState = 0, worstOut = 0;
+
+  for (uint8_t type = Dsp::kFilterLP; type < Dsp::kFilterTypeCount; type++) {
+    for (int c = 0; c < 256; c += 5) {
+      for (int r = 0; r < 256; r += 5) {
+        Dsp::Svf f;
+        f.setType(type);
+        f.setCutoff((uint8_t)c, (uint8_t)r);
+        f.reset();
+        for (int n = 0; n < 2000; n++) {
+          int32_t out = f.process(noise());
+          if (std::abs(out) > std::abs(worstOut)) {
+            worstOut = out; worstType = type; worstCut = c; worstRes = r;
+          }
+          if (std::abs(f.ic1) > std::abs(worstState)) worstState = f.ic1;
+          if (std::abs(f.ic2) > std::abs(worstState)) worstState = f.ic2;
+
+          char d[160];
+          if (std::abs(out) > Dsp::kSvfOutMax) {
+            std::snprintf(d, sizeof d, "type=%u cut=%d res=%d out=%d",
+                          type, c, r, out);
+            check(false, "output stays inside the clamp", d);
+            n = 2000;
+          }
+          if (std::abs(f.ic1) > Dsp::kSvfStateMax ||
+              std::abs(f.ic2) > Dsp::kSvfStateMax) {
+            std::snprintf(d, sizeof d, "type=%u cut=%d res=%d ic1=%d ic2=%d",
+                          type, c, r, f.ic1, f.ic2);
+            check(false, "state stays inside the clamp", d);
+            n = 2000;
+          }
+        }
+      }
+    }
+  }
+  check(true, "swept all types x cutoff x resonance");
+  std::printf("  worst |out|=%d (limit %d) at type=%d cut=%d res=%d; worst |state|=%d (limit %d)\n",
+              std::abs(worstOut), Dsp::kSvfOutMax, worstType, worstCut, worstRes,
+              std::abs(worstState), Dsp::kSvfStateMax);
+}
+
+// A filter is only useful if it actually filters. DC through a lowpass should
+// survive; DC through a highpass should not.
+static void testSvfResponse() {
+  std::printf("SVF frequency response sanity\n");
+  Dsp::initSvfTables(kRate);
+  const int32_t dc = 16000 << 8;
+
+  auto settle = [&](uint8_t type, uint8_t cut, uint8_t res, int32_t in) {
+    Dsp::Svf f;
+    f.setType(type);
+    f.setCutoff(cut, res);
+    f.reset();
+    int32_t out = 0;
+    for (int n = 0; n < 20000; n++) out = f.process(in);
+    return out;
+  };
+
+  // Mid cutoff, gentle Q, so the corner is nowhere near DC either way.
+  int32_t lp = settle(Dsp::kFilterLP, 160, 0, dc);
+  int32_t hp = settle(Dsp::kFilterHP, 160, 0, dc);
+  char d[128];
+  std::snprintf(d, sizeof d, "lp=%d in=%d", lp, dc);
+  check(std::abs(lp - dc) < dc / 20, "lowpass passes DC", d);
+  std::snprintf(d, sizeof d, "hp=%d", hp);
+  check(std::abs(hp) < dc / 20, "highpass blocks DC", d);
+
+  // Off must be bit-exact passthrough, or bypassing the filter changes the
+  // sound and the 'filter off' setting is a lie.
+  Dsp::Svf off;
+  off.setType(Dsp::kFilterOff);
+  check(off.process(12345) == 12345, "kFilterOff is exact passthrough");
+
+  // Cutoff must be monotonic in the index, or a knob sweep would jump around.
+  bool monotonic = true;
+  for (int i = 1; i < 256; i++) {
+    if (Dsp::svfCutoffHz((uint8_t)i, kRate) <= Dsp::svfCutoffHz((uint8_t)(i - 1), kRate)) {
+      monotonic = false;
+    }
+  }
+  check(monotonic, "cutoff is monotonic across the index");
+  std::snprintf(d, sizeof d, "%.1f Hz .. %.0f Hz",
+                Dsp::svfCutoffHz(0, kRate), Dsp::svfCutoffHz(255, kRate));
+  check(Dsp::svfCutoffHz(255, kRate) < kRate / 2.0f, "top of sweep stays below Nyquist", d);
+  std::printf("  cutoff range %s, Q %.2f .. %.1f\n", d,
+              Dsp::svfResonanceQ(0), Dsp::svfResonanceQ(255));
+}
+
+static void testEnvelope() {
+  std::printf("ADSR envelope\n");
+  Dsp::initEnvTables(kRate);
+
+  // Guard the root cause directly, not just its symptom: a zero coefficient is
+  // a permanently frozen envelope. Walk every index and prove the one-pole
+  // actually moves from rest.
+  for (int i = 0; i < 256; i++) {
+    Dsp::Env probe;
+    probe.gateOn((uint8_t)i, 128, 200, (uint8_t)i);
+    int32_t before = probe.level;
+    probe.step();
+    char d[96];
+    std::snprintf(d, sizeof d, "idx=%d coef=%d level %d -> %d",
+                  i, probe.coef, before, probe.level);
+    check(probe.coef > 0, "attack coefficient is never zero", d);
+    check(probe.level > before, "envelope advances on the first sample", d);
+  }
+
+  // Every A/D/S/R combination must terminate. An envelope that never reaches
+  // idle leaks a voice permanently, which presents as "polyphony slowly dies".
+  //
+  // The extremes are in the list deliberately. A Q15 coefficient rounds to 1 at
+  // index 222 and to 0 at index 255, which stalls the one-pole partway and
+  // hangs the voice forever - that is the bug this file caught, and stepping
+  // the loop by a stride that skips 255 would have hidden half of it.
+  const int idxs[] = {0, 1, 37, 74, 111, 148, 185, 222, 240, 254, 255};
+  for (int ai = 0; ai < (int)(sizeof idxs / sizeof idxs[0]); ai++) {
+    for (int ri = 0; ri < (int)(sizeof idxs / sizeof idxs[0]); ri++) {
+      const int a = idxs[ai], r = idxs[ri];
+      Dsp::Env e;
+      e.gateOn((uint8_t)a, 40, 200, (uint8_t)r);
+      int n = 0;
+      const int limit = (int)kRate * 30;
+      while (e.stage != Dsp::kEnvSustain && n < limit) { e.step(); e.tick(); n++; }
+      char d[128];
+      std::snprintf(d, sizeof d, "a=%d r=%d frames=%d", a, r, n);
+      check(e.stage == Dsp::kEnvSustain, "reaches sustain", d);
+
+      e.gateOff();
+      n = 0;
+      while (e.stage != Dsp::kEnvIdle && n < limit) { e.step(); e.tick(); n++; }
+      std::snprintf(d, sizeof d, "a=%d r=%d release frames=%d", a, r, n);
+      check(e.stage == Dsp::kEnvIdle, "release reaches idle", d);
+    }
+  }
+
+  // kill() is used for choke, steal and stop, so it must be bounded and short
+  // regardless of the patch's release time.
+  for (int r = 0; r < 256; r += 17) {
+    Dsp::Env e;
+    e.gateOn(0, 40, 200, (uint8_t)r);
+    for (int n = 0; n < 2000; n++) { e.step(); e.tick(); }
+    e.kill();
+    int n = 0;
+    while (e.stage != Dsp::kEnvIdle && n < 4096) { e.step(); e.tick(); n++; }
+    char d[96];
+    std::snprintf(d, sizeof d, "r=%d kill frames=%d", r, n);
+    check(e.stage == Dsp::kEnvIdle, "kill always terminates", d);
+    check(n <= 128, "kill terminates within ~96 frames", d);
+  }
+
+  // Legacy equivalence: the minimum attack must still de-click. The old code
+  // used a fixed 16-frame ramp, so a 0 ms attack must not arrive faster.
+  Dsp::Env e;
+  e.gateOn(0, 40, 255, 0);
+  int frames = 0;
+  while (e.level < Dsp::kEnvOne / 2 && frames < 1000) { e.step(); e.tick(); frames++; }
+  char d[96];
+  std::snprintf(d, sizeof d, "half-level at %d frames", frames);
+  check(frames >= 4, "fastest attack still ramps (no click)", d);
+
+  // Level must never leave [0, 1] - it multiplies audio.
+  Dsp::Env e2;
+  e2.gateOn(0, 0, 0, 0);
+  bool bounded = true;
+  for (int n = 0; n < 20000; n++) {
+    e2.step(); e2.tick();
+    if (e2.level < 0 || e2.level > Dsp::kEnvOne) bounded = false;
+  }
+  check(bounded, "level stays within [0, 1]");
+}
+
 int main() {
   std::printf("cypher-tune host tests\n\n");
   testPitchTable();
   testLockExactness();
   testLockRegression16_16();
   testNoLoopRegression();
+  testSvfStability();
+  testSvfResponse();
+  testEnvelope();
   std::printf("\n%d checks, %d failed\n", gRun, gFail);
   if (gFail == 0) {
     std::printf("RESULT PASS\n");

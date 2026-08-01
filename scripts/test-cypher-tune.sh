@@ -19,6 +19,8 @@ CXX="${CXX:-g++}"
 mkdir -p "$OUT"
 "$CXX" -std=c++17 -O2 -Wall -Wextra -Werror \
   "$PROJECT/test/host_main.cpp" \
+  "$PROJECT/src/dsp/Svf.cpp" \
+  "$PROJECT/src/dsp/Envelope.cpp" \
   -o "$OUT/cypher-tune-tests"
 
 "$OUT/cypher-tune-tests" "$@"
