@@ -33,7 +33,9 @@ against the header while writing this plan):
 | `CrowDisplay::begin(activeHardwareProfile(), "Title", manualFlush)` | `begin()` with no profile |
 | `gRouter.begin(Serial, "App Name")` — `Stream&` plus a name | `begin(&Serial)` |
 | `gRouter.printHelp()` — no argument, and `begin()` registers `help` for you | `printHelp(Serial)` |
+| `gRouter.poll()` in `loop()` | `gRouter.tick()` — no such method |
 | `gEvents.add("msg")` — `EventLog` has no `begin()` | `gEvents.begin()` |
+| `gUiTouch.tick()` — `CrowTouch` *does* use `tick()` | (only the router differs) |
 | `Widgets::kAccent` etc., RGB565 `uint16_t` | `UiTheme::accent()` — that struct is `uint32_t` and unrelated |
 
 **The two FQBNs used in this plan:**
@@ -169,7 +171,7 @@ void setup() {
 }
 
 void loop() {
-  gRouter.tick();
+  gRouter.poll();
 }
 ```
 
@@ -1363,7 +1365,7 @@ void setup() {
 
 void loop() {
   gEngine.poll();
-  gRouter.tick();
+  gRouter.poll();
 }
 ```
 
@@ -1463,7 +1465,7 @@ And change `loop()` to stop polling directly:
 void loop() {
   // The input path runs on its own core-1 task (see StickEngine::startTask).
   // loop() owns rendering, serial, SD, and audio only.
-  gRouter.tick();
+  gRouter.poll();
 }
 ```
 
@@ -2060,7 +2062,7 @@ In `loop()`:
 ```cpp
 void loop() {
   gRender.update(gEngine.buttons(), gEngine.hat());
-  gRouter.tick();
+  gRouter.poll();
 }
 ```
 
@@ -2303,7 +2305,7 @@ void loop() {
   } else {
     gRender.update(gEngine.buttons(), gEngine.hat());
   }
-  gRouter.tick();
+  gRouter.poll();
 }
 ```
 
@@ -2535,7 +2537,7 @@ void loop() {
     if (mask & ~gPrevMask) gAudio.click();  // something newly went down
     gPrevMask = mask;
   }
-  gRouter.tick();
+  gRouter.poll();
 }
 ```
 
