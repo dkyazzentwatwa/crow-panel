@@ -56,6 +56,28 @@ static void bitsName(int bits, char *out, std::size_t outSize) {
   std::snprintf(out, outSize, "%s", (tmp[0] == '\0') ? "none" : tmp);
 }
 
+// Decodes which of up/down/left/right a hat value visually reports as held.
+static void hatImplies(uint8_t hat, bool *up, bool *down, bool *left, bool *right) {
+  *up = (hat == kHatUp || hat == kHatUpRight || hat == kHatUpLeft);
+  *down = (hat == kHatDown || hat == kHatDownRight || hat == kHatDownLeft);
+  *left = (hat == kHatLeft || hat == kHatDownLeft || hat == kHatUpLeft);
+  *right = (hat == kHatRight || hat == kHatUpRight || hat == kHatDownRight);
+}
+
+// The core legality invariant: a hat may never report a direction the player
+// is not actually holding. This is what catches a wrong-but-legal diagonal
+// (e.g. reporting UpRight for an Up+Left press) that "hat <= kHatUpLeft" on
+// its own cannot - every hat value is in range, just the wrong one.
+static bool hatMatchesHeld(uint8_t hat, bool up, bool down, bool left, bool right) {
+  bool iu, id, il, ir;
+  hatImplies(hat, &iu, &id, &il, &ir);
+  if (iu && !up) return false;
+  if (id && !down) return false;
+  if (il && !left) return false;
+  if (ir && !right) return false;
+  return true;
+}
+
 static void testSocdSingleDirections() {
   std::printf("socd: single directions pass through on every policy\n");
   for (uint8_t p = kSocdNeutral; p <= kSocdUpPriority; p++) {
@@ -117,6 +139,16 @@ static void testSocdFirstInput() {
   check(socdResolve(false, false, false, true, kSocdFirstInput, m) == kHatRight, "left released");
 }
 
+// Task 9 deserialises the policy byte from an SD-card profile, so a corrupt
+// or future/unknown value must not crash or invent a side - it must degrade
+// to neutral. Both directions must be held to actually exercise the switch's
+// default branch; a single direction never reaches it.
+static void testSocdUnknownPolicyDegradesToNeutral() {
+  std::printf("socd: unknown policy value (corrupt profile) degrades to neutral\n");
+  SocdMemory m;
+  check(socdResolve(false, false, true, true, 99, m) == kHatCenter, "policy=99 -> center");
+}
+
 // Regression guard for mutation: kSocdFirstInput's "both arrived together"
 // fall-through replaced with an unconditional `else winner = 1;`. Neither
 // direction was held before this poll, so there is no "first" - the tie must
@@ -167,14 +199,108 @@ static void testSocdFirstInputReleaseThenRepress() {
         "right was first this time, keeps it");
 }
 
+// Maps a hat produced while driving only ONE axis (so the result is always
+// Center or one of that axis's two sides) to what the OTHER axis's driver
+// should report for the identical press pattern. No diagonal is ever
+// reachable in this mapping because the undriven axis is held at
+// (false, false) throughout, which resolveAxis always resolves to 0.
+static uint8_t mirrorAcrossAxes(uint8_t oneAxisHat) {
+  switch (oneAxisHat) {
+    case kHatLeft: return kHatUp;
+    case kHatRight: return kHatDown;
+    default: return kHatCenter;
+  }
+}
+
+// resolveAxis is shared between the vertical and horizontal calls specifically
+// so both axes behave identically - nothing had verified that assumption for
+// the vertical axis under a stateful policy. Every existing stateful test
+// drives (false, false, left, right); this drives (up, down, false, false)
+// through the same press patterns under the same policy and checks the two
+// results mirror (left<->up, right<->down). UpPriority is excluded - it is
+// deliberately asymmetric (up beats down, but horizontal falls to neutral),
+// so it has no mirror to keep.
+static void testSocdAxisMirror() {
+  std::printf("socd: vertical axis mirrors horizontal (left<->up, right<->down) under symmetric policies\n");
+  const uint8_t kSymmetricPolicies[] = {kSocdNeutral, kSocdLastInput, kSocdFirstInput};
+  for (uint8_t policy : kSymmetricPolicies) {
+    for (int bits1 = 0; bits1 < 4; bits1++) {
+      for (int bits2 = 0; bits2 < 4; bits2++) {
+        bool a1 = bits1 & 1, b1 = bits1 & 2;
+        bool a2 = bits2 & 1, b2 = bits2 & 2;
+
+        SocdMemory mh, mv;
+        uint8_t h1 = socdResolve(false, false, a1, b1, policy, mh);
+        uint8_t v1 = socdResolve(a1, b1, false, false, policy, mv);
+        uint8_t h2 = socdResolve(false, false, a2, b2, policy, mh);
+        uint8_t v2 = socdResolve(a2, b2, false, false, policy, mv);
+
+        char d[96];
+        std::snprintf(d, sizeof d, "policy=%s a1=%d b1=%d a2=%d b2=%d h=(%u,%u) v=(%u,%u)",
+                      policyName(policy), a1, b1, a2, b2, h1, h2, v1, v2);
+        check(mirrorAcrossAxes(h1) == v1 && mirrorAcrossAxes(h2) == v2,
+              "vertical result mirrors horizontal result", d);
+      }
+    }
+  }
+}
+
+// Regression guard for the untested `winner = 0;` store in the kSocdNeutral /
+// default case: the settings screen can change SOCD policy while the player
+// is still holding both directions. Left is held first under last-input
+// (right wins), then the policy switches to neutral WHILE STILL HOLDING
+// BOTH - the standing "right" winner must be cleared, not just masked for
+// one poll, or the next policy switch (to first-input) would read it back
+// and treat right as having been there first when it demonstrably was not.
+static void testSocdPolicySwitchMidHoldReresolves() {
+  std::printf("socd: switching policy mid-hold re-resolves from scratch, not from a stale winner\n");
+  SocdMemory m;
+  check(socdResolve(false, false, true, false, kSocdLastInput, m) == kHatLeft,
+        "left alone under last-input");
+  check(socdResolve(false, false, true, true, kSocdLastInput, m) == kHatRight,
+        "right added, right wins (last-input)");
+  check(socdResolve(false, false, true, true, kSocdNeutral, m) == kHatCenter,
+        "switch to neutral mid-hold: standing winner is cleared, not carried over");
+  check(socdResolve(false, false, true, true, kSocdFirstInput, m) == kHatCenter,
+        "switch to first-input mid-hold: no first-presser exists post-clear, stays neutral");
+}
+
+// Regression guard for the untested `winner = 0;` store in the kSocdUpPriority
+// case, on the vertical axis (the only axis that ever reaches it - see
+// socdResolve's hPolicy remap). Down wins under last-input, then the policy
+// switches to up-priority while still holding both (up correctly wins,
+// unconditionally, whether or not the store fires) - the store only becomes
+// observable on the NEXT switch back to last-input, which must see a cleared
+// winner and re-resolve to neutral rather than replaying the stale "down".
+static void testSocdUpPriorityStoreResetsOnPolicySwitch() {
+  std::printf("socd: switching to up-priority mid-hold clears the standing winner too\n");
+  SocdMemory m;
+  check(socdResolve(true, false, false, false, kSocdLastInput, m) == kHatUp,
+        "up alone under last-input");
+  check(socdResolve(true, true, false, false, kSocdLastInput, m) == kHatDown,
+        "down added, down wins (last-input)");
+  check(socdResolve(true, true, false, false, kSocdUpPriority, m) == kHatUp,
+        "switch to up-priority mid-hold: up wins outright");
+  check(socdResolve(true, true, false, false, kSocdLastInput, m) == kHatCenter,
+        "switch back to last-input: standing winner was cleared, not left at 'down'");
+}
+
 // Exhaustive sweep over PAIRS of polls: one SocdMemory is shared across both
-// calls in a pair (hoisted out of the per-poll resolve), so this walks the
-// persistent-winner state Last/First exist for - not just fresh-memory,
-// first-poll state. 4 policies x 16 starting combos x 16 following combos =
-// 1024 poll pairs. The property under test (every hat stays in 0..8) is
-// structurally hard to violate on its own; the point of sweeping transitions
-// is coverage of the state-carrying code paths that the mutation tests above
-// found gaps in, not the assertion's strength in isolation.
+// calls in a pair (hoisted out of the per-poll resolve), so this reaches the
+// prev-state seeding and the earliest a standing winner can be SET (poll 2)
+// - state a fresh-memory-per-combo sweep never reaches.
+//
+// It does NOT reach a poll that READS a previously-set winner back: the
+// earliest that happens is poll 3 (set on poll 2, read on poll 3), and a
+// two-poll sweep structurally can't get there - from a reset, "both held"
+// always means both sides are new, so poll 1 of any pair can never SET a
+// winner either. That state is exercised by the named regression tests
+// above and by testSocdPolicySwitchMidHoldReresolves /
+// testSocdUpPriorityStoreResetsOnPolicySwitch below, not by this sweep. What
+// this sweep buys is breadth: every policy x every one-step transition,
+// checked against the invariants below, not depth into the state machine.
+//
+// 4 policies x 16 starting combos x 16 following combos = 1024 poll pairs.
 static void testSocdAllTransitionsLegal() {
   const int kPolicies = 4, kCombos = 16;
   std::printf("socd: state transitions stay legal (%d policies x %d x %d = %d poll pairs)\n",
@@ -183,15 +309,21 @@ static void testSocdAllTransitionsLegal() {
     for (int bits1 = 0; bits1 < kCombos; bits1++) {
       for (int bits2 = 0; bits2 < kCombos; bits2++) {
         SocdMemory m;
-        uint8_t hat1 = socdResolve(bits1 & 1, bits1 & 2, bits1 & 4, bits1 & 8, p, m);
-        uint8_t hat2 = socdResolve(bits2 & 1, bits2 & 2, bits2 & 4, bits2 & 8, p, m);
+        bool up1 = bits1 & 1, down1 = bits1 & 2, left1 = bits1 & 4, right1 = bits1 & 8;
+        bool up2 = bits2 & 1, down2 = bits2 & 2, left2 = bits2 & 4, right2 = bits2 & 8;
+        uint8_t hat1 = socdResolve(up1, down1, left1, right1, p, m);
+        uint8_t hat2 = socdResolve(up2, down2, left2, right2, p, m);
 
         char b1[8], b2[8], d[96];
         bitsName(bits1, b1, sizeof b1);
         bitsName(bits2, b2, sizeof b2);
         std::snprintf(d, sizeof d, "policy=%s %s->%s hat1=%u hat2=%u",
                       policyName(p), b1, b2, hat1, hat2);
-        check(hat1 <= kHatUpLeft && hat2 <= kHatUpLeft, "both polls in a transition stay legal", d);
+        bool legal = hat1 <= kHatUpLeft && hat2 <= kHatUpLeft;
+        bool noPhantomDirection = hatMatchesHeld(hat1, up1, down1, left1, right1) &&
+                                   hatMatchesHeld(hat2, up2, down2, left2, right2);
+        check(legal && noPhantomDirection,
+              "both polls stay legal and never report an unheld direction", d);
       }
     }
   }
@@ -205,11 +337,15 @@ int main() {
   testSocdUpPriority();
   testSocdLastInput();
   testSocdFirstInput();
+  testSocdUnknownPolicyDegradesToNeutral();
 
   std::printf("\n[host] SocdCleaner: persistent-winner state across polls\n");
   testSocdFirstInputSimultaneousStaysCenter();
   testSocdLastInputSimultaneousKeepsStandingWinner();
   testSocdFirstInputReleaseThenRepress();
+  testSocdAxisMirror();
+  testSocdPolicySwitchMidHoldReresolves();
+  testSocdUpPriorityStoreResetsOnPolicySwitch();
 
   std::printf("\n[host] SocdCleaner: exhaustive transition sweep\n");
   testSocdAllTransitionsLegal();
