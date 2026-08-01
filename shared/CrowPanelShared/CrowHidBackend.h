@@ -61,6 +61,12 @@ class HidBackend {
   void gamepadState(uint8_t hat, uint32_t buttons);
   bool gamepadLive() const;
   uint32_t gamepadReports() const;
+  // Forces the next gamepadState() call to send regardless of change
+  // detection. Wired automatically to the USB mount event (see .cpp) so a
+  // held input survives a physical re-enumeration (cable jiggle, host
+  // resume-from-sleep) instead of leaving the host stuck on a stale state.
+  // Also callable directly if a project ever needs a manual resync.
+  void resyncGamepad();
 
   // Fire a macro slot by kind (Combo / Consumer / Text).
   void fireMacro(const MacroSlot &slot);
@@ -90,6 +96,10 @@ class HidBackend {
   Print *log_ = nullptr;
   EventLog *events_ = nullptr;
   const char *nvsNamespace_ = "crowhid";
+  // Display-only report counter. gamepadState() increments this from the
+  // stick task while the UI task reads it via reportsSent(); it is a plain
+  // uint32_t with no synchronization, so a race can drop an increment. That
+  // is fine for a status-bar counter — do not treat it as an exact count.
   uint32_t reports_ = 0;
   uint32_t moves_ = 0;  // mouse-move count (kept out of reports_ so the status
                         // bar does not repaint on every trackpad move)

@@ -3,12 +3,36 @@
 #include <Preferences.h>
 #include <CrowPanelShared.h>  // EventLog
 
+#if CROW_GAMEPAD_USB_LIVE
+#include <USB.h>
+#endif
+
 namespace {
 int8_t clamp8(int16_t v) {
   if (v > 127) return 127;
   if (v < -127) return -127;
   return (int8_t)v;
 }
+
+#if CROW_GAMEPAD_USB_LIVE
+// USB.onEvent()'s callback is a plain esp_event_handler_t free-function
+// pointer, not a member pointer, and ESPUSB::onEvent() always registers the
+// USB singleton itself as the handler arg -- there is no way to thread a
+// HidBackend* through that registration call. This file-static pointer is
+// the accepted workaround: set once in HidBackend::begin(), read once here.
+// It is only ever non-null on a native-USB-gamepad build, where exactly one
+// HidBackend is expected to own the gamepad.
+HidBackend *gGamepadResyncTarget = nullptr;
+
+// Fires from tud_mount_cb() (see cores/esp32/USB.cpp) whenever the USB
+// device re-enumerates with the host -- including a cable jiggle or a host
+// resume-from-sleep, not just first boot. Clears the cached gamepad state so
+// the next gamepadState() call resends unconditionally, even if the panel's
+// own idea of the state did not change, because the host's idea of it did.
+void onGamepadUsbMounted(void *, esp_event_base_t, int32_t, void *) {
+  if (gGamepadResyncTarget) gGamepadResyncTarget->resyncGamepad();
+}
+#endif
 }  // namespace
 
 String hidModPrefix(uint8_t mods) {
@@ -47,6 +71,23 @@ void HidBackend::begin(Print *log, EventLog *events, const char *bleName,
   ble_.setDeviceName(bleName);
   usb_.begin();
   ble_.begin();
+#if CROW_GAMEPAD_USB_LIVE
+  // Register before gamepad_.begin() starts the USB stack below, not after:
+  // gamepad_.begin() calls USB.begin(), which can fire the mount event from
+  // the TinyUSB task as soon as the host enumerates. Registering first closes
+  // the (largely theoretical, since enumeration is slow) window where that
+  // first event could fire before a handler exists to catch it.
+  gGamepadResyncTarget = this;
+  USB.onEvent(ARDUINO_USB_STARTED_EVENT, onGamepadUsbMounted);
+#endif
+  // Eager, not lazy: gamepad_.begin() -> USBHID::begin() -> USB.begin() does
+  // heap allocation (semaphores/mutex) and spins up the TinyUSB device task.
+  // That is fine here on the setup-time caller, and must never happen on
+  // gamepadState()'s hot path (a high-priority FreeRTOS task where heap
+  // allocation is forbidden) -- gamepadState() only keeps a belt-and-braces
+  // guard in case begin() was skipped. In mock mode this is a no-op.
+  gamepad_.begin();
+  gamepadBegun_ = true;
   loadOutput();
   if (log_) {
     log_->print("[hid] output=");
@@ -164,12 +205,21 @@ void HidBackend::tapKey(uint8_t mods, uint8_t key) {
 }
 
 void HidBackend::gamepadState(uint8_t hat, uint32_t buttons) {
+  // Belt-and-braces only: begin() already calls gamepad_.begin() eagerly at
+  // setup time, specifically so this never has to run on this call's own
+  // task (the stick task is high-priority FreeRTOS, where the heap
+  // allocation inside a live begin() is forbidden). This guard exists only
+  // to avoid a dropped state if a caller ever invokes gamepadState() without
+  // going through HidBackend::begin() first -- it must never be the path
+  // that actually fires in production.
   if (!gamepadBegun_) {
     gamepad_.begin();
     gamepadBegun_ = true;
   }
   // Change detection: the stick task calls this every poll, and an unchanged
-  // state must not cost a USB report.
+  // state must not cost a USB report. resyncGamepad() (wired to the USB
+  // mount event) clears gamepadStateValid_ so a held input still gets
+  // resent after the host re-enumerates and forgets it.
   if (gamepadStateValid_ && hat == lastHat_ && buttons == lastButtons_) return;
   lastHat_ = hat;
   lastButtons_ = buttons;
@@ -181,6 +231,8 @@ void HidBackend::gamepadState(uint8_t hat, uint32_t buttons) {
 bool HidBackend::gamepadLive() const { return gamepad_.ready(); }
 
 uint32_t HidBackend::gamepadReports() const { return gamepad_.reports(); }
+
+void HidBackend::resyncGamepad() { gamepadStateValid_ = false; }
 
 void HidBackend::typeText(const String &text) {
   if (text.length() == 0) return;
