@@ -3034,6 +3034,38 @@ git commit -m "docs(23): add Cypher Stick docs, proof-matrix row, and flag-matri
 - [ ] `CROW_TOUCH_SAMPLE_MS` still defaults to `8` in `AppConfig.h`, so no existing project's touch behaviour changed
 - [ ] Proof state recorded as `compile-ready` everywhere, with no hardware claims
 
+## Observed on hardware, 2026-08-01 (Task 7 build) — UNRESOLVED
+
+First flash to a real CrowPanel. `USBMode=default` with
+`-DUSE_DISPLAY=1 -DUSE_USB_GAMEPAD=1 -DCROW_TOUCH_SAMPLE_MS=2`, 506496 bytes,
+hash verified, hard reset.
+
+**Result: backlight on, screen blank, and the device does not enumerate on USB
+at all** — no HID gamepad, no CDC serial port.
+
+The two symptoms together suggest `setup()` does not complete. The backlight is
+raised inside `CrowDisplay::begin()`, which runs *before* `gHid.begin()` (and
+therefore before `USB.begin()`), so a stall in or shortly after display bringup
+would produce exactly this: light on, nothing drawn, no USB.
+
+Candidates, in the order worth checking:
+
+1. **`CrowDisplay::begin(..., manualFlush=true)`.** `DisplayBringup.cpp:203`
+   does call `flush()` to make the status screen appear, so a blank panel means
+   either that path did not run or the panel never finished init. Try
+   `manualFlush=false` first — it is a one-word change and isolates the whole
+   question.
+2. **A hang in display bringup itself.** Project 15 hit an indefinite hang from
+   ordering in `setup()` (SD after display); the shape here is similar even if
+   the cause is not.
+3. **`USB.begin()` never reached.** If 1 or 2 is the cause this follows
+   automatically and is not a separate bug.
+
+Do not attribute this to the gamepad path without evidence — the gamepad code
+runs after the suspected stall point, so it is more likely a victim than a
+cause. **No hardware claim of any kind may be made for this project until this
+is understood.**
+
 ## First things to check when hardware is available
 
 In order, because each depends on the previous:
