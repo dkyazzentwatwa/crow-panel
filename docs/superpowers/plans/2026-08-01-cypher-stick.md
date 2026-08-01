@@ -206,6 +206,27 @@ git commit -m "feat(23): scaffold Cypher Stick project"
 
 The hat is a single 0–8 enum, so left+right is unrepresentable on the wire. This code only decides *which* legal value results.
 
+> **Revised after code review (commit `2369366`). The shipped source is the
+> source of truth, not the listings below.** Two changes worth knowing if you
+> read this task for reference:
+>
+> 1. **`resolveAxis()` no longer takes an `upPriorityWinsA` flag.** The
+>    asymmetry is lifted to the call site — `hPolicy = (policy ==
+>    kSocdUpPriority) ? kSocdNeutral : policy` for the horizontal axis — keeping
+>    all policy logic in one switch and scaling to a future policy without
+>    another bool.
+> 2. **The exhaustive test was rebuilt.** The original swept 16 combos × 4
+>    policies with a *fresh* `SocdMemory` each iteration, so it only explored
+>    first-poll state and asserted a property (`hat <= 8`) that is structurally
+>    impossible to violate. Mutation testing found three real code mutations
+>    surviving all 96 checks. It now sweeps 1024 *transitions* with state carried
+>    across each poll pair, plus three named regression tests for the tie-breaks.
+>    1068 checks.
+>
+> The lesson generalises to every later task: a test that passes against both
+> the correct and the mutated implementation is not a test. Assert behaviour,
+> not invariants the types already guarantee.
+
 **Files:**
 - Create: `in-progress/23-cypher-stick/src/SocdCleaner.h`
 - Create: `in-progress/23-cypher-stick/src/SocdCleaner.cpp`
@@ -1261,6 +1282,13 @@ void StickEngine::poll() {
   }
 
   const StickState s = stickResolve(*profile_, hits, hitCount);
+
+  // socdResolve() MUST be called exactly once per input frame: the Last/First
+  // policies infer press order from the transition between calls, so a second
+  // call for the same frame sees prev == current and silently mis-resolves,
+  // with no error anywhere. Anything else that wants the current direction
+  // (a debug overlay, the renderer) reads hat_ below — it never re-calls.
+  // socd_ is owned by this task alone and is not thread-safe.
   const uint8_t hat = socdResolve(s.up, s.down, s.left, s.right,
                                   profile_->socdPolicy, socd_);
 
