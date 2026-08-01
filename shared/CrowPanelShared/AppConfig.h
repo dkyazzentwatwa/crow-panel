@@ -79,6 +79,15 @@
 #define USE_BLE_HID 0
 #endif
 
+// USE_USB_GAMEPAD=1 exposes a native USB gamepad (TinyUSB HID, 32 buttons +
+// 8-way hat) for project 23. Like USE_USB_HID it needs an USBMode=default
+// (USB-OTG) FQBN; under the suite default USBMode=hwcdc it falls back to MOCK.
+// It gates shared-library code, so real builds MUST pass -DUSE_USB_GAMEPAD=1
+// (see the three-layer flag rule in CLAUDE.md).
+#ifndef USE_USB_GAMEPAD
+#define USE_USB_GAMEPAD 0
+#endif
+
 // Project 05 (CypherDrive) active field-tool paths. USE_WIFI_ACTIVE turns the
 // Wi-Fi scanner active (probe scan) and unlocks join + client tools through the
 // hosted C6 (also needs USE_WIFI so the shared CrowNetworkClient join/HTTP path

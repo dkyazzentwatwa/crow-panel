@@ -12,6 +12,7 @@
 #include "CrowHidKeycodes.h"
 #include "CrowUsbTransport.h"
 #include "CrowBleTransport.h"
+#include "CrowGamepadTransport.h"
 #include "CrowHidBackend.h"
 
 #endif
