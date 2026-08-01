@@ -1477,11 +1477,11 @@ void loop() {
 - [ ] **Step 4: Compile both mock and live**
 
 ```bash
-CTAGS_WORKAROUND=1 arduino-cli compile --fqbn "esp32:esp32:esp32p4:USBMode=hwcdc,PSRAM=enabled,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,UploadSpeed=921600" --libraries shared --build-path _arduino-build/23-cypher-stick --build-property tools.ctags.cmd.path=/usr/bin/true --build-property compiler.cpp.extra_flags="-DUSE_DISPLAY=1" in-progress/23-cypher-stick
+CTAGS_WORKAROUND=1 arduino-cli compile --fqbn "esp32:esp32:esp32p4:USBMode=hwcdc,PSRAM=enabled,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,UploadSpeed=921600" --libraries shared --build-path _arduino-build/23-cypher-stick --build-property tools.ctags.cmd.path=/usr/bin/true --build-property compiler.cpp.extra_flags="-DUSE_DISPLAY=1 -DCROW_TOUCH_SAMPLE_MS=2" in-progress/23-cypher-stick
 ```
 
 ```bash
-CTAGS_WORKAROUND=1 arduino-cli compile --fqbn "esp32:esp32:esp32p4:USBMode=default,PSRAM=enabled,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,UploadSpeed=921600" --libraries shared --build-path _arduino-build/23-cypher-stick-live --build-property tools.ctags.cmd.path=/usr/bin/true --build-property compiler.cpp.extra_flags="-DUSE_DISPLAY=1 -DUSE_USB_GAMEPAD=1" in-progress/23-cypher-stick
+CTAGS_WORKAROUND=1 arduino-cli compile --fqbn "esp32:esp32:esp32p4:USBMode=default,PSRAM=enabled,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,UploadSpeed=921600" --libraries shared --build-path _arduino-build/23-cypher-stick-live --build-property tools.ctags.cmd.path=/usr/bin/true --build-property compiler.cpp.extra_flags="-DUSE_DISPLAY=1 -DUSE_USB_GAMEPAD=1 -DCROW_TOUCH_SAMPLE_MS=2" in-progress/23-cypher-stick
 ```
 
 Expected: both green, and the second with **no** `#warning` about USBMode.
@@ -1575,7 +1575,7 @@ void loop() {
 - [ ] **Step 4: Compile**
 
 ```bash
-CTAGS_WORKAROUND=1 arduino-cli compile --fqbn "esp32:esp32:esp32p4:USBMode=default,PSRAM=enabled,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,UploadSpeed=921600" --libraries shared --build-path _arduino-build/23-cypher-stick-live --build-property tools.ctags.cmd.path=/usr/bin/true --build-property compiler.cpp.extra_flags="-DUSE_DISPLAY=1 -DUSE_USB_GAMEPAD=1" in-progress/23-cypher-stick
+CTAGS_WORKAROUND=1 arduino-cli compile --fqbn "esp32:esp32:esp32p4:USBMode=default,PSRAM=enabled,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,UploadSpeed=921600" --libraries shared --build-path _arduino-build/23-cypher-stick-live --build-property tools.ctags.cmd.path=/usr/bin/true --build-property compiler.cpp.extra_flags="-DUSE_DISPLAY=1 -DUSE_USB_GAMEPAD=1 -DCROW_TOUCH_SAMPLE_MS=2" in-progress/23-cypher-stick
 ```
 
 Expected: green.
@@ -2214,7 +2214,7 @@ void loop() {
 - [ ] **Step 4: Compile**
 
 ```bash
-CTAGS_WORKAROUND=1 arduino-cli compile --fqbn "esp32:esp32:esp32p4:USBMode=default,PSRAM=enabled,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,UploadSpeed=921600" --libraries shared --build-path _arduino-build/23-cypher-stick-live --build-property tools.ctags.cmd.path=/usr/bin/true --build-property compiler.cpp.extra_flags="-DUSE_DISPLAY=1 -DUSE_USB_GAMEPAD=1" in-progress/23-cypher-stick
+CTAGS_WORKAROUND=1 arduino-cli compile --fqbn "esp32:esp32:esp32p4:USBMode=default,PSRAM=enabled,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,UploadSpeed=921600" --libraries shared --build-path _arduino-build/23-cypher-stick-live --build-property tools.ctags.cmd.path=/usr/bin/true --build-property compiler.cpp.extra_flags="-DUSE_DISPLAY=1 -DUSE_USB_GAMEPAD=1 -DCROW_TOUCH_SAMPLE_MS=2" in-progress/23-cypher-stick
 ```
 
 Expected: green.
@@ -2462,7 +2462,7 @@ void loop() {
 - [ ] **Step 4: Compile**
 
 ```bash
-CTAGS_WORKAROUND=1 arduino-cli compile --fqbn "esp32:esp32:esp32p4:USBMode=default,PSRAM=enabled,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,UploadSpeed=921600" --libraries shared --build-path _arduino-build/23-cypher-stick-live --build-property tools.ctags.cmd.path=/usr/bin/true --build-property compiler.cpp.extra_flags="-DUSE_DISPLAY=1 -DUSE_USB_GAMEPAD=1" in-progress/23-cypher-stick
+CTAGS_WORKAROUND=1 arduino-cli compile --fqbn "esp32:esp32:esp32p4:USBMode=default,PSRAM=enabled,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,UploadSpeed=921600" --libraries shared --build-path _arduino-build/23-cypher-stick-live --build-property tools.ctags.cmd.path=/usr/bin/true --build-property compiler.cpp.extra_flags="-DUSE_DISPLAY=1 -DUSE_USB_GAMEPAD=1 -DCROW_TOUCH_SAMPLE_MS=2" in-progress/23-cypher-stick
 ```
 
 Expected: green.
@@ -2509,7 +2509,7 @@ Register:
 - [ ] **Step 2: Compile and commit**
 
 ```bash
-CTAGS_WORKAROUND=1 arduino-cli compile --fqbn "esp32:esp32:esp32p4:USBMode=hwcdc,PSRAM=enabled,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,UploadSpeed=921600" --libraries shared --build-path _arduino-build/23-cypher-stick --build-property tools.ctags.cmd.path=/usr/bin/true --build-property compiler.cpp.extra_flags="-DUSE_DISPLAY=1" in-progress/23-cypher-stick
+CTAGS_WORKAROUND=1 arduino-cli compile --fqbn "esp32:esp32:esp32p4:USBMode=hwcdc,PSRAM=enabled,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,UploadSpeed=921600" --libraries shared --build-path _arduino-build/23-cypher-stick --build-property tools.ctags.cmd.path=/usr/bin/true --build-property compiler.cpp.extra_flags="-DUSE_DISPLAY=1 -DCROW_TOUCH_SAMPLE_MS=2" in-progress/23-cypher-stick
 ```
 
 ```bash
