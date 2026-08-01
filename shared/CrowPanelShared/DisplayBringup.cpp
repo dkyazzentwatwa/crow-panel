@@ -94,7 +94,7 @@ void sampleTouch() {
   // Elecrow's official touch example and avoids depending on the IRQ trigger
   // polarity.
   uint32_t now = millis();
-  if (touchSampled && now - lastTouchSampleMs < 8) {
+  if (touchSampled && now - lastTouchSampleMs < CROW_TOUCH_SAMPLE_MS) {
     return;
   }
   touchSampled = true;

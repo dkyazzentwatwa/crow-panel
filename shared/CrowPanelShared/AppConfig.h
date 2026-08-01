@@ -45,6 +45,21 @@
 #define USE_AUDIO 0
 #endif
 
+// Project 24 Acid Glass visual instrument. SD indexing, PCM playback/analyzer,
+// and the hosted-C6 browser remote are independently gated so the mock-first
+// baseline and display-only demo stay useful without peripherals.
+#ifndef USE_ACID_GLASS_SD
+#define USE_ACID_GLASS_SD 0
+#endif
+
+#ifndef USE_ACID_GLASS_AUDIO
+#define USE_ACID_GLASS_AUDIO 0
+#endif
+
+#ifndef USE_ACID_GLASS_REMOTE
+#define USE_ACID_GLASS_REMOTE 0
+#endif
+
 #ifndef USE_WIFI_SCAN
 #define USE_WIFI_SCAN 0
 #endif
@@ -173,6 +188,14 @@
 // a single tap can fire several times and a drag jumps around.
 #ifndef CROW_TOUCH_RELEASE_DEBOUNCE_MS
 #define CROW_TOUCH_RELEASE_DEBOUNCE_MS 30
+#endif
+
+// Minimum gap between real GT911 I2C samples. Callers polling faster than this
+// receive the cached sample. 8 ms suits UI work; project 23 lowers it to 2 ms
+// because catching a fresh report late is pure added input latency. This gates
+// shared-library code, so a project changing it MUST pass -D.
+#ifndef CROW_TOUCH_SAMPLE_MS
+#define CROW_TOUCH_SAMPLE_MS 8
 #endif
 
 // Size of the SerialCommandRouter command table. Serial is a first-class

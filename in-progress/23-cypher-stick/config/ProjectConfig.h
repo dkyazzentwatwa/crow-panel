@@ -42,6 +42,40 @@
 #define STICK_POLL_MS 2
 #endif
 
+// GT911 touch calibration for StickTouch, carried over unchanged from project
+// 21's CYPHER_KEYS_TOUCH_* defaults (see KeysTouch.cpp) — override per board
+// after a `touch` diagnostic run.
+#ifndef STICK_TOUCH_MIN_X
+#define STICK_TOUCH_MIN_X 0
+#endif
+#ifndef STICK_TOUCH_MAX_X
+#define STICK_TOUCH_MAX_X 1023
+#endif
+#ifndef STICK_TOUCH_MIN_Y
+#define STICK_TOUCH_MIN_Y 0
+#endif
+#ifndef STICK_TOUCH_MAX_Y
+#define STICK_TOUCH_MAX_Y 599
+#endif
+#ifndef STICK_TOUCH_SWAP_XY
+#define STICK_TOUCH_SWAP_XY 0
+#endif
+#ifndef STICK_TOUCH_INVERT_X
+#define STICK_TOUCH_INVERT_X 0
+#endif
+#ifndef STICK_TOUCH_INVERT_Y
+#define STICK_TOUCH_INVERT_Y 0
+#endif
+
+// Multi-contact matching: the GT911 keeps a track id per finger, but on some
+// panels those ids churn between samples. An unmatched incoming point that
+// lands within this many mapped pixels of an unmatched live contact is
+// treated as the same finger continuing, not as a new press. Carried over
+// unchanged from project 21's CYPHER_KEYS_TOUCH_MATCH_RADIUS.
+#ifndef STICK_TOUCH_MATCH_RADIUS
+#define STICK_TOUCH_MATCH_RADIUS 48
+#endif
+
 #include <AppConfig.h>
 
 #endif
