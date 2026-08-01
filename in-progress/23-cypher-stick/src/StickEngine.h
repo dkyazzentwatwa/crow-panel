@@ -25,9 +25,20 @@ class StickEngine {
   void poll();
 
   // Diagnostics, read from the render side. Plain scalars so reading them from
-  // another core is safe without a lock.
+  // another core is safe without a lock -- but that only covers the reads.
+  // resetBench() below is a cross-core WRITE that races poll()'s own
+  // read-modify-write of worstPollUs_: an interleaved poll can land its
+  // stale "worse" value back after the reset clears it. Benign for a
+  // diagnostic counter -- do not treat it as an exact reset (same caveat as
+  // HidBackend::reports_, see CrowHidBackend.h).
   uint32_t polls() const { return polls_; }
-  uint32_t sends() const { return sends_; }
+  // Engine-observed state TRANSITIONS, not USB reports sent. These diverge:
+  // HidBackend sends unconditionally on the very first gamepadState() call
+  // (gamepadStateValid_ starts false) and again after any USB re-enumeration
+  // (resyncGamepad() clears that flag), neither of which changes hat_/
+  // buttons_ here. Read gHid.gamepadReports() for the actual wire count; the
+  // delta between the two is itself a useful resync diagnostic.
+  uint32_t changes() const { return changes_; }
   uint8_t hat() const { return hat_; }
   uint32_t buttons() const { return buttons_; }
   // Per-key physical touch, independent of SOCD. The renderer highlights from
@@ -48,7 +59,7 @@ class StickEngine {
   SocdMemory socd_;
   bool enabled_ = true;
   uint32_t polls_ = 0;
-  uint32_t sends_ = 0;
+  uint32_t changes_ = 0;
   uint8_t hat_ = 0;
   uint32_t buttons_ = 0;
   uint32_t keysHeld_ = 0;

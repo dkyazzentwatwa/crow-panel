@@ -41,8 +41,16 @@ static void cmdStatus(const String &args) {
   Serial.print(gEngine.buttons(), HEX);
   Serial.print(" polls=");
   Serial.print(gEngine.polls());
-  Serial.print(" sends=");
-  Serial.println(gEngine.sends());
+  Serial.print(" changes=");
+  Serial.print(gEngine.changes());
+  // changes= (engine-observed hat/button transitions) and reports= (actual
+  // USB reports HidBackend has sent) are NOT the same number by design: the
+  // first gamepadState() call always sends (gamepadStateValid_ starts
+  // false) and a USB re-enumeration forces a resync send, neither of which
+  // is a hat/button change on our side. A growing gap here is a normal
+  // resync signal, not a bug.
+  Serial.print(" reports=");
+  Serial.println(gHid.gamepadReports());
 }
 
 static void cmdBench(const String &args) {
@@ -51,6 +59,9 @@ static void cmdBench(const String &args) {
   Serial.print(gEngine.worstPollUs());
   Serial.println(" us");
   Serial.println("NOTE: excludes the GT911's own sense+report time (~10 ms at 100 Hz).");
+  Serial.println("NOTE: the FIRST reading after boot is inflated -- that poll forces an");
+  Serial.println("unthrottled GT911 read plus the initial neutral report; run `bench` once");
+  Serial.println("to clear it before trusting a steady-state number.");
   gEngine.resetBench();
 }
 
@@ -85,5 +96,12 @@ void setup() {
 
 void loop() {
   gEngine.poll();
+  // gHid.service() is deliberately not called here: it only drains pending
+  // key/consumer releases and mouse-move coalescing for the keyboard/mouse
+  // HID surfaces, neither of which gamepadState() uses (it bypasses
+  // tapKey()/kHoldMs entirely -- a fightstick is all holds). Nothing on this
+  // path ever creates a pending release for service() to flush. This stops
+  // being true the day keyboard-output mode lands alongside the gamepad
+  // path, at which point service() becomes required again.
   gRouter.poll();
 }

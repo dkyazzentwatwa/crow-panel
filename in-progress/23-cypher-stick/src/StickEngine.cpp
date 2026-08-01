@@ -16,19 +16,32 @@ void StickEngine::poll() {
 
   touch_.tick();
 
+  // contactCount tracks every LIVE contact fed into hits[], not confirmed
+  // hits: a palm landing between keys still occupies a slot and hit-tests to
+  // -1, which stickResolve() then drops. Don't read this as a hit tally.
   int hits[StickTouch::kMaxContacts];
-  int hitCount = 0;
+  int contactCount = 0;
   if (enabled_) {
     for (uint8_t i = 0; i < StickTouch::kMaxContacts; i++) {
       const StickTouch::Contact &c = touch_.contact(i);
       if (!c.active) continue;
+      // Hit-test against downX/downY (press position), not x/y (live
+      // position) -- a deliberate call, not a default. This panel has no
+      // tactile edge, which is the whole concept's documented weakness: a
+      // finger drifting during a long defensive hold must not silently slide
+      // off its key and drop a block mid-string, so once a contact lands on
+      // a key it owns that key for its entire life. The cost is real: no
+      // sliding between adjacent buttons (plink/piano inputs), which a
+      // physical stick supports and this can't. An annoying limitation beats
+      // a catastrophic one, so this loses that ability on purpose.
+      //
       // A contact landing outside every key returns -1 and is dropped by
       // stickResolve. That is the whole of our palm handling.
-      hits[hitCount++] = stickHitTest(*profile_, c.x, c.y);
+      hits[contactCount++] = stickHitTest(*profile_, c.downX, c.downY);
     }
   }
 
-  const StickState s = stickResolve(*profile_, hits, hitCount);
+  const StickState s = stickResolve(*profile_, hits, contactCount);
 
   // socdResolve() MUST be called exactly once per input frame: the Last/First
   // policies infer press order from the transition between calls, so a second
@@ -43,9 +56,10 @@ void StickEngine::poll() {
   if (hat != hat_ || s.buttons != buttons_) {
     hat_ = hat;
     buttons_ = s.buttons;
-    sends_++;
+    changes_++;
   }
-  // Called unconditionally; HidBackend does its own change detection.
+  // Called unconditionally; HidBackend does its own change detection (and
+  // that detection is NOT the same test as changes_ above -- see changes()).
   hid_->gamepadState(hat, s.buttons);
 
   polls_++;
