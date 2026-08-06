@@ -1,5 +1,5 @@
 // SCAFFOLD ONLY. No parsing, no display, no SD. This sketch exists to prove
-// the project compiles against the shared Serial UX before Task 2+ add the
+// the project compiles against the shared Serial UX; later work adds the
 // text pipeline, EPUB support, and the portrait DSI render path.
 
 #include "config/ProjectConfig.h"
@@ -15,7 +15,7 @@ void cmdStatus(const String &) {
 void cmdHistory(const String &) { eventLog.printHistory(Serial); }
 
 void cmdBooks(const String &) {
-  Serial.println(F("library: (empty scaffold — Task 8 adds sample books)"));
+  Serial.println(F("library: (empty — no books loaded yet)"));
 }
 
 void setup() {

@@ -22,4 +22,6 @@
 #define INKWELL_PAGE_H 1024
 #endif
 
+#include <AppConfig.h>
+
 #endif  // INKWELL_PROJECT_CONFIG_H

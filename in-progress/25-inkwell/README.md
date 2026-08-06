@@ -14,6 +14,8 @@ shared Serial UX (`help`, `status`, `history`) and a placeholder `books`
 command. No text parsing, no EPUB/plain-text support, and no display
 rendering exist yet — those land in later tasks.
 
+See the [technical reference](TECHNICAL.md).
+
 ## Serial commands
 
 At 115200 baud, Newline line ending:
@@ -21,7 +23,7 @@ At 115200 baud, Newline line ending:
 - `help` — list commands
 - `status` — scaffold and proof status
 - `history` — recent event history
-- `books` — placeholder; prints `library: (empty scaffold — Task 8 adds sample books)`
+- `books` — placeholder; prints `library: (empty — no books loaded yet)`
 
 ## Roadmap
 
