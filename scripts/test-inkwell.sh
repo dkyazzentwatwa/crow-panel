@@ -16,6 +16,7 @@ mkdir -p "$OUT"
 echo "Building Inkwell host tests with $CXX"
 "$CXX" -std=c++17 -O2 -Wall -Wextra -Werror \
   "$PROJECT/src/TxtParser.cpp" \
+  "$PROJECT/src/MarkdownParser.cpp" \
   "$PROJECT/test/host_main.cpp" \
   -o "$OUT/inkwell-tests"
 

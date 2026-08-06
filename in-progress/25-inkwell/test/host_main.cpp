@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <string>
 #include "../src/InkDoc.h"
+#include "../src/MarkdownParser.h"
 #include "../src/TxtParser.h"
 
 static int checks = 0;
@@ -77,11 +78,54 @@ static int testTxtLeadingSpaces() {
   return 0;
 }
 
+static int testMdHeadingsAndRule() {
+  auto b = Ink::parseMarkdown("# Title\n\nBody text.\n\n## Sub *head*\n\n---\n");
+  CHECK(b.size() == 4);
+  CHECK(b[0].type == Ink::BlockType::H1 && Ink::plainText(b[0]) == "Title");
+  CHECK(b[1].type == Ink::BlockType::Body);
+  CHECK(b[2].type == Ink::BlockType::H2 && Ink::plainText(b[2]) == "Sub head");
+  CHECK(b[3].type == Ink::BlockType::Rule);
+  return 0;
+}
+
+static int testMdInlineStyles() {
+  auto b = Ink::parseMarkdown("plain **bold** and *it* and `mono` mix");
+  CHECK(b.size() == 1);
+  const auto &runs = b[0].runs;
+  CHECK(runs.size() == 7);
+  CHECK(runs[1].text == "bold" && runs[1].bold && !runs[1].italic);
+  CHECK(runs[3].text == "it" && runs[3].italic);
+  CHECK(runs[5].text == "mono" && runs[5].mono);
+  return 0;
+}
+
+static int testMdListQuoteCode() {
+  auto b = Ink::parseMarkdown("- one\n- two\n  - nested\n\n> quoted\n\n```\ncode line\n```\n");
+  CHECK(b[0].type == Ink::BlockType::ListItem && b[0].listDepth == 1 && !b[0].ordered);
+  CHECK(b[2].listDepth == 2);
+  CHECK(b[3].type == Ink::BlockType::Quote && Ink::plainText(b[3]) == "quoted");
+  CHECK(b[4].type == Ink::BlockType::Code && Ink::plainText(b[4]) == "code line");
+  return 0;
+}
+
+static int testMdEdges() {
+  // Unterminated emphasis renders literally; links keep text; images drop.
+  auto b = Ink::parseMarkdown("a **broken\n\n[text](http://x) ![img](y)\n\n1. first\n2. second");
+  CHECK(Ink::plainText(b[0]) == "a **broken");
+  CHECK(Ink::plainText(b[1]) == "text");
+  CHECK(b[2].ordered && b[2].type == Ink::BlockType::ListItem);
+  return 0;
+}
+
 int main() {
   if (testTxtParagraphs()) return 1;
   if (testTxtEdges()) return 1;
   if (testTxtLeadingSpaces()) return 1;
   if (testStyleFor()) return 1;
+  if (testMdHeadingsAndRule()) return 1;
+  if (testMdInlineStyles()) return 1;
+  if (testMdListQuoteCode()) return 1;
+  if (testMdEdges()) return 1;
   std::printf("inkwell host tests: %d checks passed\n", checks);
   return 0;
 }
