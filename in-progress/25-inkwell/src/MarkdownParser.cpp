@@ -1,17 +1,45 @@
 #include "MarkdownParser.h"
 
+#include <algorithm>
 #include <cctype>
 
 namespace {
 
-void emit(std::vector<Ink::Run> &runs, std::string &buf, bool b, bool i, bool m) {
+// Window bounds for the link/image/tag lookaheads below. Without a cap, a
+// pathological run of unmatched '[' or '![' markers (no ']'/')' anywhere
+// later in the block) turns each marker's find() into an O(n) scan of the
+// remaining text, making the whole block O(n^2) -- measured ~18s for a
+// 512KB single-block input, which would trip the ESP32 task watchdog.
+// Bounding every scan to a fixed window keeps the block linear: each marker
+// costs at most kLinkWindow/kTagWindow work regardless of block size.
+constexpr size_t kLinkWindow = 512;
+constexpr size_t kTagWindow = 64;
+
+size_t findCharBounded(const std::string &s, char target, size_t from, size_t limit) {
+  size_t end = std::min(s.size(), limit);
+  for (size_t j = from; j < end; ++j)
+    if (s[j] == target) return j;
+  return std::string::npos;
+}
+
+// Finds the two-char sequence {a, b} within [from, limit).
+size_t findPairBounded(const std::string &s, char a, char b, size_t from, size_t limit) {
+  size_t end = std::min(s.size(), limit);
+  for (size_t j = from; j + 1 < end; ++j)
+    if (s[j] == a && s[j + 1] == b) return j;
+  return std::string::npos;
+}
+
+void emit(std::vector<Ink::Run> &runs, std::string &buf, bool bold, bool italic, bool mono) {
   if (buf.empty()) return;
-  runs.push_back({buf, b, i, m});
+  runs.push_back({buf, bold, italic, mono});
   buf.clear();
 }
 
-// Inline markdown -> runs. Emphasis must close within the block or it is
-// emitted literally (testMdEdges pins this).
+// Inline markdown -> runs. An opener with no closer marker ahead in the
+// block is emitted literally (testMdEdges pins this); the flanking checks
+// below can also force a literal emission even when a closer does exist
+// (e.g. "5 * 3", "snake_case_name").
 std::vector<Ink::Run> inlineRuns(const std::string &s) {
   std::vector<Ink::Run> runs;
   std::string buf;
@@ -56,23 +84,42 @@ std::vector<Ink::Run> inlineRuns(const std::string &s) {
       emit(runs, buf, bold, italic, false); italic = !italic; ++i; continue;
     }
     if (s[i] == '!' && i + 1 < s.size() && s[i + 1] == '[') {  // image: drop
-      size_t close = s.find(']', i);
-      size_t paren = close == std::string::npos ? std::string::npos : s.find(')', close);
+      size_t limit = i + kLinkWindow;
+      size_t close = findCharBounded(s, ']', i, limit);
+      size_t paren = close == std::string::npos ? std::string::npos
+                                                 : findCharBounded(s, ')', close, limit);
       if (paren != std::string::npos) { i = paren + 1; continue; }
     }
-    if (s[i] == '[') {  // link: keep text, drop target
-      size_t close = s.find("](", i);
-      size_t paren = close == std::string::npos ? std::string::npos : s.find(')', close);
+    if (s[i] == '[') {
+      // Link: keep text, drop target. Recursion depth is bounded at 2:
+      // findPairBounded is first-occurrence, so a '[' nested inside `inner`
+      // can open once more before its own scan runs out of window to find
+      // a "](" -- do not upgrade this to balanced-bracket matching without
+      // also adding an explicit depth cap.
+      size_t limit = i + kLinkWindow;
+      size_t close = findPairBounded(s, ']', '(', i, limit);
+      size_t paren = close == std::string::npos ? std::string::npos
+                                                 : findCharBounded(s, ')', close, limit);
       if (paren != std::string::npos) {
         std::string inner = s.substr(i + 1, close - i - 1);
-        for (const Ink::Run &r : inlineRuns(inner))
-          { emit(runs, buf, bold, italic, false); runs.push_back(r); }
+        for (const Ink::Run &r : inlineRuns(inner)) {
+          emit(runs, buf, bold, italic, false);
+          // The link text renders inside whatever style already surrounds
+          // the link markup (e.g. "**bold [link](u)**" keeps the link
+          // bold), so OR the enclosing state into each recursed run.
+          Ink::Run merged = r;
+          merged.bold = merged.bold || bold;
+          merged.italic = merged.italic || italic;
+          merged.mono = merged.mono || mono;
+          runs.push_back(merged);
+        }
         i = paren + 1; continue;
       }
     }
     if (s[i] == '<') {  // strip HTML tags, keep text between them
-      size_t close = s.find('>', i);
-      if (close != std::string::npos && close - i < 64) { i = close + 1; continue; }
+      size_t limit = i + kTagWindow;
+      size_t close = findCharBounded(s, '>', i, limit);
+      if (close != std::string::npos) { i = close + 1; continue; }
     }
     buf += s[i++];
   }
@@ -103,10 +150,12 @@ std::string readLine(const std::string &src, size_t i, size_t &lineStart, size_t
 
 // Trims leading/trailing spaces and tabs and collapses internal runs of
 // whitespace to a single space -- mirrors TxtParser's per-line handling.
+// A lone (non-CRLF) '\r' maps to a space exactly like TxtParser.cpp does,
+// so stray old-Mac-style carriage returns never leak into rendered text.
 std::string normalizeLine(const std::string &raw) {
   std::string line;
   for (char ch : raw) {
-    char c = (ch == '\t') ? ' ' : ch;
+    char c = (ch == '\t' || ch == '\r') ? ' ' : ch;
     if (c == ' ' && !line.empty() && line.back() == ' ') continue;
     line += c;
   }
@@ -187,6 +236,18 @@ bool isListLine(const std::string &line, bool &ordered, uint8_t &depth, std::str
   return true;
 }
 
+// True if `line` opens a fence/heading/rule/quote/list block rather than
+// plain paragraph text. Single source of truth for that classification --
+// shared by the main dispatch chain and the paragraph-continuation
+// lookahead so the same five-way test never has to be duplicated.
+bool startsBlock(const std::string &line) {
+  bool dOrdered = false;
+  uint8_t dDepth = 0;
+  std::string dContent, dQuote;
+  return isFenceLine(line) || headingLevel(line, dContent) > 0 || isRuleLine(line) ||
+         isQuoteLine(line, dQuote) || isListLine(line, dOrdered, dDepth, dContent);
+}
+
 // Runs the inline pass and trims a trailing whitespace-only tail run --
 // dropping a trailing image/link/tag can leave a bare space behind that a
 // styled block never intended to render (testMdEdges pins this).
@@ -220,79 +281,81 @@ std::vector<Block> parseMarkdown(const std::string &src) {
 
     if (normalizeLine(line).empty()) { i = nextI; continue; }
 
-    if (isFenceLine(line)) {
-      size_t offset = lineStart + firstNonBlank(line);
-      i = nextI;
-      std::string codeText;
-      bool first = true;
-      while (i < n) {
-        size_t ls, next2;
-        std::string codeLine = readLine(src, i, ls, next2);
-        if (isFenceLine(codeLine)) { i = next2; break; }
-        if (!first) codeText += '\n';
-        codeText += codeLine;
-        first = false;
-        i = next2;
-      }
-      Block b;
-      b.type = BlockType::Code;
-      b.srcOffset = (uint32_t)offset;
-      b.runs.push_back({codeText, false, false, true});
-      blocks.push_back(std::move(b));
-      continue;
-    }
-
-    std::string headingContent;
-    int level = headingLevel(line, headingContent);
-    if (level > 0) {
-      size_t offset = lineStart + firstNonBlank(line);
-      BlockType t = level == 1 ? BlockType::H1 : level == 2 ? BlockType::H2 : BlockType::H3;
-      blocks.push_back(makeBlock(t, offset, normalizeLine(headingContent)));
-      i = nextI;
-      continue;
-    }
-
-    if (isRuleLine(line)) {
-      Block b;
-      b.type = BlockType::Rule;
-      b.srcOffset = (uint32_t)(lineStart + firstNonBlank(line));
-      blocks.push_back(std::move(b));
-      i = nextI;
-      continue;
-    }
-
-    std::string quoteContent;
-    if (isQuoteLine(line, quoteContent)) {
-      size_t offset = lineStart + firstNonBlank(line);
-      std::string text = normalizeLine(quoteContent);
-      i = nextI;
-      while (i < n) {
-        size_t ls, next2;
-        std::string nl = readLine(src, i, ls, next2);
-        std::string qc;
-        if (!isQuoteLine(nl, qc)) break;
-        std::string nc = normalizeLine(qc);
-        if (!nc.empty()) {
-          if (!text.empty()) text += ' ';
-          text += nc;
+    if (startsBlock(line)) {
+      if (isFenceLine(line)) {
+        size_t offset = lineStart + firstNonBlank(line);
+        i = nextI;
+        std::string codeText;
+        bool first = true;
+        while (i < n) {
+          size_t ls, next2;
+          std::string codeLine = readLine(src, i, ls, next2);
+          if (isFenceLine(codeLine)) { i = next2; break; }
+          if (!first) codeText += '\n';
+          codeText += codeLine;
+          first = false;
+          i = next2;
         }
-        i = next2;
+        Block b;
+        b.type = BlockType::Code;
+        b.srcOffset = (uint32_t)offset;
+        b.runs.push_back({codeText, false, false, true});
+        blocks.push_back(std::move(b));
+        continue;
       }
-      blocks.push_back(makeBlock(BlockType::Quote, offset, text));
-      continue;
-    }
 
-    bool ordered = false;
-    uint8_t depth = 0;
-    std::string listContent;
-    if (isListLine(line, ordered, depth, listContent)) {
-      size_t offset = lineStart + firstNonBlank(line);
-      Block b = makeBlock(BlockType::ListItem, offset, normalizeLine(listContent));
-      b.ordered = ordered;
-      b.listDepth = depth;
-      blocks.push_back(std::move(b));
-      i = nextI;
-      continue;
+      std::string headingContent;
+      int level = headingLevel(line, headingContent);
+      if (level > 0) {
+        size_t offset = lineStart + firstNonBlank(line);
+        BlockType t = level == 1 ? BlockType::H1 : level == 2 ? BlockType::H2 : BlockType::H3;
+        blocks.push_back(makeBlock(t, offset, normalizeLine(headingContent)));
+        i = nextI;
+        continue;
+      }
+
+      if (isRuleLine(line)) {
+        Block b;
+        b.type = BlockType::Rule;
+        b.srcOffset = (uint32_t)(lineStart + firstNonBlank(line));
+        blocks.push_back(std::move(b));
+        i = nextI;
+        continue;
+      }
+
+      std::string quoteContent;
+      if (isQuoteLine(line, quoteContent)) {
+        size_t offset = lineStart + firstNonBlank(line);
+        std::string text = normalizeLine(quoteContent);
+        i = nextI;
+        while (i < n) {
+          size_t ls, next2;
+          std::string nl = readLine(src, i, ls, next2);
+          std::string qc;
+          if (!isQuoteLine(nl, qc)) break;
+          std::string nc = normalizeLine(qc);
+          if (!nc.empty()) {
+            if (!text.empty()) text += ' ';
+            text += nc;
+          }
+          i = next2;
+        }
+        blocks.push_back(makeBlock(BlockType::Quote, offset, text));
+        continue;
+      }
+
+      bool ordered = false;
+      uint8_t depth = 0;
+      std::string listContent;
+      if (isListLine(line, ordered, depth, listContent)) {
+        size_t offset = lineStart + firstNonBlank(line);
+        Block b = makeBlock(BlockType::ListItem, offset, normalizeLine(listContent));
+        b.ordered = ordered;
+        b.listDepth = depth;
+        blocks.push_back(std::move(b));
+        i = nextI;
+        continue;
+      }
     }
 
     // Paragraph: consecutive plain lines join with a single space.
@@ -303,14 +366,7 @@ std::vector<Block> parseMarkdown(const std::string &src) {
       size_t ls, next2;
       std::string nl = readLine(src, i, ls, next2);
       std::string nn = normalizeLine(nl);
-      if (nn.empty()) break;
-      bool dOrdered;
-      uint8_t dDepth;
-      std::string dContent, dQuote;
-      if (isFenceLine(nl) || headingLevel(nl, dContent) > 0 || isRuleLine(nl) ||
-          isQuoteLine(nl, dQuote) || isListLine(nl, dOrdered, dDepth, dContent)) {
-        break;
-      }
+      if (nn.empty() || startsBlock(nl)) break;
       text += ' ';
       text += nn;
       i = next2;

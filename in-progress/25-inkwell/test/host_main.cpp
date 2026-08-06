@@ -101,6 +101,7 @@ static int testMdInlineStyles() {
 
 static int testMdListQuoteCode() {
   auto b = Ink::parseMarkdown("- one\n- two\n  - nested\n\n> quoted\n\n```\ncode line\n```\n");
+  CHECK(b.size() == 5);  // 3 list items + 1 quote + 1 fence, hand-counted
   CHECK(b[0].type == Ink::BlockType::ListItem && b[0].listDepth == 1 && !b[0].ordered);
   CHECK(b[2].listDepth == 2);
   CHECK(b[3].type == Ink::BlockType::Quote && Ink::plainText(b[3]) == "quoted");
@@ -111,6 +112,11 @@ static int testMdListQuoteCode() {
 static int testMdEdges() {
   // Unterminated emphasis renders literally; links keep text; images drop.
   auto b = Ink::parseMarkdown("a **broken\n\n[text](http://x) ![img](y)\n\n1. first\n2. second");
+  // 2 paragraphs + 2 ordered list items -- each list line is its own block
+  // (no continuation joining), so "1. first" and "2. second" are separate
+  // blocks. Hand-counted and verified against the implementation; pins
+  // against any spurious extra/missing block.
+  CHECK(b.size() == 4);
   CHECK(Ink::plainText(b[0]) == "a **broken");
   CHECK(Ink::plainText(b[1]) == "text");
   CHECK(b[2].ordered && b[2].type == Ink::BlockType::ListItem);
@@ -150,8 +156,51 @@ static int testMdEmphasisFlanking() {
 
 static int testMdTabListIndent() {
   auto b = Ink::parseMarkdown("\t- tabbed");
+  CHECK(b.size() == 1);
   CHECK(b[0].type == Ink::BlockType::ListItem);
   CHECK(b[0].listDepth == 2);
+  return 0;
+}
+
+// A lone (non-CRLF) '\r' normalizes to a space, exactly like TxtParser --
+// it must never leak into rendered text as a raw 0x0D byte, and it must
+// not accidentally trigger heading detection when it happens to precede a
+// '#' mid-line (headings only match at the true start of a line).
+static int testMdLoneCr() {
+  auto plain = Ink::parseMarkdown("a\rb");
+  CHECK(plain.size() == 1);
+  CHECK(Ink::plainText(plain[0]) == "a b");
+
+  auto notHeading = Ink::parseMarkdown("a\r# not-heading");
+  CHECK(notHeading.size() == 1);
+  CHECK(notHeading[0].type == Ink::BlockType::Body);
+  CHECK(Ink::plainText(notHeading[0]).find('\r') == std::string::npos);
+  return 0;
+}
+
+// A link's text renders inside whatever emphasis already encloses the
+// link markup -- the recursed run must inherit the enclosing bold state.
+static int testMdLinkInheritsEmphasis() {
+  auto b = Ink::parseMarkdown("**bold [link](u) more**");
+  CHECK(b.size() == 1);
+  CHECK(b[0].runs.size() >= 3);
+  for (const auto &r : b[0].runs) CHECK(r.bold);
+  return 0;
+}
+
+// srcOffset is captured from the block's first line before any
+// continuation join -- pin the exact byte arithmetic for a heading, a
+// multi-line quote, and a paragraph.
+static int testMdSrcOffsets() {
+  // "# T\n\n> q1\n> q2\n\npara"
+  //  0123 4 56789 ...
+  // '#' at 0 (H1 start); '>' of "> q1" at byte 5; 'p' of "para" at byte 16.
+  auto b = Ink::parseMarkdown("# T\n\n> q1\n> q2\n\npara");
+  CHECK(b.size() == 3);
+  CHECK(b[0].type == Ink::BlockType::H1 && b[0].srcOffset == 0);
+  CHECK(b[1].type == Ink::BlockType::Quote && b[1].srcOffset == 5);
+  CHECK(Ink::plainText(b[1]) == "q1 q2");
+  CHECK(b[2].type == Ink::BlockType::Body && b[2].srcOffset == 16);
   return 0;
 }
 
@@ -167,6 +216,9 @@ int main() {
   if (testMdZeroRunGuard()) return 1;
   if (testMdEmphasisFlanking()) return 1;
   if (testMdTabListIndent()) return 1;
+  if (testMdLoneCr()) return 1;
+  if (testMdLinkInheritsEmphasis()) return 1;
+  if (testMdSrcOffsets()) return 1;
   std::printf("inkwell host tests: %d checks passed\n", checks);
   return 0;
 }
