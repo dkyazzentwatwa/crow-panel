@@ -204,6 +204,20 @@ static int testMdSrcOffsets() {
   return 0;
 }
 
+// Pins the first-occurrence consequence documented at the '[' link branch
+// in MarkdownParser.cpp: `close` is the FIRST "](" at/after `i`, so the
+// text between i and close can never itself contain "](" -- a nested '['
+// inside it always falls through to a literal '[' rather than opening a
+// second real link.
+static int testMdNestedBracketFirstOccurrence() {
+  auto b = Ink::parseMarkdown("[[a](u)](u)");
+  CHECK(b.size() == 1);
+  CHECK(b[0].runs.size() == 2);
+  CHECK(b[0].runs[0].text == "[a");
+  CHECK(b[0].runs[1].text == "](u)");
+  return 0;
+}
+
 int main() {
   if (testTxtParagraphs()) return 1;
   if (testTxtEdges()) return 1;
@@ -219,6 +233,7 @@ int main() {
   if (testMdLoneCr()) return 1;
   if (testMdLinkInheritsEmphasis()) return 1;
   if (testMdSrcOffsets()) return 1;
+  if (testMdNestedBracketFirstOccurrence()) return 1;
   std::printf("inkwell host tests: %d checks passed\n", checks);
   return 0;
 }

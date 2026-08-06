@@ -92,10 +92,12 @@ std::vector<Ink::Run> inlineRuns(const std::string &s) {
     }
     if (s[i] == '[') {
       // Link: keep text, drop target. Recursion depth is bounded at 2:
-      // findPairBounded is first-occurrence, so a '[' nested inside `inner`
-      // can open once more before its own scan runs out of window to find
-      // a "](" -- do not upgrade this to balanced-bracket matching without
-      // also adding an explicit depth cap.
+      // `close` is the FIRST "](" at or after `i`, so `inner` (the slice
+      // strictly before `close`) provably contains no "](" of its own --
+      // any '[' nested inside `inner` therefore always falls through to a
+      // literal '[' on the recursive call, it can never open a second real
+      // link. Do not upgrade this to balanced-bracket matching without also
+      // adding an explicit depth cap.
       size_t limit = i + kLinkWindow;
       size_t close = findPairBounded(s, ']', '(', i, limit);
       size_t paren = close == std::string::npos ? std::string::npos
