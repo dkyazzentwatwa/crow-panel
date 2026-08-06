@@ -1,6 +1,5 @@
 // Host tests for Inkwell's format core. No Arduino, no SD, no display:
 // these are the EXACT translation units that ship in the firmware.
-#include <cassert>
 #include <cstdio>
 #include <string>
 #include "../src/InkDoc.h"
@@ -16,6 +15,7 @@ static int testTxtParagraphs() {
   auto blocks = Ink::parseTxt("First para line one.\nline two.\n\n\nSecond para.\n");
   CHECK(blocks.size() == 2);
   CHECK(blocks[0].type == Ink::BlockType::Body);
+  CHECK(blocks[0].runs.size() == 1);
   CHECK(Ink::plainText(blocks[0]) == "First para line one. line two.");
   CHECK(blocks[1].srcOffset == 33);  // offset of 'S' in "Second"
   CHECK(Ink::plainText(blocks[1]) == "Second para.");
@@ -30,6 +30,39 @@ static int testTxtEdges() {
   CHECK(Ink::plainText(crlf[0]) == "a b");
   auto tabs = Ink::parseTxt("x\ty");
   CHECK(Ink::plainText(tabs[0]) == "x y");
+  // Bare (non-CRLF) carriage returns normalize to a space rather than
+  // vanishing or corrupting the line split.
+  auto loneCr = Ink::parseTxt("a\rb");
+  CHECK(loneCr.size() == 1);
+  CHECK(Ink::plainText(loneCr[0]) == "a b");
+  // A whitespace-only line is blank -- it separates paragraphs just like
+  // an empty line does.
+  auto wsLine = Ink::parseTxt("x\n   \ny");
+  CHECK(wsLine.size() == 2);
+  // Runs of internal spaces/tabs collapse to a single space.
+  auto multiSpace = Ink::parseTxt("a    b");
+  CHECK(Ink::plainText(multiSpace[0]) == "a b");
+  return 0;
+}
+
+static int testStyleFor() {
+  Ink::Block h2;
+  h2.type = Ink::BlockType::H2;
+  Ink::Run boldRun;
+  boldRun.bold = true;
+  CHECK(Ink::styleFor(h2, boldRun) == Ink::kStyleH2);
+
+  Ink::Block code;
+  code.type = Ink::BlockType::Code;
+  Ink::Run plainRun;
+  CHECK(Ink::styleFor(code, plainRun) == Ink::kStyleMono);
+
+  Ink::Block body;
+  body.type = Ink::BlockType::Body;
+  Ink::Run boldItalicRun;
+  boldItalicRun.bold = true;
+  boldItalicRun.italic = true;
+  CHECK(Ink::styleFor(body, boldItalicRun) == Ink::kStyleBoldItalic);
   return 0;
 }
 
@@ -48,6 +81,7 @@ int main() {
   if (testTxtParagraphs()) return 1;
   if (testTxtEdges()) return 1;
   if (testTxtLeadingSpaces()) return 1;
+  if (testStyleFor()) return 1;
   std::printf("inkwell host tests: %d checks passed\n", checks);
   return 0;
 }

@@ -10,12 +10,7 @@ std::vector<Block> parseTxt(const std::string &src) {
     if (i >= n) break;
     size_t start = i;
     // "start" must land on the first non-blank character, per the offset
-    // contract -- a leading run of spaces/tabs on the paragraph's first
-    // line is not itself content. This is a look-ahead only: it does not
-    // advance `i`, so the per-line collapsing/trimming below still runs
-    // unchanged. If the run turns out to belong to an all-whitespace
-    // (blank) line, `start` is simply discarded with the rest of that
-    // iteration's state -- no block gets emitted for it.
+    // contract. Look-ahead only -- must not advance `i`.
     while (start < n && (src[start] == ' ' || src[start] == '\t')) ++start;
     std::string text;
     bool blank = false;
@@ -26,7 +21,7 @@ std::vector<Block> parseTxt(const std::string &src) {
       if (end > i && src[end - 1] == '\r') --end;
       std::string line;
       for (size_t k = i; k < end; ++k) {
-        char c = src[k] == '\t' ? ' ' : src[k];
+        char c = (src[k] == '\t' || src[k] == '\r') ? ' ' : src[k];
         if (c == ' ' && !line.empty() && line.back() == ' ') continue;
         line += c;
       }
