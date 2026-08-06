@@ -482,7 +482,9 @@ std::vector<Ink::Run> inlineRuns(const std::string &s) {
 }  // namespace
 ```
 
-Note the unterminated-emphasis rule: an opener with no closer ahead in the block is literal text. That single rule is what keeps real-world `5 * 3` prose from italicizing half a page.
+Note the unterminated-emphasis rule: an opener with no closer ahead in the block is literal text.
+
+> **AMENDED during execution (commit 9851e75):** review probing showed the no-closer rule alone does NOT protect `5 * 3` prose or `snake_case_name` from italicizing. The shipped `inlineRuns` intentionally diverges from the verbatim block above by adding flanking rules: an opener needs a non-space char after the marker, a closer needs a non-space char before it, and `_` is literal when intra-word (alnum both sides). Do not "restore" the verbatim version — the flanking behavior is pinned by tests in `test/host_main.cpp`.
 
 - [ ] **Step 4: run tests until green.** Adjust only the implementation, not the pinned expectations.
 
