@@ -117,6 +117,44 @@ static int testMdEdges() {
   return 0;
 }
 
+// A trailing image/link/tag can leave every run whitespace-only after the
+// tail-trim in makeBlock; inlineRuns' >=1-run guarantee must still hold.
+static int testMdZeroRunGuard() {
+  auto img = Ink::parseMarkdown("![img](y)");
+  CHECK(img.size() == 1);
+  CHECK(img[0].type == Ink::BlockType::Body);
+  CHECK(img[0].runs.size() == 1);
+  CHECK(Ink::plainText(img[0]) == "");
+
+  auto heading = Ink::parseMarkdown("# ");
+  CHECK(heading.size() == 1);
+  CHECK(heading[0].type == Ink::BlockType::H1);
+  CHECK(heading[0].runs.size() == 1);
+  return 0;
+}
+
+// Flanking rules: "5 * 3" is prose, not an opened italic run; snake_case
+// underscores never toggle either.
+static int testMdEmphasisFlanking() {
+  auto math = Ink::parseMarkdown("5 * 3 and 2 * 4");
+  CHECK(math.size() == 1);
+  CHECK(math[0].runs.size() == 1);
+  for (const auto &r : math[0].runs) CHECK(!r.italic);
+  CHECK(Ink::plainText(math[0]) == "5 * 3 and 2 * 4");
+
+  auto snake = Ink::parseMarkdown("snake_case_name here");
+  CHECK(snake[0].runs.size() == 1);
+  CHECK(Ink::plainText(snake[0]) == "snake_case_name here");
+  return 0;
+}
+
+static int testMdTabListIndent() {
+  auto b = Ink::parseMarkdown("\t- tabbed");
+  CHECK(b[0].type == Ink::BlockType::ListItem);
+  CHECK(b[0].listDepth == 2);
+  return 0;
+}
+
 int main() {
   if (testTxtParagraphs()) return 1;
   if (testTxtEdges()) return 1;
@@ -126,6 +164,9 @@ int main() {
   if (testMdInlineStyles()) return 1;
   if (testMdListQuoteCode()) return 1;
   if (testMdEdges()) return 1;
+  if (testMdZeroRunGuard()) return 1;
+  if (testMdEmphasisFlanking()) return 1;
+  if (testMdTabListIndent()) return 1;
   std::printf("inkwell host tests: %d checks passed\n", checks);
   return 0;
 }

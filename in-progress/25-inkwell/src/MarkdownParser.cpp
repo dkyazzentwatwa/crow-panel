@@ -1,5 +1,7 @@
 #include "MarkdownParser.h"
 
+#include <cctype>
+
 namespace {
 
 void emit(std::vector<Ink::Run> &runs, std::string &buf, bool b, bool i, bool m) {
@@ -25,12 +27,32 @@ std::vector<Ink::Run> inlineRuns(const std::string &s) {
       emit(runs, buf, bold, italic, false); mono = true; ++i; continue;
     }
     if (s.compare(i, 2, "**") == 0) {
-      if (!bold && s.find("**", i + 2) == std::string::npos) { buf += "**"; i += 2; continue; }
+      // Flanking rules keep "5 * 3" style prose literal: an opener needs a
+      // non-space right after it, a closer needs a non-space right before.
+      if (!bold) {
+        bool noCloser = s.find("**", i + 2) == std::string::npos;
+        bool afterIsSpace = i + 2 >= s.size() || s[i + 2] == ' ';
+        if (noCloser || afterIsSpace) { buf += "**"; i += 2; continue; }
+      } else {
+        bool beforeIsSpace = i == 0 || s[i - 1] == ' ';
+        if (beforeIsSpace) { buf += "**"; i += 2; continue; }
+      }
       emit(runs, buf, bold, italic, false); bold = !bold; i += 2; continue;
     }
     if (s[i] == '*' || s[i] == '_') {
       char c = s[i];
-      if (!italic && s.find(c, i + 1) == std::string::npos) { buf += c; ++i; continue; }
+      bool prevAlnum = i > 0 && std::isalnum((unsigned char)s[i - 1]);
+      bool nextAlnum = i + 1 < s.size() && std::isalnum((unsigned char)s[i + 1]);
+      // Underscore only: intra-word markers (snake_case_name) never toggle.
+      bool intraWordUnderscore = c == '_' && prevAlnum && nextAlnum;
+      if (!italic) {
+        bool noCloser = s.find(c, i + 1) == std::string::npos;
+        bool afterIsSpace = i + 1 >= s.size() || s[i + 1] == ' ';
+        if (noCloser || afterIsSpace || intraWordUnderscore) { buf += c; ++i; continue; }
+      } else {
+        bool beforeIsSpace = i == 0 || s[i - 1] == ' ';
+        if (beforeIsSpace || intraWordUnderscore) { buf += c; ++i; continue; }
+      }
       emit(runs, buf, bold, italic, false); italic = !italic; ++i; continue;
     }
     if (s[i] == '!' && i + 1 < s.size() && s[i + 1] == '[') {  // image: drop
@@ -141,11 +163,14 @@ bool isQuoteLine(const std::string &line, std::string &content) {
 }
 
 // "- "/"* " (unordered) or "\d+. " (ordered), with 2-space-per-level
-// nesting capped at depth 3.
+// nesting capped at depth 3. Each leading tab counts as 2 spaces of indent.
 bool isListLine(const std::string &line, bool &ordered, uint8_t &depth, std::string &content) {
   size_t indent = 0;
-  while (indent < line.size() && line[indent] == ' ') ++indent;
-  size_t p = indent;
+  size_t p = 0;
+  while (p < line.size() && (line[p] == ' ' || line[p] == '\t')) {
+    indent += line[p] == '\t' ? 2 : 1;
+    ++p;
+  }
   if (p < line.size() && (line[p] == '-' || line[p] == '*') && p + 1 < line.size() &&
       line[p + 1] == ' ') {
     ordered = false;
@@ -177,6 +202,10 @@ Block makeBlock(BlockType type, size_t offset, const std::string &rawText) {
     if (end + 1 < last.text.size()) last.text.erase(end + 1);
     break;
   }
+  // Preserve inlineRuns' >=1-run guarantee: trimming can legitimately empty
+  // every run (e.g. a lone image/link/tag line), and downstream code
+  // (styleFor, renderers) expects at least one run to exist.
+  if (b.runs.empty()) b.runs.push_back({"", false, false, false});
   return b;
 }
 
