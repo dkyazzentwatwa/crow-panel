@@ -37,6 +37,7 @@ in-progress/11-cardrf-spectrum-console
 in-progress/16-cypher-flock-panel
 in-progress/19-starbeam-console
 in-progress/24-acid-glass-visualizer
+in-progress/25-inkwell
 PROJECTS
 }
 
