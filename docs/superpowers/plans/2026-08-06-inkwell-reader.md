@@ -485,6 +485,8 @@ std::vector<Ink::Run> inlineRuns(const std::string &s) {
 Note the unterminated-emphasis rule: an opener with no closer ahead in the block is literal text.
 
 > **AMENDED during execution (commit 9851e75):** review probing showed the no-closer rule alone does NOT protect `5 * 3` prose or `snake_case_name` from italicizing. The shipped `inlineRuns` intentionally diverges from the verbatim block above by adding flanking rules: an opener needs a non-space char after the marker, a closer needs a non-space char before it, and `_` is literal when intra-word (alnum both sides). Do not "restore" the verbatim version — the flanking behavior is pinned by tests in `test/host_main.cpp`.
+>
+> **AMENDED again (commit 245b6ab):** two more defects in the verbatim block, fixed in the shipped version: (1) the unbounded `find()` lookaheads for `](`/`)`/`]`/`>` were O(n²) per block — measured ~18 s for a 512 KB pathological single-block input — and are now window-bounded (512 bytes for links/images, 64 for HTML tags); (2) recursed link-text runs dropped the enclosing bold/italic/mono state, now OR-ed back in. Both pinned by tests. Also note `normalizeLine` maps lone `\r` to space like TxtParser.
 
 - [ ] **Step 4: run tests until green.** Adjust only the implementation, not the pinned expectations.
 
