@@ -5,6 +5,7 @@
 #include "../src/InkDoc.h"
 #include "../src/MarkdownParser.h"
 #include "../src/TxtParser.h"
+#include "../src/XhtmlParser.h"
 
 static int checks = 0;
 #define CHECK(cond) do { \
@@ -218,6 +219,114 @@ static int testMdNestedBracketFirstOccurrence() {
   return 0;
 }
 
+static int testXhtmlBasics() {
+  auto b = Ink::parseXhtml(
+      "<html><head><title>x</title><style>p{}</style></head><body>"
+      "<h1>Chapter &amp; One</h1><p>Hello <em>world</em>, <strong>bold</strong>.</p>"
+      "<hr/><blockquote><p>quoted</p></blockquote></body></html>");
+  CHECK(b.size() == 4);
+  CHECK(b[0].type == Ink::BlockType::H1 && Ink::plainText(b[0]) == "Chapter & One");
+  CHECK(b[1].runs.size() >= 4 && b[1].runs[1].italic && b[1].runs[3].bold);
+  CHECK(b[2].type == Ink::BlockType::Rule);
+  CHECK(b[3].type == Ink::BlockType::Quote);
+  return 0;
+}
+
+static int testXhtmlListsPreEntities() {
+  auto b = Ink::parseXhtml(
+      "<body><ul><li>one</li><li>two<ol><li>inner</li></ol></li></ul>"
+      "<pre>  keep   spaces</pre>"
+      "<p>a&nbsp;b &#65; &mdash; &hellip; &unknown; end</p></body>");
+  // b[0]="one" (depth1), b[1]="two" (depth1), b[2]="inner" (depth2
+  // ordered), b[3]=pre Code, b[4]=entity paragraph -- hand-traced.
+  CHECK(b.size() == 5);
+  CHECK(b[0].type == Ink::BlockType::ListItem && b[0].listDepth == 1);
+  CHECK(b[2].listDepth == 2 && b[2].ordered);
+  CHECK(b[3].type == Ink::BlockType::Code && Ink::plainText(b[3]) == "  keep   spaces");
+  CHECK(Ink::plainText(b[4]) == "a b A -- ... &unknown; end");
+  return 0;
+}
+
+static int testXhtmlDegrade() {
+  // Unknown tags transparent; attribute noise ignored; unclosed input survives.
+  auto b = Ink::parseXhtml("<body><p class=\"x\" id='y'><span>te</span>xt<p>next");
+  CHECK(b.size() == 2);
+  CHECK(Ink::plainText(b[0]) == "text");
+  CHECK(Ink::plainText(b[1]) == "next");
+  return 0;
+}
+
+static int testXhtmlDecodeEntitiesStandalone() {
+  CHECK(Ink::decodeEntities("&lt;b&gt; &amp; &#x41;") == "<b> & A");
+  return 0;
+}
+
+// <b><b></b></b>: bold must persist through the FIRST close (depth drops
+// from 2 to 1, still >0) and only turn off at the second close (depth 0).
+static int testXhtmlNestedBoldDepth() {
+  auto b = Ink::parseXhtml("<body><p>x<b><b>y</b>m</b>z</p></body>");
+  CHECK(b.size() == 1);
+  CHECK(b[0].runs.size() == 3);
+  CHECK(b[0].runs[0].text == "x" && !b[0].runs[0].bold);
+  CHECK(b[0].runs[1].text == "ym" && b[0].runs[1].bold);
+  CHECK(b[0].runs[2].text == "z" && !b[0].runs[2].bold);
+  return 0;
+}
+
+static int testXhtmlScriptStyleDrop() {
+  auto b = Ink::parseXhtml(
+      "<body><p>a</p><script>var x = 1;</script><style>p{color:red}</style><p>b</p></body>");
+  CHECK(b.size() == 2);
+  CHECK(Ink::plainText(b[0]) == "a");
+  CHECK(Ink::plainText(b[1]) == "b");
+  return 0;
+}
+
+// A stray closing tag with the depth counter already at 0 is ignored --
+// it must not affect the run's style state.
+static int testXhtmlStrayClose() {
+  auto b = Ink::parseXhtml("<body><p>a</em>b</p></body>");
+  CHECK(b.size() == 1);
+  CHECK(b[0].runs.size() == 1);
+  CHECK(!b[0].runs[0].italic);
+  CHECK(Ink::plainText(b[0]) == "ab");
+  return 0;
+}
+
+// &#x263A; (WHITE SMILING FACE) is a 3-byte UTF-8 sequence: the run text
+// grows by 3 bytes for that one code point, beyond the "a" + "b" bytes.
+static int testXhtmlNumericEntityUtf8() {
+  auto b = Ink::parseXhtml("<body><p>a&#x263A;b</p></body>");
+  CHECK(b.size() == 1);
+  CHECK(Ink::plainText(b[0]).size() == 5);  // 'a' + 3-byte smiley + 'b'
+  return 0;
+}
+
+// A numeric entity above 0xFFFF is outside what InkDoc's pipeline is
+// sized to render -- it degrades to a literal '?' rather than emitting a
+// 4-byte UTF-8 sequence.
+static int testXhtmlNumericEntityOverflow() {
+  auto b = Ink::parseXhtml("<body><p>a&#x1F600;b</p></body>");
+  CHECK(b.size() == 1);
+  CHECK(Ink::plainText(b[0]) == "a?b");
+  return 0;
+}
+
+// srcOffset is the byte offset of the opening tag in the ORIGINAL source
+// string, not body-relative.
+// "<body><p>a</p><h2>t</h2></body>"
+//  0123456789...
+// '<' of "<body>" at 0, its '>' at 5, so parsing starts at byte 6, which
+// is exactly where "<p>" begins: b[0].srcOffset == 6. "<h2>" begins at
+// byte 14 (6 + len("<p>a</p>") == 6 + 8): b[1].srcOffset == 14.
+static int testXhtmlSrcOffsets() {
+  auto b = Ink::parseXhtml("<body><p>a</p><h2>t</h2></body>");
+  CHECK(b.size() == 2);
+  CHECK(b[0].srcOffset == 6);
+  CHECK(b[1].srcOffset == 14);
+  return 0;
+}
+
 int main() {
   if (testTxtParagraphs()) return 1;
   if (testTxtEdges()) return 1;
@@ -234,6 +343,16 @@ int main() {
   if (testMdLinkInheritsEmphasis()) return 1;
   if (testMdSrcOffsets()) return 1;
   if (testMdNestedBracketFirstOccurrence()) return 1;
+  if (testXhtmlBasics()) return 1;
+  if (testXhtmlListsPreEntities()) return 1;
+  if (testXhtmlDegrade()) return 1;
+  if (testXhtmlDecodeEntitiesStandalone()) return 1;
+  if (testXhtmlNestedBoldDepth()) return 1;
+  if (testXhtmlScriptStyleDrop()) return 1;
+  if (testXhtmlStrayClose()) return 1;
+  if (testXhtmlNumericEntityUtf8()) return 1;
+  if (testXhtmlNumericEntityOverflow()) return 1;
+  if (testXhtmlSrcOffsets()) return 1;
   std::printf("inkwell host tests: %d checks passed\n", checks);
   return 0;
 }
