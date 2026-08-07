@@ -14,8 +14,12 @@ namespace {
 // document O(n^2). The comment/PI/raw-text scans further down are each a
 // single linear pass fired once per element (not once per character), so
 // they stay O(n) in aggregate without needing this same bound.
-constexpr size_t kTagWindow = 512;     // bytes scanned ahead of '<' for '>'
-constexpr size_t kEntityMaxName = 12;  // max chars between '&' and ';'
+// Named kTagCloseWindow (not kTagWindow) to avoid colliding in meaning
+// with MarkdownParser.cpp's kTagWindow, a *different* 64-byte bound for
+// its own inline "<...>"-stripping lookahead -- the two files' windows
+// are unrelated and must not be assumed equal.
+constexpr size_t kTagCloseWindow = 512;  // bytes scanned ahead of '<' for '>'
+constexpr size_t kEntityMaxName = 12;    // max chars between '&' and ';'
 
 bool isWsChar(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
 
@@ -28,8 +32,8 @@ std::string lowerStr(const std::string &s) {
 // Scans forward from `from` for the tag's closing '>', treating anything
 // inside a single- or double-quoted span as inert so a quoted attribute
 // value containing '>' (e.g. title="a>b") can't end the tag early.
-// Bounded to `limit` for the same O(n) reason as kTagWindow above; an
-// unterminated quote inside the window reports "no tag found" (npos),
+// Bounded to `limit` for the same O(n) reason as kTagCloseWindow above;
+// an unterminated quote inside the window reports "no tag found" (npos),
 // same as a plain missing '>'.
 size_t findTagCloseBounded(const std::string &s, size_t from, size_t limit) {
   size_t end = std::min(s.size(), limit);
@@ -67,8 +71,11 @@ size_t findCaseInsensitiveOnce(const std::string &s, const std::string &needle, 
 // Appends the UTF-8 encoding of code point `cp`. Code point 0 (e.g. a
 // literal &#0;) emits nothing rather than a NUL byte; code points above
 // 0xFFFF (outside the range InkDoc's rendering pipeline is sized for)
-// emit '?' per the documented degrade.
-void appendUtf8(std::string &out, unsigned long cp) {
+// emit '?' per the documented degrade. `cp` is a fixed-width uint32_t
+// (never `unsigned long`, which is 64-bit on the host but 32-bit on the
+// ESP32 target) so overflow behavior for a huge numeric entity can't
+// silently differ between the two -- see the saturation in decodeEntity.
+void appendUtf8(std::string &out, uint32_t cp) {
   if (cp == 0) return;
   if (cp <= 0x7F) {
     out += (char)cp;
@@ -86,23 +93,34 @@ void appendUtf8(std::string &out, unsigned long cp) {
 
 // Finds the index right after <body ...>'s '>', or 0 if no <body> tag
 // exists anywhere -- the whole input is then parsed as-is. A single
-// forward pass over '<' occurrences; the extra find('>') fires at most
-// once (only once a body tag is actually spotted), so this stays O(n)
-// overall rather than O(n^2). Comments/DOCTYPEs ahead of <body> need no
-// special handling here: this scan only ever looks for the next literal
-// '<', so it skips over their text harmlessly either way.
+// forward pass over '<' occurrences; the extra tag-close scan fires at
+// most once (only once a body tag is actually spotted), and each comment
+// is skipped in one linear scan too, so this stays O(n) overall rather
+// than O(n^2).
 size_t findBodyStart(const std::string &src) {
   size_t n = src.size();
   size_t i = 0;
   while (i < n) {
     size_t lt = src.find('<', i);
     if (lt == std::string::npos) return 0;
+    // Skip comments entirely -- a "<body>" mentioned inside one (e.g. an
+    // authoring note "<!-- old <body> -->") must not be mistaken for the
+    // real tag.
+    if (src.compare(lt, 4, "<!--") == 0) {
+      size_t close = src.find("-->", lt + 4);
+      i = (close == std::string::npos) ? n : close + 3;
+      continue;
+    }
     size_t j = lt + 1;
     if (j < n && src[j] == '/') { i = j; continue; }
     size_t nameStart = j;
     while (j < n && std::isalnum((unsigned char)src[j])) ++j;
     if (lowerStr(src.substr(nameStart, j - nameStart)) == "body") {
-      size_t gt = src.find('>', j);
+      // Quote-aware, like the main tokenizer's tag scan -- a
+      // <body class="a>b"> attribute value containing '>' must not end
+      // the tag early.
+      size_t limit = std::min(n, lt + kTagCloseWindow);
+      size_t gt = findTagCloseBounded(src, lt, limit);
       return gt == std::string::npos ? n : gt + 1;
     }
     i = lt + 1;
@@ -141,14 +159,17 @@ class Builder {
   // tag before any text arrived) is a phantom, not content, and is
   // discarded rather than materialized with a placeholder empty run --
   // Rule is pushed separately via pushRule() and is unaffected.
+  //
+  // blockHasContent_ is provably identical to "runs_ contains a run with
+  // non-empty text" at this point: it's set true the moment (and only
+  // the moment) any real character is appended, in the same addChar()
+  // call that appends it to buf_/runs_, and never cleared except when a
+  // block opens or flushes -- so it's a free O(1) stand-in for rescanning
+  // runs_ for non-empty text.
   void flush() {
     if (!blockOpen_) return;
     flushBuf();
-    bool hasText = false;
-    for (const Run &r : runs_) {
-      if (!r.text.empty()) { hasText = true; break; }
-    }
-    if (hasText) {
+    if (blockHasContent_) {
       Block b;
       b.type = type_;
       b.srcOffset = offset_;
@@ -272,7 +293,18 @@ size_t decodeEntity(const std::string &s, size_t i, std::string &out) {
     bool hex = (name[1] == 'x' || name[1] == 'X');
     size_t k = hex ? 2 : 1;
     if (k >= name.size()) return 0;
-    unsigned long cp = 0;
+    // Fixed-width uint32_t, saturated every step once past the valid
+    // Unicode range: kEntityMaxName allows up to ~10 decimal or ~9 hex
+    // digits, comfortably enough to overflow a 32-bit accumulator (e.g.
+    // "&#4294967296;" or "&#x100000000;", both exactly 2^32). Without
+    // saturating, a 32-bit `unsigned long` (the ESP32 target) would wrap
+    // to a small, plausible-looking code point while a 64-bit host
+    // wouldn't -- a silent firmware/host behavioral split no test run on
+    // the host alone could ever catch. Saturating well above 0x10FFFF as
+    // soon as it's exceeded means every further digit is a no-op, so the
+    // final value (and thus appendUtf8's ">0xFFFF -> '?'" rule) is
+    // identical on both widths.
+    uint32_t cp = 0;
     for (; k < name.size(); ++k) {
       char c = name[k];
       int v;
@@ -280,7 +312,8 @@ size_t decodeEntity(const std::string &s, size_t i, std::string &out) {
       else if (hex && c >= 'a' && c <= 'f') v = c - 'a' + 10;
       else if (hex && c >= 'A' && c <= 'F') v = c - 'A' + 10;
       else return 0;
-      cp = cp * (hex ? 16u : 10u) + (unsigned long)v;
+      cp = cp * (hex ? 16u : 10u) + (uint32_t)v;
+      if (cp > 0x110000u) cp = 0x110000u;
     }
     appendUtf8(out, cp);  // cp == 0 emits nothing; see appendUtf8.
     return consumed;
@@ -357,7 +390,7 @@ std::vector<Block> parseXhtml(const std::string &src) {
       }
 
       size_t tagStart = i;
-      size_t limit = std::min(n, i + kTagWindow);
+      size_t limit = std::min(n, i + kTagCloseWindow);
       size_t gt = findTagCloseBounded(src, i, limit);
       if (gt == std::string::npos) {
         // No unquoted '>' within the bounded window (an unterminated
@@ -412,13 +445,30 @@ std::vector<Block> parseXhtml(const std::string &src) {
         } else if (!closing && !selfClose) {
           BlockType t = tag == "h1" ? BlockType::H1 : tag == "h2" ? BlockType::H2 : BlockType::H3;
           bd.openBlock(t, (uint32_t)tagStart);
+        } else if (closing) {
+          // Ends the heading at top level: text right after (even with no
+          // intervening whitespace, e.g. "<h1>Title</h1>stray") must
+          // start a fresh Body block, not glue onto the heading's text
+          // and style.
+          bd.flush();
         }
         continue;
       }
 
       if (tag == "p" || tag == "div") {
-        if (quoteDepth > 0) bd.markSoftBreak();
-        else if (!closing && !selfClose) bd.openBlock(BlockType::Body, (uint32_t)tagStart);
+        if (quoteDepth > 0) {
+          bd.markSoftBreak();
+        } else if (!closing && !selfClose) {
+          bd.openBlock(BlockType::Body, (uint32_t)tagStart);
+        } else if (closing && tag == "p") {
+          bd.flush();
+        } else if (closing && tag == "div") {
+          // Unlike p/h*/li, </div> does NOT end the block -- div is a
+          // soft grouping wrapper, not a hard paragraph break, so
+          // adjacent <div>s merge into one block with a joining space
+          // instead of splitting (testXhtmlNestedDivMerges).
+          bd.markSoftBreak();
+        }
         continue;
       }
 
@@ -460,7 +510,18 @@ std::vector<Block> parseXhtml(const std::string &src) {
               listStack.empty() ? (uint8_t)1 : (uint8_t)std::min<size_t>(listStack.size(), 3);
           bool ordered = listStack.empty() ? false : listStack.back().ordered;
           bd.openBlock(BlockType::ListItem, (uint32_t)tagStart, depth, ordered);
+        } else if (closing) {
+          bd.flush();
         }
+        continue;
+      }
+
+      if (tag == "td" || tag == "th" || tag == "tr" || tag == "caption") {
+        // No grid model: a table's rows/cells just flatten into one
+        // run-on paragraph, with a joining space at each cell/row/caption
+        // boundary (open or close, in or out of a quote) -- the same
+        // treatment <br> gets.
+        bd.markSoftBreak();
         continue;
       }
 

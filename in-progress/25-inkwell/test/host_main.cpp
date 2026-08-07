@@ -392,10 +392,14 @@ static int testXhtmlPhantomBlockDropped() {
   return 0;
 }
 
+// Pins </div> as non-flushing: the inner div's close does NOT end the
+// block (still exactly 1 block, unlike </p>/</h*>/</li>), it only marks a
+// joining space -- so "a" and "b" merge with a space between them rather
+// than splitting into two blocks or gluing with none.
 static int testXhtmlNestedDivMerges() {
   auto b = Ink::parseXhtml("<body><div><div>a</div>b</div></body>");
   CHECK(b.size() == 1);
-  CHECK(Ink::plainText(b[0]) == "ab");
+  CHECK(Ink::plainText(b[0]) == "a b");
   return 0;
 }
 
@@ -480,6 +484,117 @@ static int testXhtmlPerfScriptRepeat() {
   return 0;
 }
 
+// --- Round 3 spec-review fixes (closing-tag flush, entity accumulator
+// width, table cell breaks, findBodyStart hardening) ---
+
+// Fix 1: a closing block tag matters as much as its open. Text right
+// after </h1> (even with no intervening whitespace) must start a fresh
+// Body block, not glue onto the heading's text AND inherit its style.
+static int testXhtmlClosingHeadingFlushesNotGlues() {
+  auto b = Ink::parseXhtml("<body><h1>Title</h1>stray words<p>x</p></body>");
+  CHECK(b.size() == 3);
+  CHECK(b[0].type == Ink::BlockType::H1 && Ink::plainText(b[0]) == "Title");
+  CHECK(b[1].type == Ink::BlockType::Body && Ink::plainText(b[1]) == "stray words");
+  CHECK(b[2].type == Ink::BlockType::Body && Ink::plainText(b[2]) == "x");
+  return 0;
+}
+
+static int testXhtmlClosingParagraphFlushesNotGlues() {
+  auto b = Ink::parseXhtml("<body><p>para</p>stray<h2>H</h2></body>");
+  CHECK(b.size() == 3);
+  CHECK(b[0].type == Ink::BlockType::Body && Ink::plainText(b[0]) == "para");
+  CHECK(b[1].type == Ink::BlockType::Body && Ink::plainText(b[1]) == "stray");
+  CHECK(b[2].type == Ink::BlockType::H2 && Ink::plainText(b[2]) == "H");
+  return 0;
+}
+
+// Fix 2: the numeric-entity accumulator is a fixed-width uint32_t,
+// saturated well above the valid Unicode range as soon as it's exceeded
+// -- a value like 2^32 can't wrap to a small, plausible code point on a
+// 32-bit target while yielding '?' on a 64-bit host.
+static int testXhtmlNumericEntityOverflow32BitHex() {
+  auto b = Ink::parseXhtml("<body><p>a&#x100000000;b</p></body>");
+  CHECK(b.size() == 1);
+  CHECK(Ink::plainText(b[0]) == "a?b");
+  return 0;
+}
+
+static int testXhtmlNumericEntityOverflow32BitDecimal() {
+  auto b = Ink::parseXhtml("<body><p>a&#4294967296;b</p></body>");
+  CHECK(b.size() == 1);
+  CHECK(Ink::plainText(b[0]) == "a?b");
+  return 0;
+}
+
+// Fix 3: td/th/tr/caption are not modeled as a grid -- each is just
+// another joining-space tag, so a table's cells/rows flatten into one
+// run-on paragraph.
+static int testXhtmlTableCellsJoinWithSpace() {
+  auto b = Ink::parseXhtml("<body><table><tr><td>a</td><td>b</td></tr></table></body>");
+  CHECK(b.size() == 1);
+  CHECK(Ink::plainText(b[0]) == "a b");
+  return 0;
+}
+
+// Fix 4: findBodyStart is quote-aware (a <body ...> attribute containing
+// '>' doesn't end the tag early) and skips comment spans (a "<body>"
+// mentioned inside one isn't mistaken for the real tag).
+static int testXhtmlBodyTagQuotedAttrWithGt() {
+  auto b = Ink::parseXhtml("<body class=\"a>b\"><p>x</p>");
+  CHECK(b.size() == 1);
+  CHECK(Ink::plainText(b[0]) == "x");
+  return 0;
+}
+
+static int testXhtmlBodyMentionInCommentIgnored() {
+  auto b = Ink::parseXhtml("<!-- old <body> --><body><p>x</p>");
+  CHECK(b.size() == 1);
+  CHECK(Ink::plainText(b[0]) == "x");
+  return 0;
+}
+
+// Fix 6 cheap-ride pinning tests.
+static int testXhtmlEmptyInput() {
+  auto b = Ink::parseXhtml("");
+  CHECK(b.empty());
+  return 0;
+}
+
+static int testXhtmlNoBodyParsesWholeDoc() {
+  auto b = Ink::parseXhtml("<p>only</p>");
+  CHECK(b.size() == 1);
+  CHECK(Ink::plainText(b[0]) == "only");
+  return 0;
+}
+
+// Four levels of <ul> nesting cap listDepth at 3, not 4.
+static int testXhtmlListDepthCapsAtThree() {
+  auto b = Ink::parseXhtml(
+      "<body><ul><li>a<ul><li>b<ul><li>c<ul><li>d</li></ul></li></ul></li></ul></li></ul></body>");
+  CHECK(b.size() == 4);
+  CHECK(b[0].listDepth == 1);
+  CHECK(b[1].listDepth == 2);
+  CHECK(b[2].listDepth == 3);
+  CHECK(b[3].listDepth == 3);  // 4th nesting level caps at 3, not 4
+  CHECK(Ink::plainText(b[3]) == "d");
+  return 0;
+}
+
+static int testXhtmlBrProducesSpace() {
+  auto b = Ink::parseXhtml("<body><p>a<br/>b</p></body>");
+  CHECK(b.size() == 1);
+  CHECK(Ink::plainText(b[0]) == "a b");
+  return 0;
+}
+
+// A tag with no '>' before EOF degrades to literal text, byte for byte.
+static int testXhtmlUnterminatedTagAtEofIsLiteral() {
+  auto b = Ink::parseXhtml("<body><p>a<b");
+  CHECK(b.size() == 1);
+  CHECK(Ink::plainText(b[0]) == "a<b");
+  return 0;
+}
+
 int main() {
   if (testTxtParagraphs()) return 1;
   if (testTxtEdges()) return 1;
@@ -520,6 +635,18 @@ int main() {
   if (testXhtmlNulEntitySuppressed()) return 1;
   if (testXhtmlPerfBareLt()) return 1;
   if (testXhtmlPerfScriptRepeat()) return 1;
+  if (testXhtmlClosingHeadingFlushesNotGlues()) return 1;
+  if (testXhtmlClosingParagraphFlushesNotGlues()) return 1;
+  if (testXhtmlNumericEntityOverflow32BitHex()) return 1;
+  if (testXhtmlNumericEntityOverflow32BitDecimal()) return 1;
+  if (testXhtmlTableCellsJoinWithSpace()) return 1;
+  if (testXhtmlBodyTagQuotedAttrWithGt()) return 1;
+  if (testXhtmlBodyMentionInCommentIgnored()) return 1;
+  if (testXhtmlEmptyInput()) return 1;
+  if (testXhtmlNoBodyParsesWholeDoc()) return 1;
+  if (testXhtmlListDepthCapsAtThree()) return 1;
+  if (testXhtmlBrProducesSpace()) return 1;
+  if (testXhtmlUnterminatedTagAtEofIsLiteral()) return 1;
   std::printf("inkwell host tests: %d checks passed\n", checks);
   return 0;
 }

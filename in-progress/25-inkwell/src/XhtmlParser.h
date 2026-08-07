@@ -28,16 +28,30 @@ namespace Ink {
 // markup, so a stray '<' inside JS ("if(a<b)") or CSS can't be mistaken
 // for a tag. HTML comments (<!-- ... -->) and bogus/declaration markup
 // (<!DOCTYPE ...>, <?...?>) are scanned past and dropped, not emitted as
-// text. Every other tag is transparent: its own markup is skipped but any
-// text inside still flows through. Attributes are ignored wholesale.
+// text. table/tr/td/th/caption are not modeled as a grid: each is just
+// another joining-space tag (like a table-less <br>), so a table's rows
+// and cells flatten into one run-on paragraph with a space at each cell
+// boundary. Every other tag is transparent: its own markup is skipped but
+// any text inside still flows through. Attributes are ignored wholesale.
+//
+// A closing tag matters as much as its open: </h1>/</h2>/</h3>/</p>/</li>
+// at quote-depth 0 ends the block (flush), so text right after -- even
+// with no intervening whitespace -- starts a fresh Body block rather than
+// gluing onto the closed block's text and style. </div> is the one
+// exception: it does not flush, only marks a joining space, so adjacent
+// <div>s merge into one block instead of splitting (a div is a soft
+// grouping wrapper, not a hard paragraph break, unlike <p>).
 //
 // Tolerant of malformed input: missing close tags (the next same-scope
 // block tag, or EOF, flushes whatever's pending), self-closing tags,
 // attribute noise (single or double quotes, and a quoted value containing
-// '>' doesn't end the tag early), a bare '<' not followed by a letter,
-// '/', '!' or '?' (HTML5 rule -- it's literal text, e.g. "a < b" or a
-// digit as in "5 <6"), and a missing '>' before EOF (the rest of the
-// input is treated as plain text).
+// '>' doesn't end the tag early -- including in the <body ...> tag itself
+// when locating where parsing starts), a bare '<' not followed by a
+// letter, '/', '!' or '?' (HTML5 rule -- it's literal text, e.g. "a < b"
+// or a digit as in "5 <6"), and a missing '>' before EOF (the rest of the
+// input is treated as plain text). A "<body>" mentioned inside a comment
+// ahead of the real one (e.g. an authoring note "<!-- old <body> -->") is
+// not mistaken for it either.
 //
 // Known degenerate inputs, documented but not fixed: a <pre> nested
 // inside a <blockquote> loses its verbatim whitespace (the whole subtree
@@ -62,8 +76,12 @@ std::vector<Block> parseXhtml(const std::string &src);
 // &gt; &quot; &apos; -> the literal char; &nbsp; -> space; &mdash; ->
 // "--"; &ndash; -> "-"; &hellip; -> "..."; &#NNN; / &#xHH; -> UTF-8
 // (code point 0, e.g. &#0;, emits nothing rather than a NUL byte; code
-// points above 0xFFFF emit '?'). Unknown named entities are emitted
-// literally, unchanged (e.g. "&unknown;" stays as-is).
+// points above 0xFFFF emit '?'). The digit accumulator saturates well
+// above the valid Unicode range as soon as it's exceeded, so a huge
+// literal like "&#4294967296;" can't wrap differently on a 32-bit target
+// than on a 64-bit host -- both land on the same '?'. Unknown named
+// entities are emitted literally, unchanged (e.g. "&unknown;" stays
+// as-is).
 std::string decodeEntities(const std::string &s);
 
 // Decodes a single entity starting at s[i] (which must be '&'). Returns

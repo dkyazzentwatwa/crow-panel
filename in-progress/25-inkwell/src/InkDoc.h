@@ -26,6 +26,16 @@ struct Run {
   bool mono = false;
 };
 
+// Cross-parser contract for `runs`, upheld by every parser that emits
+// Block (TxtParser, MarkdownParser, XhtmlParser) and relied on by
+// styleFor()/plainText() below and the renderer: every EMITTED non-Rule
+// block has at least one run. A run's `text` MAY be empty --
+// MarkdownParser keeps a placeholder empty run when trimming a line
+// removes every visible character (its documented zero-run guard). Rule
+// is the one BlockType that always has zero runs. XhtmlParser holds a
+// stricter guarantee on top of the shared contract: it never emits an
+// empty-text run at all -- a block that never accumulates any real text
+// is dropped entirely rather than materialized as a placeholder.
 struct Block {
   BlockType type = BlockType::Body;
   uint8_t listDepth = 0;   // ListItem only (1 = top level)
