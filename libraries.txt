@@ -24,6 +24,11 @@
 # NimBLE-Arduino             2.5.0              Cypher Flock ESP32 BLE aggregator
 # TinyGPSPlus                1.0.3              USE_GPS_DRIVER - NMEA parsing for the
 #                                               project 13 SurveyOps wardriver rows
+# JPEGDEC                    1.8.4              Project 25 Inkwell EPUB cover thumbnails
+#                                               (JPEG); was already installed locally but
+#                                               previously missing from this list
+# PNGdec                     1.1.6              Project 25 Inkwell EPUB cover thumbnails
+#                                               (PNG)
 # SmartRC-CC1101-Driver-Lib  2.5.7              USE_STARBEAM_RADIOS - CC1101 sub-GHz on
 #                                               project 19; PINNED in install-libs.sh.
 #                                               The registry now offers 3.0.2, a major

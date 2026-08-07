@@ -13,6 +13,7 @@
 #include "src/InkTheme.h"
 #include "src/ReaderView.h"
 #include "src/InkUi.h"
+#include "src/CoverArt.h"
 #endif
 
 SerialCommandRouter router;
@@ -436,6 +437,12 @@ void openBook(size_t idx) {
   uint32_t offset = 0;
   library.loadPosition(idx, spine, offset);  // false (no saved position) -> 0, 0
   if (spine >= book.chapterCount()) spine = 0;
+
+#if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
+  // Cover thumb cache: generated here, while the EPUB's bytes are resident
+  // (CoverArt.h documents why not at grid-draw time). No-op stub without SD.
+  CoverArt::generateThumb(e.id, book);
+#endif
 
   loadChapterAndLayout(spine);
   currentPage = paginator.pageForOffset(offset);

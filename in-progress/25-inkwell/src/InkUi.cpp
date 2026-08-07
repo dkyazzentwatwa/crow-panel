@@ -4,6 +4,7 @@
 
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
 
+#include "CoverArt.h"
 #include "GfxMeasure.h"
 #include "InkTheme.h"
 
@@ -104,8 +105,15 @@ void drawLibrary(Arduino_GFX *g, const LibraryStore &lib, size_t gridPage) {
     g->fillRect(x, y, kCardW, kCardH, card());
     g->drawRect(x, y, kCardW, kCardH, faint());
 
-    // Placeholder "cover": title in serif on the card. Task 13 swaps in
-    // real EPUB cover art when available and keeps this as the fallback.
+    // Real cover thumb when a cache exists (written the first time the
+    // book is opened -- see CoverArt.h); text placeholder otherwise.
+    if (CoverArt::drawCachedThumb(g, e.id, (int16_t)(x + 16), (int16_t)(y + 16))) {
+      g->setFont(InkwellGfx::inkFont(Ink::kStyleMono, 0));
+      g->setTextColor(faint());
+      g->setCursor(x + 16, y + kCardH - 24);
+      g->print(String(fmtTag(e.format)) + "  " + String(e.permille / 10) + "%");
+      continue;
+    }
     g->setFont(InkwellGfx::inkFont(Ink::kStyleBody, 1));
     g->setTextColor(ink());
     String title = e.title.length() ? e.title : e.id;
