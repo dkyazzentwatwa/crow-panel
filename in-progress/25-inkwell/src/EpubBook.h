@@ -2,6 +2,7 @@
 #define INKWELL_EPUB_BOOK_H
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -40,6 +41,10 @@ class EpubBook {
   std::string opfDir_;
   std::string title_, author_;
   std::vector<std::string> spineHrefs_;
+  // Resolved href -> spine index, built once when the spine is parsed so
+  // spineIndexForHref() (called once per TOC entry) is a lookup instead of
+  // a linear scan of the spine per entry.
+  std::map<std::string, int> hrefToSpineIndex_;
   std::string coverHref_, coverMedia_;
   std::vector<TocEntry> toc_;
 };

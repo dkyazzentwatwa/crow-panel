@@ -47,10 +47,15 @@ std::string collapseWs(const std::string &s) {
 // tag-close lookahead.
 constexpr size_t kNsPrefixWindow = 32;
 
-size_t findColonBounded(const std::string &s, size_t from, size_t limit) {
+// Bounded search for a single character within [from, limit) -- never
+// scans past `limit` even when `ch` doesn't occur before the end of the
+// whole string, which is what keeps callers below (the namespace-prefix
+// colon probe, and attrInSpan's quote-close search) from degrading into a
+// document-wide scan on malformed or attribute-less input.
+size_t findCharBounded(const std::string &s, char ch, size_t from, size_t limit) {
   size_t end = std::min(s.size(), limit);
   for (size_t j = from; j < end; ++j) {
-    if (s[j] == ':') return j;
+    if (s[j] == ch) return j;
   }
   return std::string::npos;
 }
@@ -75,7 +80,7 @@ size_t findTagLocal(const std::string &xml, const std::string &localName, size_t
       continue;
     }
     size_t nameStart = p;
-    size_t colon = findColonBounded(xml, p, p + kNsPrefixWindow);
+    size_t colon = findCharBounded(xml, ':', p, p + kNsPrefixWindow);
     if (colon != std::string::npos) {
       bool prefixLooksValid = true;
       for (size_t k = p; k < colon; ++k) {
@@ -98,26 +103,32 @@ size_t findTagLocal(const std::string &xml, const std::string &localName, size_t
 }
 
 // Extracts attrName="value" (single or double quotes tolerated) from
-// within [tagStart, tagEnd) -- bounded to one tag's span, so this can
-// never run away across the rest of the document even on malformed input.
+// within [tagStart, tagEnd) -- a manual, TRULY bounded scan. This does NOT
+// delegate to std::string::find(attrName, searchFrom): that searches all
+// the way to the end of the *entire document* before ever checking
+// whether the match landed past tagEnd, so a missing attribute (e.g.
+// `properties` on an ordinary manifest item -- true for nearly every
+// item) would cost a full-document scan per call, turning an N-item
+// manifest into O(n^2). Instead this walks only the [tagStart, tagEnd)
+// span itself char-by-char, and the closing-quote search is bounded the
+// same way via findCharBounded -- so cost is proportional to one tag's
+// length, never the document's, even when the attribute is absent.
 std::string attrInSpan(const std::string &s, size_t tagStart, size_t tagEnd,
                         const std::string &attrName) {
-  size_t searchFrom = tagStart;
-  while (searchFrom < tagEnd) {
-    size_t attrPos = s.find(attrName, searchFrom);
-    if (attrPos == std::string::npos || attrPos >= tagEnd) return "";
-    size_t eq = attrPos + attrName.size();
+  size_t alen = attrName.size();
+  if (alen == 0 || tagEnd <= tagStart || alen > tagEnd - tagStart) return "";
+  for (size_t i = tagStart; i + alen <= tagEnd; ++i) {
+    if (s.compare(i, alen, attrName) != 0) continue;
+    size_t eq = i + alen;
     while (eq < tagEnd && isWsChar(s[eq])) ++eq;
-    if (eq < tagEnd && s[eq] == '=') {
-      size_t q = eq + 1;
-      while (q < tagEnd && isWsChar(s[q])) ++q;
-      if (q < tagEnd && (s[q] == '"' || s[q] == '\'')) {
-        char quote = s[q];
-        size_t vend = s.find(quote, q + 1);
-        if (vend != std::string::npos && vend <= tagEnd) return s.substr(q + 1, vend - (q + 1));
-      }
-    }
-    searchFrom = attrPos + attrName.size();
+    if (eq >= tagEnd || s[eq] != '=') continue;
+    size_t q = eq + 1;
+    while (q < tagEnd && isWsChar(s[q])) ++q;
+    if (q >= tagEnd || (s[q] != '"' && s[q] != '\'')) continue;
+    char quote = s[q];
+    size_t vend = findCharBounded(s, quote, q + 1, tagEnd);
+    if (vend == std::string::npos) continue;
+    return s.substr(q + 1, vend - (q + 1));
   }
   return "";
 }
@@ -147,23 +158,31 @@ std::string attrValue(const std::string &xml, const std::string &tagNeedle,
   }
 }
 
-// Extracts the text content of a `<dc:LOCALNAME>...</dc:LOCALNAME>`
-// element (dc:title / dc:creator). Tolerates an unexpected namespace
-// prefix by falling back to a scan for any "...:LOCALNAME>" open tag if
-// the literal "dc:LOCALNAME" isn't present. The content never contains
-// nested markup in practice, so the end is simply the next '<'.
+// Extracts the text content of a `<dc:LOCALNAME ...>...</dc:LOCALNAME>`
+// element (dc:title / dc:creator). Reuses findTagLocal() -- already
+// tolerant of a namespace prefix ("dc:title", "opf:title", or unprefixed
+// "title") AND already boundary-aware -- to locate the OPENING tag
+// specifically, whether or not it carries attributes (e.g. EPUB3 refines:
+// `<dc:title id="t1">`, `<dc:creator opf:role="aut">`). Content is taken
+// from just after that tag's own '>' to the next '<' -- dc:title/creator
+// content never contains nested markup in practice, so the closing tag
+// (whatever its exact prefix) is always that next '<'.
+//
+// A naive "find the literal string ':LOCALNAME>'" fallback (the prior
+// approach) breaks the instant the open tag has attributes: for
+// `<dc:title id="t1">Attributed Title</dc:title>`, ":title>" does NOT
+// occur in the open tag (attributes intervene before '>') but DOES occur
+// in the CLOSE tag "</dc:title>" -- so that fallback would anchor on the
+// closing tag and return empty/wrong content. findTagLocal avoids this
+// because it explicitly rejects closing tags (a '/' right after '<') and
+// requires a real tag-boundary character after the name, not a literal
+// '>'.
 std::string extractSimpleText(const std::string &xml, const std::string &localName) {
-  std::string primary = "<dc:" + localName + ">";
-  size_t contentStart;
-  size_t start = xml.find(primary);
-  if (start != std::string::npos) {
-    contentStart = start + primary.size();
-  } else {
-    std::string suffix = ":" + localName + ">";
-    size_t sp = xml.find(suffix);
-    if (sp == std::string::npos) return "";
-    contentStart = sp + suffix.size();
-  }
+  size_t tagPos = findTagLocal(xml, localName, 0);
+  if (tagPos == std::string::npos) return "";
+  size_t tagEnd = xml.find('>', tagPos);
+  if (tagEnd == std::string::npos) return "";
+  size_t contentStart = tagEnd + 1;
   size_t end = xml.find('<', contentStart);
   if (end == std::string::npos) end = xml.size();
   return trim(decodeEntities(xml.substr(contentStart, end - contentStart)));
@@ -227,6 +246,7 @@ void EpubBook::close() {
   title_.clear();
   author_.clear();
   spineHrefs_.clear();
+  hrefToSpineIndex_.clear();
   coverHref_.clear();
   coverMedia_.clear();
   toc_.clear();
@@ -272,10 +292,11 @@ int EpubBook::spineIndexForHref(const std::string &href) const {
   std::string h = (hash == std::string::npos) ? href : href.substr(0, hash);
   while (h.size() >= 2 && h[0] == '.' && h[1] == '/') h = h.substr(2);
   std::string resolved = opfDir_ + h;
-  for (size_t i = 0; i < spineHrefs_.size(); ++i) {
-    if (spineHrefs_[i] == resolved) return (int)i;
-  }
-  return -1;
+  // O(log spine size) map lookup rather than a linear scan of the spine
+  // -- called once per TOC entry, so a linear scan here would make a
+  // large book's TOC parse O(toc x spine) instead of O(toc log spine).
+  auto it = hrefToSpineIndex_.find(resolved);
+  return (it != hrefToSpineIndex_.end()) ? it->second : -1;
 }
 
 void EpubBook::parseOpf(const std::string &opf, const std::string &opfDir) {
@@ -315,6 +336,7 @@ void EpubBook::parseOpf(const std::string &opf, const std::string &opfDir) {
     if (it != manifest.end() && (it->second.mediaType == "application/xhtml+xml" ||
                                   it->second.mediaType == "text/html")) {
       spineHrefs_.push_back(it->second.href);
+      hrefToSpineIndex_[it->second.href] = (int)spineHrefs_.size() - 1;
     }
     pos = tagEnd + 1;
   }
@@ -401,29 +423,35 @@ void EpubBook::parseNcxToc(const std::string &ncx) {
     if (npPos == std::string::npos) break;
     size_t npOpenEnd = ncx.find('>', npPos);
     if (npOpenEnd == std::string::npos) break;
-    size_t npCloseStart = ncx.find("</navPoint", npOpenEnd);
-    size_t npEnd = (npCloseStart == std::string::npos) ? ncx.size() : npCloseStart;
 
+    // A navPoint's OWN <navLabel><text> and <content> always come before
+    // any nested child <navPoint> (the NCX convention), so searching
+    // forward from npOpenEnd with no upper bound still finds THIS
+    // navPoint's text/content first, never a descendant's -- there is no
+    // need to (and, for a nested navPoint, no correct way to) bound the
+    // search to "this element's span" the way the nav-doc path bounds to
+    // </nav>.
     std::string title;
     size_t textPos = findTagLocal(ncx, "text", npOpenEnd);
-    if (textPos != std::string::npos && textPos < npEnd) {
+    if (textPos != std::string::npos) {
       size_t textOpenEnd = ncx.find('>', textPos);
-      if (textOpenEnd != std::string::npos && textOpenEnd < npEnd) {
+      if (textOpenEnd != std::string::npos) {
         size_t textCloseStart = ncx.find("</text", textOpenEnd);
-        size_t textEnd = (textCloseStart == std::string::npos || textCloseStart > npEnd)
-                              ? npEnd
-                              : textCloseStart;
+        size_t textEnd = (textCloseStart == std::string::npos) ? ncx.size() : textCloseStart;
         if (textOpenEnd + 1 <= textEnd)
           title = collapseWs(decodeEntities(ncx.substr(textOpenEnd + 1, textEnd - (textOpenEnd + 1))));
       }
     }
 
     std::string src;
+    size_t afterContentTag = npOpenEnd;  // resume point if <content> is missing
     size_t contentPos = findTagLocal(ncx, "content", npOpenEnd);
-    if (contentPos != std::string::npos && contentPos < npEnd) {
+    if (contentPos != std::string::npos) {
       size_t contentTagEnd = ncx.find('>', contentPos);
-      if (contentTagEnd != std::string::npos && contentTagEnd <= npEnd)
+      if (contentTagEnd != std::string::npos) {
         src = attrInSpan(ncx, contentPos, contentTagEnd, "src");
+        afterContentTag = contentTagEnd;
+      }
     }
 
     TocEntry entry;
@@ -431,7 +459,14 @@ void EpubBook::parseNcxToc(const std::string &ncx) {
     entry.spineIndex = spineIndexForHref(src);
     toc_.push_back(std::move(entry));
 
-    pos = (npCloseStart == std::string::npos) ? ncx.size() : npCloseStart + 1;
+    // Resume just past THIS navPoint's own <content .../> -- NOT past its
+    // closing </navPoint>. A nested child <navPoint>, if any, begins
+    // right after the parent's own content, so the next findTagLocal()
+    // call picks it up as its own entry on the next iteration instead of
+    // it being silently swallowed inside the parent's span. This
+    // flattens nested navPoints into document order, the same way
+    // parseNavToc() flattens nested <a> structure in a nav document.
+    pos = afterContentTag + 1;
   }
 }
 

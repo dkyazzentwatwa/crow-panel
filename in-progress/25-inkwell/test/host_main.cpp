@@ -841,6 +841,136 @@ static int testEpubChapterSizePositive() {
   return 0;
 }
 
+// Spec-review fix 3: an EPUB3 "refines" shape -- attributes on the
+// dc:title/dc:creator opening tag -- must not blank out the title/author.
+// The prior ":title>" fallback anchored on the CLOSING tag instead of the
+// (attributed) opening tag and returned empty text.
+static int testEpubAttributedMetadataTags() {
+  mz_zip_archive z; memset(&z, 0, sizeof(z));
+  mz_zip_writer_init_heap(&z, 0, 16 * 1024);
+  auto add = [&](const char *name, const std::string &data) {
+    mz_zip_writer_add_mem(&z, name, data.data(), data.size(), MZ_DEFAULT_COMPRESSION);
+  };
+  add("mimetype", "application/epub+zip");
+  add("META-INF/container.xml",
+      "<?xml version=\"1.0\"?><container><rootfiles>"
+      "<rootfile full-path=\"OEBPS/content.opf\" media-type=\"application/oebps-package+xml\"/>"
+      "</rootfiles></container>");
+  add("OEBPS/content.opf",
+      "<?xml version=\"1.0\"?><package><metadata>"
+      "<dc:title id=\"t1\">Attributed Title</dc:title>"
+      "<dc:creator opf:role=\"aut\">A. Author</dc:creator>"
+      "</metadata><manifest>"
+      "<item id=\"c1\" href=\"ch1.xhtml\" media-type=\"application/xhtml+xml\"/>"
+      "</manifest><spine><itemref idref=\"c1\"/></spine></package>");
+  add("OEBPS/ch1.xhtml", "<html><body><p>x</p></body></html>");
+  void *buf = nullptr; size_t size = 0;
+  mz_zip_writer_finalize_heap_archive(&z, &buf, &size);
+  std::string zipData((char *)buf, size);
+  mz_zip_writer_end(&z); mz_free(buf);
+
+  Ink::EpubBook book;
+  CHECK(book.open((const uint8_t *)zipData.data(), zipData.size()));
+  CHECK(book.title() == "Attributed Title");
+  CHECK(book.author() == "A. Author");
+  return 0;
+}
+
+// Spec-review fix 4: a navPoint's nested child navPoint must not be
+// silently dropped -- the NCX path must flatten nesting into document
+// order, exactly like the nav-doc path already does for nested <a> markup.
+static int testEpubNcxNestedNavPointFlattened() {
+  mz_zip_archive z; memset(&z, 0, sizeof(z));
+  mz_zip_writer_init_heap(&z, 0, 16 * 1024);
+  auto add = [&](const char *name, const std::string &data) {
+    mz_zip_writer_add_mem(&z, name, data.data(), data.size(), MZ_DEFAULT_COMPRESSION);
+  };
+  add("mimetype", "application/epub+zip");
+  add("META-INF/container.xml",
+      "<?xml version=\"1.0\"?><container><rootfiles>"
+      "<rootfile full-path=\"OEBPS/content.opf\" media-type=\"application/oebps-package+xml\"/>"
+      "</rootfiles></container>");
+  add("OEBPS/content.opf",
+      "<?xml version=\"1.0\"?><package><metadata><dc:title>T</dc:title></metadata>"
+      "<manifest>"
+      "<item id=\"c1\" href=\"ch1.xhtml\" media-type=\"application/xhtml+xml\"/>"
+      "<item id=\"c2\" href=\"ch2.xhtml\" media-type=\"application/xhtml+xml\"/>"
+      "<item id=\"ncx\" href=\"toc.ncx\" media-type=\"application/x-dtbncx+xml\"/>"
+      "</manifest><spine toc=\"ncx\">"
+      "<itemref idref=\"c1\"/><itemref idref=\"c2\"/></spine></package>");
+  add("OEBPS/ch1.xhtml", "<html><body><p>x</p></body></html>");
+  add("OEBPS/ch2.xhtml", "<html><body><p>y</p></body></html>");
+  add("OEBPS/toc.ncx",
+      "<ncx><navMap><navPoint><navLabel><text>Parent</text></navLabel>"
+      "<content src=\"ch1.xhtml\"/>"
+      "<navPoint><navLabel><text>Child</text></navLabel>"
+      "<content src=\"ch2.xhtml\"/></navPoint>"
+      "</navPoint></navMap></ncx>");
+  void *buf = nullptr; size_t size = 0;
+  mz_zip_writer_finalize_heap_archive(&z, &buf, &size);
+  std::string zipData((char *)buf, size);
+  mz_zip_writer_end(&z); mz_free(buf);
+
+  Ink::EpubBook book;
+  CHECK(book.open((const uint8_t *)zipData.data(), zipData.size()));
+  CHECK(book.toc().size() == 2);
+  CHECK(book.toc()[0].title == "Parent" && book.toc()[0].spineIndex == 0);
+  CHECK(book.toc()[1].title == "Child" && book.toc()[1].spineIndex == 1);
+  return 0;
+}
+
+// Perf guard: the reintroduced-O(n^2) tripwire. A manifest/spine with many
+// items must still open in comfortably under a second -- before the
+// attrInSpan bound and the href->spineIndex map, this kind of fixture is
+// exactly what would have gone quadratic (a missing `properties` attribute
+// scanned to end-of-document per item, and a spine scanned per TOC entry).
+static int testEpubPerfManyManifestItems() {
+  constexpr int kItems = 1500;
+  mz_zip_archive z; memset(&z, 0, sizeof(z));
+  mz_zip_writer_init_heap(&z, 0, 512 * 1024);
+  auto add = [&](const std::string &name, const std::string &data) {
+    mz_zip_writer_add_mem(&z, name.c_str(), data.data(), data.size(), MZ_DEFAULT_COMPRESSION);
+  };
+  add("mimetype", "application/epub+zip");
+  add("META-INF/container.xml",
+      "<?xml version=\"1.0\"?><container><rootfiles>"
+      "<rootfile full-path=\"OEBPS/content.opf\" media-type=\"application/oebps-package+xml\"/>"
+      "</rootfiles></container>");
+
+  std::string opf =
+      "<?xml version=\"1.0\"?><package><metadata>"
+      "<dc:title>Big Book</dc:title><dc:creator>Author</dc:creator>"
+      "</metadata><manifest>";
+  for (int i = 0; i < kItems; ++i) {
+    opf += "<item id=\"c" + std::to_string(i) + "\" href=\"ch" + std::to_string(i) +
+           ".xhtml\" media-type=\"application/xhtml+xml\"/>";
+  }
+  opf += "</manifest><spine>";
+  for (int i = 0; i < kItems; ++i) {
+    opf += "<itemref idref=\"c" + std::to_string(i) + "\"/>";
+  }
+  opf += "</spine></package>";
+  add("OEBPS/content.opf", opf);
+  for (int i = 0; i < kItems; ++i) {
+    add("OEBPS/ch" + std::to_string(i) + ".xhtml", "<html><body><p>x</p></body></html>");
+  }
+  void *buf = nullptr; size_t size = 0;
+  mz_zip_writer_finalize_heap_archive(&z, &buf, &size);
+  std::string zipData((char *)buf, size);
+  mz_zip_writer_end(&z); mz_free(buf);
+
+  Ink::EpubBook book;
+  auto t0 = std::chrono::steady_clock::now();
+  bool ok = book.open((const uint8_t *)zipData.data(), zipData.size());
+  auto t1 = std::chrono::steady_clock::now();
+  double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+  std::fprintf(stderr, "perf epub manifest (%d items): %.1f ms\n", kItems, ms);
+  CHECK(ok);
+  CHECK(book.chapterCount() == (size_t)kItems);
+  CHECK(ms < 1000.0);
+  return 0;
+}
+
 int main() {
   if (testTxtParagraphs()) return 1;
   if (testTxtEdges()) return 1;
@@ -902,6 +1032,9 @@ int main() {
   if (testEpubTocEntryUnresolvedHrefKept()) return 1;
   if (testEpubChapterXhtmlOutOfRange()) return 1;
   if (testEpubChapterSizePositive()) return 1;
+  if (testEpubAttributedMetadataTags()) return 1;
+  if (testEpubNcxNestedNavPointFlattened()) return 1;
+  if (testEpubPerfManyManifestItems()) return 1;
   std::printf("inkwell host tests: %d checks passed\n", checks);
   return 0;
 }
