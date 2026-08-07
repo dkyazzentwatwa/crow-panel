@@ -22,7 +22,8 @@ namespace Ink {
 // collapsed into the normal single-space join, and links/images or HTML
 // tags whose closing marker falls outside the bounded lookahead window
 // (>512 bytes for links/images, >=64 bytes for tags) render as literal
-// markup instead of being parsed.
+// markup instead of being parsed. HTML entities (e.g. "&amp;") are kept
+// verbatim -- no entity decoding, unlike XhtmlParser.
 //
 // Rule is the one BlockType that always has zero runs -- renderers must
 // treat it as the exception to the "every block has >=1 run" guarantee

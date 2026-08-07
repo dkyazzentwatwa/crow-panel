@@ -331,7 +331,16 @@ uint32_t EpubBook::chapterSize(size_t i) const {
   if (idx < 0) return 0;
   mz_zip_archive_file_stat stat;
   if (!mz_zip_reader_file_stat(zip, (mz_uint)idx, &stat)) return 0;
-  return (uint32_t)stat.m_comp_size;
+  // Uncompressed size, not compressed: callers (InkBook::permille) weight
+  // chapters against DECOMPRESSED reading-position offsets, so mixing in
+  // the compressed byte count would skew intra-chapter progress by that
+  // chapter's own compression ratio. Same stat call either way, no extra
+  // cost. Clamped to kMaxEntryBytes for consistency with readEntry's own
+  // cap -- a chapter this function reports a size for is a chapter
+  // readEntry would actually agree to extract.
+  uint64_t uncomp = stat.m_uncomp_size;
+  if (uncomp > kMaxEntryBytes) uncomp = kMaxEntryBytes;
+  return (uint32_t)uncomp;
 }
 
 bool EpubBook::chapterXhtml(size_t i, std::string &out) {

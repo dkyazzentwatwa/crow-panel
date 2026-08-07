@@ -30,7 +30,8 @@ class EpubBook {
   const std::string &title() const { return title_; }
   const std::string &author() const { return author_; }
   size_t chapterCount() const { return spineHrefs_.size(); }
-  uint32_t chapterSize(size_t i) const;          // compressed entry size (for book %)
+  uint32_t chapterSize(size_t i) const;          // uncompressed entry size, clamped to
+                                                  // kMaxEntryBytes (for book %)
   bool chapterXhtml(size_t i, std::string &out); // extract chapter i
   const std::vector<TocEntry> &toc() const { return toc_; }
   bool coverImage(std::string &out, std::string &mediaType);

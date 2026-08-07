@@ -33,14 +33,20 @@ bool InkBook::open(Format f, const uint8_t *data, size_t size) {
       fmt_ = f;
       data_ = data;
       size_ = size;
+      // (uint32_t)size: a book loaded whole into memory (mock PROGMEM
+      // buffer or an SD file staged into PSRAM) is bounded far below 4GB
+      // by the loader long before it reaches here -- 16MB flash and 32MB
+      // PSRAM both fit comfortably in 32 bits.
       chapterSizes_ = {(uint32_t)size};
+      totalSize_ = size;
       return true;  // TXT always succeeds, even for an empty buffer
 
     case Format::Markdown: {
       fmt_ = f;
       data_ = data;
       size_ = size;
-      chapterSizes_ = {(uint32_t)size};
+      chapterSizes_ = {(uint32_t)size};  // see the TXT case for the cast note
+      totalSize_ = size;
       // One pre-scan of the whole document so the TOC is ready the instant
       // open() returns -- the mock/serial layer needs the TOC immediately,
       // and this is the only parse open() performs. loadChapter() parses
@@ -67,6 +73,10 @@ bool InkBook::open(Format f, const uint8_t *data, size_t size) {
       // below) in a clean, reusable state.
       if (!epub_.open(data, size)) return false;
       fmt_ = f;
+      // data_/size_ aren't read anywhere on the EPUB path (loadChapter()
+      // goes through epub_ instead) -- stored here purely for uniformity
+      // with the TXT/MD cases and any future introspection, not because
+      // this branch consumes them itself.
       data_ = data;
       size_ = size;
       title_ = epub_.title();
@@ -74,14 +84,15 @@ bool InkBook::open(Format f, const uint8_t *data, size_t size) {
       toc_ = epub_.toc();
       tocOffsets_.assign(toc_.size(), 0);  // EPUB TOC offsets are always 0
       chapterSizes_.resize(epub_.chapterCount());
+      totalSize_ = 0;
       for (size_t i = 0; i < chapterSizes_.size(); ++i) {
-        // Compressed entry size, not decompressed/rendered length -- so
-        // permille() is compressed-byte-weighted for EPUB. An accepted
-        // approximation: an image-heavy chapter's own images live in
-        // separate zip entries, not counted here, but a text-heavy
-        // chapter that happens to compress unusually well or poorly will
-        // skew slightly. Good enough for a progress bar, not exact.
+        // Uncompressed entry size -- matches the decompressed byte
+        // offsets loadChapter()/the paginator/permille() all work in, so
+        // chapterSizes_ is just a per-chapter byte weight, nothing more
+        // exotic. (Chapter images live in separate zip entries and
+        // aren't counted here, same as before.)
         chapterSizes_[i] = epub_.chapterSize(i);
+        totalSize_ += chapterSizes_[i];
       }
       return true;
     }
@@ -99,6 +110,7 @@ void InkBook::close() {
   toc_.clear();
   tocOffsets_.clear();
   chapterSizes_.clear();
+  totalSize_ = 0;
 }
 
 size_t InkBook::chapterCount() const {
@@ -137,23 +149,40 @@ uint32_t InkBook::tocOffset(size_t i) const {
   return tocOffsets_[i];
 }
 
+bool InkBook::tocTarget(size_t i, size_t &chapter) const {
+  if (i >= toc_.size()) return false;
+  if (fmt_ == Format::Epub) {
+    int idx = toc_[i].spineIndex;
+    if (idx < 0) return false;  // href never resolved to a spine item
+    chapter = (size_t)idx;
+    return true;
+  }
+  // TXT never populates toc_ (caught by the bounds check above). MD's
+  // TOC entries are always spineIndex 0 -- the single chapter -- resolved
+  // directly here rather than trusting spineIndex for a format that
+  // never really had a "spine".
+  chapter = 0;
+  return true;
+}
+
 uint16_t InkBook::permille(size_t chapter, uint32_t offset) const {
-  if (chapterSizes_.empty()) return 0;
+  if (chapterSizes_.empty() || totalSize_ == 0) return 0;
   if (chapter >= chapterSizes_.size()) chapter = chapterSizes_.size() - 1;
 
   // uint64_t throughout: a 4GB book times 1000 would overflow uint32_t --
   // silly for anything that fits in 32MB PSRAM, but free to avoid.
-  uint64_t total = 0;
-  for (uint32_t sz : chapterSizes_) total += sz;
-  if (total == 0) return 0;
-
   uint64_t before = 0;
   for (size_t i = 0; i < chapter; ++i) before += chapterSizes_[i];
 
   uint64_t capped = offset;
   if (capped > chapterSizes_[chapter]) capped = chapterSizes_[chapter];
 
-  return (uint16_t)(((before + capped) * 1000ull) / total);
+  return (uint16_t)(((before + capped) * 1000ull) / totalSize_);
+}
+
+bool InkBook::coverImage(std::string &out, std::string &mediaType) {
+  if (fmt_ != Format::Epub) return false;  // TXT/MD: no cover, no touch
+  return epub_.coverImage(out, mediaType);
 }
 
 }  // namespace Ink

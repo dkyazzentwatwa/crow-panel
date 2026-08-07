@@ -1863,10 +1863,21 @@ static int testInkBookEpubOpenFailureThenTxtSucceeds() {
   return 0;
 }
 
-// permille is byte-weighted over EpubBook::chapterSize()'s COMPRESSED
-// entry sizes -- read them from the same API InkBook itself used at
-// open() rather than hardcoding miniz's output, so this doesn't break the
-// moment compression tuning changes a byte count.
+// permille is byte-weighted over EpubBook::chapterSize()'s UNCOMPRESSED
+// entry sizes (AMENDED 2026-08-06, fix(25): permille uses uncompressed
+// sizes -- see EpubBook::chapterSize()'s comment for why compressed sizes
+// under-report intra-chapter progress). Sizes are read from the same API
+// InkBook itself used at open() rather than hardcoded, so this doesn't
+// break if the fixture's markup ever changes length.
+//
+// Hand check against the current fixture text (ch1.xhtml is 64 bytes,
+// ch2.xhtml is 65 bytes, both counted with a text editor / len(), and
+// re-derived below from the live API so the numbers can't drift silently):
+// total=129, permille(0,0)=0, permille(0,64)==permille(1,0)=floor(64000/
+// 129)=496, permille(0,32)=floor(32000/129)=248 -- strictly between 0 and
+// 496, proving the fixture's mid-chapter reading position is NOT pinned
+// to either end (the bug this test set guards: permille used to freeze at
+// the chapter's compression ratio instead of moving smoothly to 1000).
 static int testInkBookPermilleEpub() {
   std::string zipData = buildFixtureEpub(true);
   Ink::InkBook book;
@@ -1879,10 +1890,22 @@ static int testInkBookPermilleEpub() {
   CHECK(s0 > 0 && s1 > 0);
   uint64_t total = (uint64_t)s0 + (uint64_t)s1;
   uint16_t expectedChapter1Start = (uint16_t)(((uint64_t)s0 * 1000ull) / total);
+  uint16_t expectedMid = (uint16_t)(((uint64_t)(s0 / 2) * 1000ull) / total);
 
   CHECK(book.permille(0, 0) == 0);
   CHECK(book.permille(1, 0) == expectedChapter1Start);
+  CHECK(book.permille(0, s0) == expectedChapter1Start);  // end of ch0 == start of ch1
   CHECK(book.permille(1, 0xFFFFFFFFu) == 1000);  // huge offset clamps to end
+
+  // The regression probe: a MID-chapter offset must land strictly between
+  // the chapter's start and end permille, not saturate early the way a
+  // compressed-byte weighting could (this is exactly what the old
+  // compressed-size bug broke -- see the AMENDED note above).
+  uint16_t atStart = book.permille(0, 0);
+  uint16_t atMid = book.permille(0, s0 / 2);
+  uint16_t atEnd = book.permille(0, s0);
+  CHECK(atMid == expectedMid);
+  CHECK(atStart < atMid && atMid < atEnd);
   return 0;
 }
 
@@ -1923,6 +1946,139 @@ static int testInkBookIntegrationPaginate() {
   CHECK(!p.lines().empty());
   CHECK(!p.lines()[0].segs.empty());
   CHECK(p.lines()[0].segs[0].text == "One");
+  return 0;
+}
+
+// tocTarget: EPUB path. Reuses the unresolved-href shape from
+// testEpubTocEntryUnresolvedHrefKept (a nav TOC with one entry pointing
+// at a real spine chapter and one pointing nowhere) so the resolved and
+// unresolved cases sit side by side in one TOC.
+static int testInkBookTocTargetEpub() {
+  ZipBuilder zb;
+  zb.add("mimetype", "application/epub+zip");
+  zb.add("META-INF/container.xml",
+         "<?xml version=\"1.0\"?><container><rootfiles>"
+         "<rootfile full-path=\"OEBPS/content.opf\" media-type=\"application/oebps-package+xml\"/>"
+         "</rootfiles></container>");
+  zb.add("OEBPS/content.opf",
+         "<?xml version=\"1.0\"?><package><metadata><dc:title>T</dc:title></metadata>"
+         "<manifest>"
+         "<item id=\"c1\" href=\"ch1.xhtml\" media-type=\"application/xhtml+xml\"/>"
+         "<item id=\"nav\" href=\"nav.xhtml\" media-type=\"application/xhtml+xml\" properties=\"nav\"/>"
+         "</manifest><spine><itemref idref=\"c1\"/></spine></package>");
+  zb.add("OEBPS/ch1.xhtml", "<html><body><p>x</p></body></html>");
+  zb.add("OEBPS/nav.xhtml",
+         "<html><body><nav epub:type=\"toc\"><ol>"
+         "<li><a href=\"ch1.xhtml\">Real</a></li>"
+         "<li><a href=\"nowhere.xhtml\">Ghost</a></li></ol></nav></body></html>");
+  std::string zipData = zb.finalize();
+
+  Ink::InkBook book;
+  CHECK(book.open(Ink::Format::Epub, (const uint8_t *)zipData.data(), zipData.size()));
+  CHECK(book.toc().size() == 2);
+
+  size_t chapter = 999;  // sentinel: must be overwritten only on success
+  CHECK(book.tocTarget(0, chapter));
+  CHECK(chapter == 0);
+  CHECK(!book.tocTarget(1, chapter));   // "nowhere.xhtml" never resolved
+  CHECK(!book.tocTarget(2, chapter));   // out of range
+  return 0;
+}
+
+// tocTarget: MD path. Every MD TOC entry targets the single chapter 0.
+static int testInkBookTocTargetMarkdown() {
+  std::string src = "# A\n\nbody\n\n## B\n\nbody";
+  Ink::InkBook book;
+  CHECK(book.open(Ink::Format::Markdown, (const uint8_t *)src.data(), src.size()));
+  CHECK(book.toc().size() == 2);
+
+  size_t chapter = 999;
+  CHECK(book.tocTarget(0, chapter) && chapter == 0);
+  chapter = 999;
+  CHECK(book.tocTarget(1, chapter) && chapter == 0);
+  CHECK(!book.tocTarget(2, chapter));  // out of range
+  return 0;
+}
+
+// TXT never has TOC entries at all, so every index is out of range.
+static int testInkBookTocTargetTxt() {
+  std::string src = "hello\n";
+  Ink::InkBook book;
+  CHECK(book.open(Ink::Format::Txt, (const uint8_t *)src.data(), src.size()));
+  CHECK(book.toc().empty());
+  size_t chapter = 999;
+  CHECK(!book.tocTarget(0, chapter));
+  return 0;
+}
+
+// open(Txt, nullptr, 0) is the ONLY thing exercising InkBook's
+// bufferToString() nullptr guard: constructing std::string(nullptr, 0)
+// straight from a raw pointer is technically UB even at zero length, so
+// this must go through the empty-string branch instead, and behave like
+// any other empty TXT book (open succeeds, one chapter, zero blocks).
+static int testInkBookNullEmptyOpenTxt() {
+  Ink::InkBook book;
+  CHECK(book.open(Ink::Format::Txt, nullptr, 0));
+  CHECK(book.chapterCount() == 1);
+  std::vector<Ink::Block> blocks;
+  CHECK(book.loadChapter(0, blocks));
+  CHECK(blocks.empty());
+  CHECK(book.permille(0, 0) == 0);  // total 0 -> 0, not a divide-by-zero
+  return 0;
+}
+
+// Same nullptr/zero-size guard on the MD path, which additionally runs
+// the TOC pre-scan over the (empty) buffer at open() time.
+static int testInkBookNullEmptyOpenMarkdown() {
+  Ink::InkBook book;
+  CHECK(book.open(Ink::Format::Markdown, nullptr, 0));
+  CHECK(book.chapterCount() == 1);
+  CHECK(book.toc().empty());
+  std::vector<Ink::Block> blocks;
+  CHECK(book.loadChapter(0, blocks));
+  CHECK(blocks.empty());
+  return 0;
+}
+
+// Direct close() (whether or not open() was ever called first) leaves a
+// fully-reset, reusable InkBook: default TXT format, one reported
+// chapter, empty toc/title/author, and a permille() that returns 0
+// rather than reading stale chapterSizes_/totalSize_.
+static int testInkBookCloseResetsState() {
+  Ink::InkBook book;
+  std::string zipData = buildFixtureEpub(true);
+  CHECK(book.open(Ink::Format::Epub, (const uint8_t *)zipData.data(), zipData.size()));
+  CHECK(book.chapterCount() == 2);
+  CHECK(!book.title().empty());
+
+  book.close();
+  CHECK(book.format() == Ink::Format::Txt);
+  CHECK(book.chapterCount() == 1);
+  CHECK(book.toc().empty());
+  CHECK(book.title().empty());
+  CHECK(book.author().empty());
+  CHECK(book.permille(0, 0) == 0);
+  return 0;
+}
+
+// coverImage(): false (untouched out params) for TXT/MD, delegates to
+// EpubBook for EPUB. Reuses the existing fixture, which already carries a
+// cover.jpg + <meta name="cover"> (see testEpubOpen).
+static int testInkBookCoverImage() {
+  Ink::InkBook txtBook;
+  std::string src = "hello\n";
+  CHECK(txtBook.open(Ink::Format::Txt, (const uint8_t *)src.data(), src.size()));
+  std::string out = "untouched", mediaType = "untouched";
+  CHECK(!txtBook.coverImage(out, mediaType));
+  CHECK(out == "untouched" && mediaType == "untouched");
+
+  std::string zipData = buildFixtureEpub(true);
+  Ink::InkBook book;
+  CHECK(book.open(Ink::Format::Epub, (const uint8_t *)zipData.data(), zipData.size()));
+  std::string cover, mediaType2;
+  CHECK(book.coverImage(cover, mediaType2));
+  CHECK(mediaType2 == "image/jpeg");
+  CHECK(!cover.empty());
   return 0;
 }
 
@@ -2023,6 +2179,13 @@ int main() {
   if (testInkBookPermilleEpub()) return 1;
   if (testInkBookReopenTxtThenEpub()) return 1;
   if (testInkBookIntegrationPaginate()) return 1;
+  if (testInkBookTocTargetEpub()) return 1;
+  if (testInkBookTocTargetMarkdown()) return 1;
+  if (testInkBookTocTargetTxt()) return 1;
+  if (testInkBookNullEmptyOpenTxt()) return 1;
+  if (testInkBookNullEmptyOpenMarkdown()) return 1;
+  if (testInkBookCloseResetsState()) return 1;
+  if (testInkBookCoverImage()) return 1;
   std::printf("inkwell host tests: %d checks passed\n", checks);
   return 0;
 }
