@@ -139,13 +139,24 @@ fenced code block, a thematic break, a link, and a dropped image.
 // ---------------------------------------------------------------------
 namespace detail {
 
+// Every miniz writer call is return-checked; on any failure this returns a
+// static empty string rather than risking std::string(nullptr, 0) UB from
+// an unfilled (buf=nullptr, size=0) finalize result -- the same hazard
+// InkBook.cpp's bufferToString() guards against for a null data pointer.
+// LibraryStore::begin() additionally skips registering a zero-byte sample
+// (see its own comment), so an empty result here degrades to "one fewer
+// library entry" rather than a bad BookEntry.
 inline std::string buildSampleEpubZip() {
   mz_zip_archive zip{};
-  mz_zip_writer_init_heap(&zip, 0, 32 * 1024);
+  if (!mz_zip_writer_init_heap(&zip, 0, 32 * 1024)) return std::string();
 
+  bool ok = true;
   auto add = [&](const char *name, const std::string &data) {
-    mz_zip_writer_add_mem(&zip, name, data.data(), data.size(),
-                           MZ_DEFAULT_COMPRESSION);
+    if (!ok) return;
+    if (!mz_zip_writer_add_mem(&zip, name, data.data(), data.size(),
+                                MZ_DEFAULT_COMPRESSION)) {
+      ok = false;
+    }
   };
 
   add("mimetype", "application/epub+zip");
@@ -225,9 +236,17 @@ inline std::string buildSampleEpubZip() {
       "<li><a href=\"ch3.xhtml\">The Long Shelf</a></li>"
       "</ol></nav></body></html>");
 
+  if (!ok) {
+    mz_zip_writer_end(&zip);
+    return std::string();
+  }
+
   void *buf = nullptr;
   size_t size = 0;
-  mz_zip_writer_finalize_heap_archive(&zip, &buf, &size);
+  if (!mz_zip_writer_finalize_heap_archive(&zip, &buf, &size)) {
+    mz_zip_writer_end(&zip);
+    return std::string();
+  }
   std::string out(static_cast<const char *>(buf), size);
   mz_zip_writer_end(&zip);
   mz_free(buf);

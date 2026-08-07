@@ -12,6 +12,7 @@
 #include "../src/miniz.h"
 #include "../src/Paginator.h"
 #include "../src/InkBook.h"
+#include "../src/SampleBooks.h"
 #include <vector>
 
 static int checks = 0;
@@ -2162,6 +2163,83 @@ static int testInkBookCoverImage() {
   return 0;
 }
 
+// --- SampleBooks.h integration (Task 8) ----------------------------------
+// SampleBooks.h is Arduino-free by design, so it -- unlike LibraryStore.h/
+// .cpp, which are device-only -- belongs in the host suite: these two
+// tests are the guard against the embedded samples silently rotting (a
+// future edit to a parser or to the sample text itself changing what a
+// device boot would actually render, with nothing catching it here).
+
+// Opens the real embedded EPUB sample through InkBook (not a fixture) and
+// paginates chapter 0 with the shared MockMeasure, pinning the exact
+// values a scratch run verified: title/chapterCount from the book's own
+// metadata, and chapter 0's first rendered line's first (and, since the
+// whole heading fits one line and headings collapse to a single style,
+// only) seg -- the literal heading text with no wrapping.
+static int testSampleEpubIntegration() {
+  const std::string &zip = Ink::sampleEpub();
+  CHECK(!zip.empty());  // catches a SampleBooks.h build regression outright
+
+  Ink::InkBook book;
+  CHECK(book.open(Ink::Format::Epub, (const uint8_t *)zip.data(), zip.size()));
+  CHECK(book.title() == "The Inkwell Sampler");
+  CHECK(book.author() == "Project 25");
+  CHECK(book.chapterCount() == 3);
+
+  std::vector<Ink::Block> blocks;
+  CHECK(book.loadChapter(0, blocks));
+  CHECK(!blocks.empty());
+
+  Ink::LayoutSettings s;
+  MockMeasure m;
+  Ink::Paginator p;
+  p.layout(blocks, s, m);
+  CHECK(!p.lines().empty());
+  CHECK(!p.lines()[0].segs.empty());
+  CHECK(p.lines()[0].segs[0].text == "The Blank Page");
+  return 0;
+}
+
+// Census check on the Markdown sample: every block type the task spec asked
+// it to exercise (h1/h2/h3, bold/italic/mono, a nested + an ordered list, a
+// blockquote, a fenced code block, an hr, a link, a dropped image) must
+// still be present with the exact counts a scratch run verified. This
+// can't tell a reviewer WHAT changed if it fails, but it makes an edit
+// that silently drops a feature (e.g. someone "cleaning up" the ordered
+// list) fail loudly instead of only showing up as a missing demo on
+// device.
+static int testSampleMarkdownCensus() {
+  const std::string &md = Ink::sampleMarkdown();
+  CHECK(!md.empty());
+
+  auto blocks = Ink::parseMarkdown(md);
+  int h1 = 0, h2 = 0, h3 = 0, quote = 0, code = 0, rule = 0, listItem = 0, ordered = 0;
+  for (const auto &b : blocks) {
+    switch (b.type) {
+      case Ink::BlockType::H1: ++h1; break;
+      case Ink::BlockType::H2: ++h2; break;
+      case Ink::BlockType::H3: ++h3; break;
+      case Ink::BlockType::Quote: ++quote; break;
+      case Ink::BlockType::Code: ++code; break;
+      case Ink::BlockType::Rule: ++rule; break;
+      case Ink::BlockType::ListItem:
+        ++listItem;
+        if (b.ordered) ++ordered;
+        break;
+      default: break;
+    }
+  }
+  CHECK(h1 == 1);
+  CHECK(h2 == 3);
+  CHECK(h3 == 1);
+  CHECK(quote == 1);
+  CHECK(code == 1);
+  CHECK(rule == 1);
+  CHECK(listItem == 8);
+  CHECK(ordered == 3);
+  return 0;
+}
+
 int main() {
   if (testTxtParagraphs()) return 1;
   if (testTxtEdges()) return 1;
@@ -2267,6 +2345,8 @@ int main() {
   if (testInkBookNullEmptyOpenMarkdown()) return 1;
   if (testInkBookCloseResetsState()) return 1;
   if (testInkBookCoverImage()) return 1;
+  if (testSampleEpubIntegration()) return 1;
+  if (testSampleMarkdownCensus()) return 1;
   std::printf("inkwell host tests: %d checks passed\n", checks);
   return 0;
 }

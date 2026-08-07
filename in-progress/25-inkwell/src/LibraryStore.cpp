@@ -10,29 +10,40 @@ const BookEntry kEmptyEntry;
 bool LibraryStore::begin() {
   count_ = 0;
 
-  entries_[count_].id = "sample-txt";
-  entries_[count_].title = "The Lighthouse Keeper's Ledger";
-  entries_[count_].author = "Anonymous";
-  entries_[count_].format = Ink::Format::Txt;
-  entries_[count_].bytes = (uint32_t)Ink::sampleTxt().size();
-  entries_[count_].permille = 0;
-  ++count_;
+  // Each sample is skipped (not registered) if it comes back empty --
+  // guards against SampleBooks.h's buildSampleEpubZip() ever returning its
+  // documented empty-string failure case (a miniz writer error). TXT/MD
+  // are static compiled-in literals that can never legitimately be empty,
+  // but the same guard costs nothing and keeps all three paths uniform.
+  if (!Ink::sampleTxt().empty()) {
+    entries_[count_].id = "sample-txt";
+    entries_[count_].title = "The Lighthouse Keeper's Ledger";
+    entries_[count_].author = "Anonymous";
+    entries_[count_].format = Ink::Format::Txt;
+    entries_[count_].bytes = (uint32_t)Ink::sampleTxt().size();
+    entries_[count_].permille = 0;
+    ++count_;
+  }
 
-  entries_[count_].id = "sample-md";
-  entries_[count_].title = "Inkwell Format Demo";
-  entries_[count_].author = "Project 25";
-  entries_[count_].format = Ink::Format::Markdown;
-  entries_[count_].bytes = (uint32_t)Ink::sampleMarkdown().size();
-  entries_[count_].permille = 0;
-  ++count_;
+  if (!Ink::sampleMarkdown().empty()) {
+    entries_[count_].id = "sample-md";
+    entries_[count_].title = "Inkwell Format Demo";
+    entries_[count_].author = "Project 25";
+    entries_[count_].format = Ink::Format::Markdown;
+    entries_[count_].bytes = (uint32_t)Ink::sampleMarkdown().size();
+    entries_[count_].permille = 0;
+    ++count_;
+  }
 
-  entries_[count_].id = "sample-epub";
-  entries_[count_].title = "The Inkwell Sampler";
-  entries_[count_].author = "Project 25";
-  entries_[count_].format = Ink::Format::Epub;
-  entries_[count_].bytes = (uint32_t)Ink::sampleEpub().size();
-  entries_[count_].permille = 0;
-  ++count_;
+  if (!Ink::sampleEpub().empty()) {
+    entries_[count_].id = "sample-epub";
+    entries_[count_].title = "The Inkwell Sampler";
+    entries_[count_].author = "Project 25";
+    entries_[count_].format = Ink::Format::Epub;
+    entries_[count_].bytes = (uint32_t)Ink::sampleEpub().size();
+    entries_[count_].permille = 0;
+    ++count_;
+  }
 
   for (size_t i = 0; i < kMaxBooks; ++i) positions_[i] = Position();
   return true;

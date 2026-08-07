@@ -16,17 +16,30 @@ Ink::InkBook book;
 Ink::Paginator paginator;
 std::vector<Ink::Block> currentBlocks;  // current chapter's parsed blocks
 
-// Fixed per-style char widths/heights -- identical tables to the host
-// tests' MockMeasure (test/host_main.cpp), so a page's line/word wrap here
-// matches what the host suite already proved paginates correctly. The real
-// GfxMeasure (wired up when USE_DISPLAY lands) replaces this without
-// touching anything above the TextMeasure interface.
+// Declared before SerialMeasure so its inline method bodies (which read
+// layoutSettings.fontStep) resolve against an already-declared global --
+// a member function's own "complete-class" lookup defer doesn't reach
+// forward into names declared later at namespace scope.
+Ink::LayoutSettings layoutSettings;
+
+// Base per-style char widths/heights are the exact host tests' MockMeasure
+// tables (test/host_main.cpp), scaled by (fontStep+2)/3 -- multiplied
+// before the integer divide, so the three font steps land on genuinely
+// different multipliers instead of truncating to the same value:
+//   fontStep 0: x2/3 (smaller)   fontStep 1: x3/3 == 1 (host-table parity,
+//   the LayoutSettings default)   fontStep 2: x4/3 (larger).
+// Step 1 reproducing the base tables exactly means default pagination here
+// stays identical to what the host suite already proved correct; `font 1`/
+// `font 3` (fontStep 0/2) are the ones that visibly re-paginate.
 class SerialMeasure : public Ink::TextMeasure {
  public:
   int16_t textWidth(const std::string &s, uint8_t style) override {
-    return (int16_t)(s.size() * widths_[style]);
+    int32_t scaled = (int32_t)widths_[style] * (layoutSettings.fontStep + 2) / 3;
+    return (int16_t)(s.size() * scaled);
   }
-  int16_t lineHeight(uint8_t style) override { return heights_[style]; }
+  int16_t lineHeight(uint8_t style) override {
+    return (int16_t)((int32_t)heights_[style] * (layoutSettings.fontStep + 2) / 3);
+  }
 
  private:
   int16_t widths_[Ink::kStyleCount] = {10, 11, 10, 11, 12, 20, 16, 12};
@@ -34,12 +47,19 @@ class SerialMeasure : public Ink::TextMeasure {
 };
 
 SerialMeasure measure;
-Ink::LayoutSettings layoutSettings;
 
 int currentBookIndex = -1;  // -1 = library view, no book open
 size_t currentChapter = 0;
 size_t currentPage = 0;
 bool bookOpen = false;
+
+// Mirrors Paginator.cpp's own private kListIndentPerDepthPx (24px/depth) --
+// there's no public accessor for it, so this is a second copy of the same
+// design constant, not a derived value. Used to recover a ListItem line's
+// nesting depth from Line::indentPx so nested lists are visible in the
+// text-only render (Quote's indentPx is a flat 24 regardless of nesting,
+// so this constant is only consulted for ListItem lines).
+constexpr int16_t kListIndentPerDepthPx = 24;
 
 const char *formatTag(Ink::Format f) {
   switch (f) {
@@ -172,16 +192,25 @@ void printPage() {
       } else if (ln.blockType == Ink::BlockType::Quote) {
         prefix = "| ";
       } else if (ln.blockType == Ink::BlockType::ListItem) {
+        // Nesting indent: 2 extra spaces per depth level beyond 1, derived
+        // from Line::indentPx (24px per depth, mirrored above) -- makes
+        // the sample Markdown's nested list actually visible as nesting
+        // instead of every depth printing flush-left.
+        int depth = ln.indentPx / kListIndentPerDepthPx;
+        if (depth < 1) depth = 1;
+        String indent;
+        for (int i = 0; i < (depth - 1) * 2; ++i) indent += ' ';
+
         if (ln.firstOfBlock) {
           const Ink::Block *blk = blockForOffset(ln.srcOffset);
           if (blk != nullptr && blk->ordered) {
             ++orderedCounter;
-            prefix = String(orderedCounter) + ". ";
+            prefix = indent + String(orderedCounter) + ". ";
           } else {
-            prefix = "\xE2\x80\xA2 ";  // "bullet " (U+2022) UTF-8
+            prefix = indent + "\xE2\x80\xA2 ";  // "bullet " (U+2022) UTF-8
           }
         } else {
-          prefix = "  ";  // wrapped continuation of a list item: indent only
+          prefix = indent + "  ";  // wrapped continuation: indent only
         }
       }
 
@@ -192,6 +221,14 @@ void printPage() {
 
   const BookEntry &e = library.entry((size_t)currentBookIndex);
   String label = e.title.length() ? e.title : e.id;
+  // Computed live from the CURRENT page's own start offset, not read back
+  // from library.entry()'s cached permille -- that field is only as fresh
+  // as the last savePositionCurrent() call, so reading it here lagged by
+  // one action (e.g. `next` printed the page just left, not the one just
+  // turned to, until the NEXT command ran). InkBook::permille() is cheap
+  // (an O(chapterCount) prefix sum), so recomputing it per print costs
+  // nothing worth caching for.
+  uint16_t permille = book.permille(currentChapter, paginator.pageStartOffset(currentPage));
   Serial.print(F("-- "));
   Serial.print(label);
   Serial.print(F(" \xC2\xB7 ch "));  // " middot ch " (U+00B7)
@@ -203,7 +240,7 @@ void printPage() {
   Serial.print('/');
   Serial.print((unsigned)paginator.pageCount());
   Serial.print(F(" \xC2\xB7 "));
-  Serial.print(e.permille / 10);
+  Serial.print(permille / 10);
   Serial.println(F("% --"));
 }
 
@@ -217,6 +254,21 @@ void openBook(size_t idx) {
   const BookEntry &e = library.entry(idx);
   if (!book.open(e.format, data, size)) {
     Serial.println(F("[open] failed to parse book"));
+    // InkBook::open() calls its own close() unconditionally BEFORE trying
+    // to parse the new format -- so a failed open here has already torn
+    // down whatever `book` previously held, even if that was a different,
+    // successfully-open book. Reset our own tracking to match: leaving
+    // bookOpen/currentBookIndex pointing at the old book would let every
+    // later command read `book` (now empty) through stale sketch state.
+    // Latent with today's samples (only a malformed EPUB can fail this
+    // path, and sampleEpub() is always well-formed) -- real once Task 9's
+    // SD store can hand back a corrupt file.
+    bookOpen = false;
+    currentBookIndex = -1;
+    currentChapter = 0;
+    currentPage = 0;
+    currentBlocks.clear();
+    paginator.layout(currentBlocks, layoutSettings, measure);
     return;
   }
 
