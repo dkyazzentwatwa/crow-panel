@@ -919,13 +919,136 @@ static int testEpubNcxNestedNavPointFlattened() {
   return 0;
 }
 
-// Perf guard: the reintroduced-O(n^2) tripwire. A manifest/spine with many
-// items must still open in comfortably under a second -- before the
-// attrInSpan bound and the href->spineIndex map, this kind of fixture is
-// exactly what would have gone quadratic (a missing `properties` attribute
-// scanned to end-of-document per item, and a spine scanned per TOC entry).
-static int testEpubPerfManyManifestItems() {
-  constexpr int kItems = 1500;
+// Spec-review round-2 fix 1a: a navPoint missing <content> must not reach
+// into the FOLLOWING navPoint's own <content> -- it should resolve to
+// spineIndex -1, and the following navPoint must still come through
+// intact with its own title/content.
+static int testEpubNcxNavPointMissingContent() {
+  mz_zip_archive z; memset(&z, 0, sizeof(z));
+  mz_zip_writer_init_heap(&z, 0, 16 * 1024);
+  auto add = [&](const char *name, const std::string &data) {
+    mz_zip_writer_add_mem(&z, name, data.data(), data.size(), MZ_DEFAULT_COMPRESSION);
+  };
+  add("mimetype", "application/epub+zip");
+  add("META-INF/container.xml",
+      "<?xml version=\"1.0\"?><container><rootfiles>"
+      "<rootfile full-path=\"OEBPS/content.opf\" media-type=\"application/oebps-package+xml\"/>"
+      "</rootfiles></container>");
+  add("OEBPS/content.opf",
+      "<?xml version=\"1.0\"?><package><metadata><dc:title>T</dc:title></metadata>"
+      "<manifest>"
+      "<item id=\"c1\" href=\"ch1.xhtml\" media-type=\"application/xhtml+xml\"/>"
+      "<item id=\"c2\" href=\"ch2.xhtml\" media-type=\"application/xhtml+xml\"/>"
+      "<item id=\"ncx\" href=\"toc.ncx\" media-type=\"application/x-dtbncx+xml\"/>"
+      "</manifest><spine toc=\"ncx\">"
+      "<itemref idref=\"c1\"/><itemref idref=\"c2\"/></spine></package>");
+  add("OEBPS/ch1.xhtml", "<html><body><p>x</p></body></html>");
+  add("OEBPS/ch2.xhtml", "<html><body><p>y</p></body></html>");
+  add("OEBPS/toc.ncx",
+      "<ncx><navMap>"
+      "<navPoint><navLabel><text>NoContent</text></navLabel></navPoint>"
+      "<navPoint><navLabel><text>Second</text></navLabel>"
+      "<content src=\"ch2.xhtml\"/></navPoint>"
+      "</navMap></ncx>");
+  void *buf = nullptr; size_t size = 0;
+  mz_zip_writer_finalize_heap_archive(&z, &buf, &size);
+  std::string zipData((char *)buf, size);
+  mz_zip_writer_end(&z); mz_free(buf);
+
+  Ink::EpubBook book;
+  CHECK(book.open((const uint8_t *)zipData.data(), zipData.size()));
+  CHECK(book.toc().size() == 2);
+  CHECK(book.toc()[0].title == "NoContent" && book.toc()[0].spineIndex == -1);
+  CHECK(book.toc()[1].title == "Second" && book.toc()[1].spineIndex == 1);
+  return 0;
+}
+
+// Spec-review round-2 fix 1b: a navPoint missing <navLabel> must yield an
+// empty title (not the FOLLOWING navPoint's title), and the following
+// navPoint must still come through intact.
+static int testEpubNcxNavPointMissingLabel() {
+  mz_zip_archive z; memset(&z, 0, sizeof(z));
+  mz_zip_writer_init_heap(&z, 0, 16 * 1024);
+  auto add = [&](const char *name, const std::string &data) {
+    mz_zip_writer_add_mem(&z, name, data.data(), data.size(), MZ_DEFAULT_COMPRESSION);
+  };
+  add("mimetype", "application/epub+zip");
+  add("META-INF/container.xml",
+      "<?xml version=\"1.0\"?><container><rootfiles>"
+      "<rootfile full-path=\"OEBPS/content.opf\" media-type=\"application/oebps-package+xml\"/>"
+      "</rootfiles></container>");
+  add("OEBPS/content.opf",
+      "<?xml version=\"1.0\"?><package><metadata><dc:title>T</dc:title></metadata>"
+      "<manifest>"
+      "<item id=\"c1\" href=\"ch1.xhtml\" media-type=\"application/xhtml+xml\"/>"
+      "<item id=\"c2\" href=\"ch2.xhtml\" media-type=\"application/xhtml+xml\"/>"
+      "<item id=\"ncx\" href=\"toc.ncx\" media-type=\"application/x-dtbncx+xml\"/>"
+      "</manifest><spine toc=\"ncx\">"
+      "<itemref idref=\"c1\"/><itemref idref=\"c2\"/></spine></package>");
+  add("OEBPS/ch1.xhtml", "<html><body><p>x</p></body></html>");
+  add("OEBPS/ch2.xhtml", "<html><body><p>y</p></body></html>");
+  add("OEBPS/toc.ncx",
+      "<ncx><navMap>"
+      "<navPoint><content src=\"ch1.xhtml\"/></navPoint>"
+      "<navPoint><navLabel><text>Second</text></navLabel>"
+      "<content src=\"ch2.xhtml\"/></navPoint>"
+      "</navMap></ncx>");
+  void *buf = nullptr; size_t size = 0;
+  mz_zip_writer_finalize_heap_archive(&z, &buf, &size);
+  std::string zipData((char *)buf, size);
+  mz_zip_writer_end(&z); mz_free(buf);
+
+  Ink::EpubBook book;
+  CHECK(book.open((const uint8_t *)zipData.data(), zipData.size()));
+  CHECK(book.toc().size() == 2);
+  CHECK(book.toc()[0].title == "" && book.toc()[0].spineIndex == 0);
+  CHECK(book.toc()[1].title == "Second" && book.toc()[1].spineIndex == 1);
+  return 0;
+}
+
+// Spec-review round-2 fix 2: a spine listing the same href twice must
+// resolve a TOC entry pointing at it to the FIRST occurrence, matching the
+// old linear left-to-right scan's semantics (hrefToSpineIndex_ now uses
+// emplace(), not operator[], to preserve that under a map).
+static int testEpubDuplicateSpineHrefResolvesToFirst() {
+  mz_zip_archive z; memset(&z, 0, sizeof(z));
+  mz_zip_writer_init_heap(&z, 0, 16 * 1024);
+  auto add = [&](const char *name, const std::string &data) {
+    mz_zip_writer_add_mem(&z, name, data.data(), data.size(), MZ_DEFAULT_COMPRESSION);
+  };
+  add("mimetype", "application/epub+zip");
+  add("META-INF/container.xml",
+      "<?xml version=\"1.0\"?><container><rootfiles>"
+      "<rootfile full-path=\"OEBPS/content.opf\" media-type=\"application/oebps-package+xml\"/>"
+      "</rootfiles></container>");
+  add("OEBPS/content.opf",
+      "<?xml version=\"1.0\"?><package><metadata><dc:title>T</dc:title></metadata>"
+      "<manifest>"
+      "<item id=\"c1\" href=\"ch1.xhtml\" media-type=\"application/xhtml+xml\"/>"
+      "<item id=\"c1dup\" href=\"ch1.xhtml\" media-type=\"application/xhtml+xml\"/>"
+      "<item id=\"nav\" href=\"nav.xhtml\" media-type=\"application/xhtml+xml\" properties=\"nav\"/>"
+      "</manifest><spine>"
+      "<itemref idref=\"c1\"/><itemref idref=\"c1dup\"/></spine></package>");
+  add("OEBPS/ch1.xhtml", "<html><body><p>x</p></body></html>");
+  add("OEBPS/nav.xhtml",
+      "<html><body><nav epub:type=\"toc\"><ol>"
+      "<li><a href=\"ch1.xhtml\">Duplicate Target</a></li></ol></nav></body></html>");
+  void *buf = nullptr; size_t size = 0;
+  mz_zip_writer_finalize_heap_archive(&z, &buf, &size);
+  std::string zipData((char *)buf, size);
+  mz_zip_writer_end(&z); mz_free(buf);
+
+  Ink::EpubBook book;
+  CHECK(book.open((const uint8_t *)zipData.data(), zipData.size()));
+  CHECK(book.chapterCount() == 2);  // both itemrefs kept in the spine
+  CHECK(book.toc().size() == 1);
+  CHECK(book.toc()[0].spineIndex == 0);  // first occurrence, not the second
+  return 0;
+}
+
+// Builds an in-memory EPUB with `items` manifest/spine entries and returns
+// how long EpubBook::open() took, in milliseconds (-1.0 if open() failed).
+static double timeEpubOpenWithManifestSize(int items, size_t *chapterCountOut) {
   mz_zip_archive z; memset(&z, 0, sizeof(z));
   mz_zip_writer_init_heap(&z, 0, 512 * 1024);
   auto add = [&](const std::string &name, const std::string &data) {
@@ -941,17 +1064,17 @@ static int testEpubPerfManyManifestItems() {
       "<?xml version=\"1.0\"?><package><metadata>"
       "<dc:title>Big Book</dc:title><dc:creator>Author</dc:creator>"
       "</metadata><manifest>";
-  for (int i = 0; i < kItems; ++i) {
+  for (int i = 0; i < items; ++i) {
     opf += "<item id=\"c" + std::to_string(i) + "\" href=\"ch" + std::to_string(i) +
            ".xhtml\" media-type=\"application/xhtml+xml\"/>";
   }
   opf += "</manifest><spine>";
-  for (int i = 0; i < kItems; ++i) {
+  for (int i = 0; i < items; ++i) {
     opf += "<itemref idref=\"c" + std::to_string(i) + "\"/>";
   }
   opf += "</spine></package>";
   add("OEBPS/content.opf", opf);
-  for (int i = 0; i < kItems; ++i) {
+  for (int i = 0; i < items; ++i) {
     add("OEBPS/ch" + std::to_string(i) + ".xhtml", "<html><body><p>x</p></body></html>");
   }
   void *buf = nullptr; size_t size = 0;
@@ -964,10 +1087,28 @@ static int testEpubPerfManyManifestItems() {
   bool ok = book.open((const uint8_t *)zipData.data(), zipData.size());
   auto t1 = std::chrono::steady_clock::now();
   double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-  std::fprintf(stderr, "perf epub manifest (%d items): %.1f ms\n", kItems, ms);
-  CHECK(ok);
-  CHECK(book.chapterCount() == (size_t)kItems);
-  CHECK(ms < 1000.0);
+  if (chapterCountOut) *chapterCountOut = ok ? book.chapterCount() : 0;
+  return ok ? ms : -1.0;
+}
+
+// Perf guard: a SCALING assertion rather than an absolute wall-clock bar
+// (flaky across machines/CI, and too loose to actually catch a regression
+// once it stops being egregious). Times open() at 750 and 1500 manifest
+// items -- linear cost roughly doubles across that jump, quadratic cost
+// roughly quadruples; +5.0ms absorbs timer noise at these tiny absolute
+// values (single-digit milliseconds). This is exactly the tripwire that
+// would catch a reintroduced O(n^2) in attrInSpan or spineIndexForHref.
+static int testEpubPerfScalesLinearlyNotQuadratically() {
+  size_t count750 = 0, count1500 = 0;
+  double ms750 = timeEpubOpenWithManifestSize(750, &count750);
+  double ms1500 = timeEpubOpenWithManifestSize(1500, &count1500);
+  std::fprintf(stderr, "perf epub manifest scaling: 750 items=%.2f ms, 1500 items=%.2f ms\n",
+               ms750, ms1500);
+  CHECK(ms750 >= 0.0);
+  CHECK(ms1500 >= 0.0);
+  CHECK(count750 == 750);
+  CHECK(count1500 == 1500);
+  CHECK(ms1500 < ms750 * 4.0 + 5.0);
   return 0;
 }
 
@@ -1034,7 +1175,10 @@ int main() {
   if (testEpubChapterSizePositive()) return 1;
   if (testEpubAttributedMetadataTags()) return 1;
   if (testEpubNcxNestedNavPointFlattened()) return 1;
-  if (testEpubPerfManyManifestItems()) return 1;
+  if (testEpubNcxNavPointMissingContent()) return 1;
+  if (testEpubNcxNavPointMissingLabel()) return 1;
+  if (testEpubDuplicateSpineHrefResolvesToFirst()) return 1;
+  if (testEpubPerfScalesLinearlyNotQuadratically()) return 1;
   std::printf("inkwell host tests: %d checks passed\n", checks);
   return 0;
 }

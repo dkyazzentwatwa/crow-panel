@@ -336,7 +336,11 @@ void EpubBook::parseOpf(const std::string &opf, const std::string &opfDir) {
     if (it != manifest.end() && (it->second.mediaType == "application/xhtml+xml" ||
                                   it->second.mediaType == "text/html")) {
       spineHrefs_.push_back(it->second.href);
-      hrefToSpineIndex_[it->second.href] = (int)spineHrefs_.size() - 1;
+      // emplace(), not operator[]: a duplicate href in the spine (however
+      // unusual) must resolve to the FIRST occurrence, matching the old
+      // linear left-to-right scan's semantics -- operator[] would let a
+      // later duplicate silently overwrite the earlier index.
+      hrefToSpineIndex_.emplace(it->second.href, (int)spineHrefs_.size() - 1);
     }
     pos = tagEnd + 1;
   }
@@ -424,31 +428,39 @@ void EpubBook::parseNcxToc(const std::string &ncx) {
     size_t npOpenEnd = ncx.find('>', npPos);
     if (npOpenEnd == std::string::npos) break;
 
-    // A navPoint's OWN <navLabel><text> and <content> always come before
-    // any nested child <navPoint> (the NCX convention), so searching
-    // forward from npOpenEnd with no upper bound still finds THIS
-    // navPoint's text/content first, never a descendant's -- there is no
-    // need to (and, for a nested navPoint, no correct way to) bound the
-    // search to "this element's span" the way the nav-doc path bounds to
-    // </nav>.
+    // Bound this navPoint's own <navLabel><text> and <content> search to
+    // before the NEXT <navPoint opening tag (whether that next one is a
+    // nested child or a sibling) -- not past </navPoint>, which for a
+    // nested navPoint is the CHILD's own close. This bound is what makes
+    // nesting flatten into document order (a nested child begins right
+    // after the parent's own content, so it's naturally picked up on the
+    // next loop iteration) while ALSO correctly leaving title/src empty,
+    // rather than reaching into the NEXT navPoint's own text/content,
+    // when this one is missing a <navLabel> or <content> (malformed or
+    // simply degenerate input).
+    size_t nextNp = findTagLocal(ncx, "navPoint", npOpenEnd);
+    size_t npBound = (nextNp == std::string::npos) ? ncx.size() : nextNp;
+
     std::string title;
     size_t textPos = findTagLocal(ncx, "text", npOpenEnd);
-    if (textPos != std::string::npos) {
+    if (textPos != std::string::npos && textPos < npBound) {
       size_t textOpenEnd = ncx.find('>', textPos);
-      if (textOpenEnd != std::string::npos) {
+      if (textOpenEnd != std::string::npos && textOpenEnd < npBound) {
         size_t textCloseStart = ncx.find("</text", textOpenEnd);
-        size_t textEnd = (textCloseStart == std::string::npos) ? ncx.size() : textCloseStart;
+        size_t textEnd = (textCloseStart == std::string::npos || textCloseStart > npBound)
+                              ? npBound
+                              : textCloseStart;
         if (textOpenEnd + 1 <= textEnd)
           title = collapseWs(decodeEntities(ncx.substr(textOpenEnd + 1, textEnd - (textOpenEnd + 1))));
       }
     }
 
     std::string src;
-    size_t afterContentTag = npOpenEnd;  // resume point if <content> is missing
+    size_t afterContentTag = npOpenEnd;  // resume point if <content> is missing/out of bound
     size_t contentPos = findTagLocal(ncx, "content", npOpenEnd);
-    if (contentPos != std::string::npos) {
+    if (contentPos != std::string::npos && contentPos < npBound) {
       size_t contentTagEnd = ncx.find('>', contentPos);
-      if (contentTagEnd != std::string::npos) {
+      if (contentTagEnd != std::string::npos && contentTagEnd < npBound) {
         src = attrInSpan(ncx, contentPos, contentTagEnd, "src");
         afterContentTag = contentTagEnd;
       }
