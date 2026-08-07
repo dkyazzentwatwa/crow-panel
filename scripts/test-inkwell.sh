@@ -26,6 +26,7 @@ echo "Building Inkwell host tests with $CXX"
   "$PROJECT/src/MarkdownParser.cpp" \
   "$PROJECT/src/XhtmlParser.cpp" \
   "$PROJECT/src/EpubBook.cpp" \
+  "$PROJECT/src/Paginator.cpp" \
   "$PROJECT/test/host_main.cpp" \
   "$OUT/miniz.o" \
   -o "$OUT/inkwell-tests"

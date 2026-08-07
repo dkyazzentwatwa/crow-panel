@@ -10,6 +10,8 @@
 #include "../src/XhtmlParser.h"
 #include "../src/EpubBook.h"
 #include "../src/miniz.h"
+#include "../src/Paginator.h"
+#include <vector>
 
 static int checks = 0;
 #define CHECK(cond) do { \
@@ -1380,6 +1382,301 @@ static int testEpubNcxPerfScalesLinearlyNotQuadratically() {
   return 0;
 }
 
+// ---------------------------------------------------------------------
+// Paginator tests
+// ---------------------------------------------------------------------
+
+struct MockMeasure : Ink::TextMeasure {
+  // Fixed per-style char widths/heights: deterministic, style-sensitive.
+  int16_t widths[Ink::kStyleCount]  = {10, 11, 10, 11, 12, 20, 16, 12};
+  int16_t heights[Ink::kStyleCount] = {20, 20, 20, 20, 20, 40, 32, 24};
+  int16_t textWidth(const std::string &s, uint8_t st) override {
+    return (int16_t)(s.size() * widths[st]);
+  }
+  int16_t lineHeight(uint8_t st) override { return heights[st]; }
+};
+
+static int testPaginatorWrapAndFill() {
+  // pageW 600, marginX 48 → content 504 px → 50 body chars/line.
+  Ink::LayoutSettings s;
+  MockMeasure m;
+  std::vector<Ink::Block> blocks;
+  Ink::Block b;
+  b.srcOffset = 0;
+  b.runs.push_back({std::string(120, 'a') + " " + std::string(10, 'b'), false, false, false});
+  blocks.push_back(b);
+  Ink::Paginator p;
+  p.layout(blocks, s, m);
+  CHECK(p.lines().size() == 4);            // 50+50+20 a's + word-wrapped b's
+  CHECK(p.lines()[0].segs[0].text.size() == 50);
+  CHECK(p.pages().size() == 1);
+  // Fill many paragraphs → content height 1024-40-64=920 → 46 lines/page at 20px.
+  for (int i = 0; i < 30; ++i) { b.srcOffset = 200 + i; blocks.push_back(b); }
+  p.layout(blocks, s, m);
+  CHECK(p.pages().size() > 1);
+  CHECK(p.pages()[0].lineCount <= 46);
+  return 0;
+}
+
+static int testPaginatorResume() {
+  Ink::LayoutSettings s1, s2;
+  s2.fontStep = 2;
+  MockMeasure m1;
+  MockMeasure m2; for (auto &w : m2.widths) w += 6;  // "bigger font"
+  std::vector<Ink::Block> blocks;
+  for (int i = 0; i < 40; ++i) {
+    Ink::Block b; b.srcOffset = i * 100;
+    b.runs.push_back({std::string(180, 'x'), false, false, false});
+    blocks.push_back(b);
+  }
+  Ink::Paginator p1; p1.layout(blocks, s1, m1);
+  size_t page = p1.pageCount() / 2;
+  uint32_t off = p1.pageStartOffset(page);
+  Ink::Paginator p2; p2.layout(blocks, s2, m2);
+  size_t landed = p2.pageForOffset(off);
+  CHECK(p2.pageStartOffset(landed) <= off);
+  CHECK(landed + 1 >= p2.pageCount() || p2.pageStartOffset(landed + 1) > off);
+  CHECK(s1.hash() != s2.hash());
+  CHECK(Ink::LayoutSettings().hash() == s1.hash());
+  return 0;
+}
+
+static int testPaginatorHardCases() {
+  Ink::LayoutSettings s; MockMeasure m; Ink::Paginator p;
+  std::vector<Ink::Block> blocks;
+  Ink::Block huge;  // one unbreakable 80-char word: must hard-split, not loop
+  huge.runs.push_back({std::string(80, 'w'), false, false, false});
+  blocks.push_back(huge);
+  Ink::Block empty; empty.runs.push_back({"", false, false, false});
+  blocks.push_back(empty);
+  Ink::Block rule; rule.type = Ink::BlockType::Rule;
+  blocks.push_back(rule);
+  p.layout(blocks, s, m);
+  CHECK(p.lines().size() >= 3);
+  CHECK(p.lines()[0].segs[0].text.size() == 50);  // hard split at line width
+  CHECK(p.pageCount() == 1);
+  p.layout({}, s, m);
+  CHECK(p.pageCount() == 1 && p.pages()[0].lineCount == 0);  // empty chapter = 1 blank page
+  return 0;
+}
+
+// Two runs of different style on one line: "Hi" (body) + "there" (bold),
+// joined by a space. Hand math (default settings, contentW 504):
+//   "Hi" width = 2*10 = 20 -> seg0 x=0.
+//   space (bold metric) = 1*11 = 11; "there" width = 5*11 = 55.
+//   seg1 x = 20+11 = 31; line width = 31+55 = 86 (well under 504, one line).
+//   height: max(lineHeight(body)=20, lineHeight(bold)=20) = 20,
+//   scaled *115/100 = 23; block's only/last line -> +40%*20=8 gap -> 31.
+static int testPaginatorMultiStyleLine() {
+  Ink::LayoutSettings s; MockMeasure m; Ink::Paginator p;
+  Ink::Block b;
+  b.runs.push_back({"Hi", false, false, false});
+  b.runs.push_back({" there", true, false, false});
+  p.layout({b}, s, m);
+  CHECK(p.lines().size() == 1);
+  CHECK(p.lines()[0].segs.size() == 2);
+  CHECK(p.lines()[0].segs[0].text == "Hi");
+  CHECK(p.lines()[0].segs[0].style == Ink::kStyleBody);
+  CHECK(p.lines()[0].segs[0].x == 0);
+  CHECK(p.lines()[0].segs[1].text == "there");
+  CHECK(p.lines()[0].segs[1].style == Ink::kStyleBold);
+  CHECK(p.lines()[0].segs[1].x == 31);
+  CHECK(p.lines()[0].height == 31);
+  return 0;
+}
+
+// Heading-orphan rule: an H2 line that would be the LAST line fitting on a
+// page, with more lines still to come, gets pushed to the next page.
+// Hand math (capacity 920, contentW 504 -> 50 body chars/line):
+//   Body block: 37 words of 50 'a's (each too wide to share a line with a
+//   neighbor: 500+10(space)+500=1010>504) -> 37 one-word lines. First 36
+//   have no paragraph gap (not the block's last line): height 20*115/100=23
+//   each -> 36*23=828. Line 37 IS the block's last line: 23+8(40%*20 gap)=31.
+//   Running total after all 37 = 828+31 = 859. Remaining on page1 = 920-859=61.
+//   H2 block (one line "Head"): raw height 32, scaled 32*115/100=36 (floor),
+//   + its own last-line gap 8 = 44. 44 <= 61, so the heading WOULD fit
+//   (861+44=903<=920) -- but the trailing block's first line (see below,
+//   height 23) needs 61-44=17px and doesn't fit (23>17), so the heading
+//   would be an orphan and must move to page 2.
+//   Trailing block: 2 words of 50 'b'/'c' chars (same too-wide-to-share
+//   trick) -> line A height 23 (not last), line B height 23+8=31 (last).
+// So page1 = 37 lines (all body), page2 starts at line 37 with the
+// heading and holds the remaining 3 lines (heading + 2 trailing).
+static int testPaginatorHeadingOrphan() {
+  Ink::LayoutSettings s; MockMeasure m; Ink::Paginator p;
+  std::vector<Ink::Block> blocks;
+  Ink::Block body;
+  {
+    std::string text;
+    for (int i = 0; i < 37; ++i) { if (i) text += ' '; text += std::string(50, 'a'); }
+    body.runs.push_back({text, false, false, false});
+  }
+  blocks.push_back(body);
+  Ink::Block heading;
+  heading.type = Ink::BlockType::H2;
+  heading.runs.push_back({"Head", false, false, false});
+  blocks.push_back(heading);
+  Ink::Block trailing;
+  trailing.runs.push_back({std::string(50, 'b') + " " + std::string(50, 'c'), false, false, false});
+  blocks.push_back(trailing);
+  p.layout(blocks, s, m);
+  CHECK(p.lines().size() == 40);  // 37 + 1 + 2
+  CHECK(p.pages().size() == 2);
+  CHECK(p.pages()[0].lineCount == 37);
+  CHECK(p.pages()[1].firstLine == 37);
+  CHECK(p.pages()[1].lineCount == 3);
+  CHECK(p.lines()[37].blockType == Ink::BlockType::H2);
+  CHECK(p.lines()[37].firstOfBlock == true);
+  return 0;
+}
+
+// Paragraph gap (40% of raw body line height, 8px here) changes how many
+// lines fit per page. 35 one-word blocks -> 35 one-line blocks, and since
+// each line is simultaneously its block's first AND last line, every one
+// of them carries the +8 gap: height = 23+8 = 31 uniformly.
+// capacity 920 / 31 = 29.67 -> 29 lines fit (29*31=899<=920, 30*31=930>920).
+// Without the gap (raw 23/line) 920/23=40 exactly -- all 35 would fit on
+// one page. Seeing page1 stop at 29 (and a second page appear) is the
+// pin that the gap is actually being applied, not just present in theory.
+static int testPaginatorParagraphGap() {
+  Ink::LayoutSettings s; MockMeasure m; Ink::Paginator p;
+  std::vector<Ink::Block> blocks;
+  for (int i = 0; i < 35; ++i) {
+    Ink::Block b;
+    b.runs.push_back({"word", false, false, false});
+    blocks.push_back(b);
+  }
+  p.layout(blocks, s, m);
+  CHECK(p.lines().size() == 35);
+  CHECK(p.pages().size() == 2);
+  CHECK(p.pages()[0].lineCount == 29);
+  return 0;
+}
+
+// ListItem/Quote indent shrinks contentW, so fewer characters fit per
+// line. Base contentW is 504 (50 body chars/line, char width 10).
+//   ListItem depth 1: indent 24*1=24 -> contentW 480 -> floor(480/10)=48
+//     chars/line. One 100-char unbreakable word -> hard split 48+48+4.
+//   ListItem depth 2: indent 24*2=48 -> contentW 456 -> floor(456/10)=45
+//     chars/line. Same 100-char word -> hard split 45+45+10.
+//   Quote: flat indent 24 (not depth-scaled) -> same 480/48 as depth 1.
+static int testPaginatorIndents() {
+  Ink::LayoutSettings s; MockMeasure m;
+
+  Ink::Block listDepth1;
+  listDepth1.type = Ink::BlockType::ListItem;
+  listDepth1.listDepth = 1;
+  listDepth1.runs.push_back({std::string(100, 'x'), false, false, false});
+  Ink::Paginator p1;
+  p1.layout({listDepth1}, s, m);
+  CHECK(p1.lines().size() == 3);
+  CHECK(p1.lines()[0].indentPx == 24);
+  CHECK(p1.lines()[0].segs[0].text.size() == 48);
+  CHECK(p1.lines()[1].segs[0].text.size() == 48);
+  CHECK(p1.lines()[2].segs[0].text.size() == 4);
+
+  Ink::Block listDepth2;
+  listDepth2.type = Ink::BlockType::ListItem;
+  listDepth2.listDepth = 2;
+  listDepth2.runs.push_back({std::string(100, 'x'), false, false, false});
+  Ink::Paginator p2;
+  p2.layout({listDepth2}, s, m);
+  CHECK(p2.lines().size() == 3);
+  CHECK(p2.lines()[0].indentPx == 48);
+  CHECK(p2.lines()[0].segs[0].text.size() == 45);
+  CHECK(p2.lines()[2].segs[0].text.size() == 10);
+
+  Ink::Block quote;
+  quote.type = Ink::BlockType::Quote;
+  quote.runs.push_back({std::string(100, 'y'), false, false, false});
+  Ink::Paginator p3;
+  p3.layout({quote}, s, m);
+  CHECK(p3.lines().size() == 3);
+  CHECK(p3.lines()[0].indentPx == 24);
+  CHECK(p3.lines()[0].segs[0].text.size() == 48);
+  return 0;
+}
+
+// lineSpacingPct 130 -> fewer lines/page than 115 for the same content.
+// Reusing the 35 one-word-block shape from testPaginatorParagraphGap:
+// raw body height 20, scaled 20*130/100=26, +8 gap (spacing-independent)
+// = 34/line. capacity 920/34 = 27.06 -> 27 lines fit (27*34=918<=920,
+// 28*34=952>920) -- fewer than the 29/page measured at 115%.
+static int testPaginatorLineSpacing() {
+  Ink::LayoutSettings s; s.lineSpacingPct = 130;
+  MockMeasure m; Ink::Paginator p;
+  std::vector<Ink::Block> blocks;
+  for (int i = 0; i < 35; ++i) {
+    Ink::Block b;
+    b.runs.push_back({"word", false, false, false});
+    blocks.push_back(b);
+  }
+  p.layout(blocks, s, m);
+  CHECK(p.pages()[0].lineCount == 27);
+  CHECK(p.pages()[0].lineCount < 29);  // strictly fewer than the 115% case
+  return 0;
+}
+
+// pageForOffset clamps at both ends: an offset before the book's start
+// resolves to page 0, and one past the end resolves to the last page.
+// srcOffset must increase block-to-block (as every real parser does) --
+// leaving it at the Block default of 0 for every block would make every
+// line report the same srcOffset and defeat the clamp being tested.
+static int testPaginatorOffsetBounds() {
+  Ink::LayoutSettings s; MockMeasure m; Ink::Paginator p;
+  std::vector<Ink::Block> blocks;
+  for (int i = 0; i < 35; ++i) {
+    Ink::Block b;
+    b.srcOffset = i * 10;
+    b.runs.push_back({"word", false, false, false});
+    blocks.push_back(b);
+  }
+  p.layout(blocks, s, m);
+  CHECK(p.pageCount() > 1);  // otherwise this test can't distinguish ends
+  CHECK(p.pageForOffset(0) == 0);
+  CHECK(p.pageForOffset(0xFFFFFFFFu) == p.pageCount() - 1);
+  return 0;
+}
+
+// hash() must change when ANY single field changes, and must reproduce
+// for identical settings (default-vs-default is covered in
+// testPaginatorResume; this covers each field independently).
+static int testPaginatorHashFields() {
+  Ink::LayoutSettings base;
+  uint32_t h0 = base.hash();
+  CHECK(base.hash() == h0);  // reproducible
+
+  { Ink::LayoutSettings v = base; v.pageW = (int16_t)(v.pageW + 1); CHECK(v.hash() != h0); }
+  { Ink::LayoutSettings v = base; v.pageH = (int16_t)(v.pageH + 1); CHECK(v.hash() != h0); }
+  { Ink::LayoutSettings v = base; v.marginX = (int16_t)(v.marginX + 1); CHECK(v.hash() != h0); }
+  { Ink::LayoutSettings v = base; v.marginTop = (int16_t)(v.marginTop + 1); CHECK(v.hash() != h0); }
+  { Ink::LayoutSettings v = base; v.marginBottom = (int16_t)(v.marginBottom + 1); CHECK(v.hash() != h0); }
+  { Ink::LayoutSettings v = base; v.fontStep = (uint8_t)(v.fontStep + 1); CHECK(v.hash() != h0); }
+  { Ink::LayoutSettings v = base; v.lineSpacingPct = (uint8_t)(v.lineSpacingPct + 1); CHECK(v.hash() != h0); }
+  return 0;
+}
+
+// Code blocks split on '\n' only -- no width-based rewrap, even when a
+// source line is far wider than contentW. Two source lines, the second
+// far wider than the 504px content box (mono char width 12 -> a 60-char
+// line measures 720px, well past 504) -- both still land as exactly one
+// Line each, verbatim, because Code never re-wraps.
+static int testPaginatorCodeBlock() {
+  Ink::LayoutSettings s; MockMeasure m; Ink::Paginator p;
+  Ink::Block code;
+  code.type = Ink::BlockType::Code;
+  std::string wide(60, 'z');
+  code.runs.push_back({"short\n" + wide, false, false, false});
+  p.layout({code}, s, m);
+  CHECK(p.lines().size() == 2);
+  CHECK(p.lines()[0].segs.size() == 1);
+  CHECK(p.lines()[0].segs[0].text == "short");
+  CHECK(p.lines()[0].segs[0].style == Ink::kStyleMono);
+  CHECK(p.lines()[1].segs[0].text == wide);  // not split despite being too wide
+  CHECK(p.lines()[1].segs[0].text.size() == 60);
+  return 0;
+}
+
 int main() {
   if (testTxtParagraphs()) return 1;
   if (testTxtEdges()) return 1;
@@ -1455,6 +1752,17 @@ int main() {
   if (testEpubEmptySpine()) return 1;
   if (testEpubPerfScalesLinearlyNotQuadratically()) return 1;
   if (testEpubNcxPerfScalesLinearlyNotQuadratically()) return 1;
+  if (testPaginatorWrapAndFill()) return 1;
+  if (testPaginatorResume()) return 1;
+  if (testPaginatorHardCases()) return 1;
+  if (testPaginatorMultiStyleLine()) return 1;
+  if (testPaginatorHeadingOrphan()) return 1;
+  if (testPaginatorParagraphGap()) return 1;
+  if (testPaginatorIndents()) return 1;
+  if (testPaginatorLineSpacing()) return 1;
+  if (testPaginatorOffsetBounds()) return 1;
+  if (testPaginatorHashFields()) return 1;
+  if (testPaginatorCodeBlock()) return 1;
   std::printf("inkwell host tests: %d checks passed\n", checks);
   return 0;
 }
