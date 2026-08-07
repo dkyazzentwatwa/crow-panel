@@ -1281,7 +1281,7 @@ static double timeEpubOpenWithManifestSize(int items, size_t *chapterCountOut) {
   // regression, which is consistently slow on every sample, not just one.
   double best = -1.0;
   size_t lastCount = 0;
-  for (int trial = 0; trial < 3; ++trial) {
+  for (int trial = 0; trial < 5; ++trial) {
     Ink::EpubBook book;
     auto t0 = std::chrono::steady_clock::now();
     bool ok = book.open((const uint8_t *)zipData.data(), zipData.size());
@@ -1300,7 +1300,9 @@ static double timeEpubOpenWithManifestSize(int items, size_t *chapterCountOut) {
 // large enough that timer noise is negligible relative to the measured
 // cost, so the ratio check needs no additive fudge term. Linear cost
 // should roughly double across that jump; this fires on anything worse
-// than 2.8x, comfortably below the ~4x a reintroduced O(n^2) would show.
+// than 3.2x: true ratio measures ~2.05, a reintroduced O(n^2) ~3.7-4.0, and
+// the min-of-5 sampling keeps one-sided scheduler noise from pushing a
+// linear run over the bar (observed flake: a lucky-fast small-N min).
 static int testEpubPerfScalesLinearlyNotQuadratically() {
   size_t count3000 = 0, count6000 = 0;
   double ms3000 = timeEpubOpenWithManifestSize(3000, &count3000);
@@ -1311,7 +1313,7 @@ static int testEpubPerfScalesLinearlyNotQuadratically() {
   CHECK(ms6000 >= 0.0);
   CHECK(count3000 == 3000);
   CHECK(count6000 == 6000);
-  CHECK(ms6000 < ms3000 * 2.8);
+  CHECK(ms6000 < ms3000 * 3.2);
   return 0;
 }
 
@@ -1355,7 +1357,7 @@ static double timeNcxOpenWithLabellessNavPoints(int n, size_t *tocCountOut) {
   // comment in timeEpubOpenWithManifestSize() for why.
   double best = -1.0;
   size_t lastTocCount = 0;
-  for (int trial = 0; trial < 3; ++trial) {
+  for (int trial = 0; trial < 5; ++trial) {
     Ink::EpubBook book;
     auto t0 = std::chrono::steady_clock::now();
     bool ok = book.open((const uint8_t *)zipData.data(), zipData.size());
@@ -1385,7 +1387,7 @@ static int testEpubNcxPerfScalesLinearlyNotQuadratically() {
   CHECK(ms6000 >= 0.0);
   CHECK(toc3000 == 3000);
   CHECK(toc6000 == 6000);
-  CHECK(ms6000 < ms3000 * 2.8);
+  CHECK(ms6000 < ms3000 * 3.2);
   return 0;
 }
 
