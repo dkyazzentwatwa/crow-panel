@@ -104,7 +104,11 @@ void drawLibrary(Arduino_GFX *g, const LibraryStore &lib, size_t gridPage) {
     int16_t x, y;
     cardRect(slot, x, y);
     g->fillRect(x, y, kCardW, kCardH, card());
-    g->drawRect(x, y, kCardW, kCardH, faint());
+    // Ink border, 2px: kCard-on-kPaper alone washed out to invisible on
+    // the real panel (first boot photos) -- the cards ARE the tap targets
+    // and must read as such.
+    g->drawRect(x, y, kCardW, kCardH, ink());
+    g->drawRect(x + 1, y + 1, kCardW - 2, kCardH - 2, ink());
 
     // Real cover thumb when a cache exists (written the first time the
     // book is opened -- see CoverArt.h); text placeholder otherwise.

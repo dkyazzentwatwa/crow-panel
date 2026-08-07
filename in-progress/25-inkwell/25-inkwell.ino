@@ -752,20 +752,25 @@ void setup() {
   Logger::begin(115200);
   Logger::info("app", "Inkwell -- portrait e-ink-style reader (serial mock)");
   printHardwareProfile(Serial, activeHardwareProfile());
-#if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
-  // Portrait panel + GT911. manualFlush=true batches every full-page draw
-  // into one cache sync (DisplayBringup.h). INKWELL_ROTATION comes from
-  // ProjectConfig -- NOT HARDWARE-VERIFIED; flip 1<->3 if the panel proves
-  // mirrored (see DisplayBringup.cpp's quadrant-mapping comment).
-  displayReady = CrowDisplay::begin(activeHardwareProfile(), "Inkwell", true,
-                                    (uint8_t)INKWELL_ROTATION);
-  if (displayReady) drawLibraryScreen();
-#endif
 
   layoutSettings.pageW = INKWELL_PAGE_W;
   layoutSettings.pageH = INKWELL_PAGE_H;
 
+  // Library FIRST, display after: the boot library screen is drawn from
+  // whatever the store holds, so begin() must have registered the books
+  // by then. (First on-glass boot had this reversed -- the panel showed a
+  // permanently empty library while the hit-test, which ran later, knew
+  // about all three books. Order is load-bearing.)
   library.begin();
+
+#if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
+  // Portrait panel + GT911. manualFlush=true batches every full-page draw
+  // into one cache sync (DisplayBringup.h). Rotation 1 verified correct on
+  // glass 2026-08-07 (text portrait, taps land).
+  displayReady = CrowDisplay::begin(activeHardwareProfile(), "Inkwell", true,
+                                    (uint8_t)INKWELL_ROTATION);
+  if (displayReady) drawLibraryScreen();
+#endif
   eventLog.add("Inkwell booted");
   Serial.print(F("library: "));
   Serial.print(library.backendName());
