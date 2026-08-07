@@ -14,6 +14,7 @@
 #include "src/ReaderView.h"
 #include "src/InkUi.h"
 #include "src/CoverArt.h"
+#include "src/InkGestures.h"
 #endif
 
 SerialCommandRouter router;
@@ -57,9 +58,19 @@ SerialMeasure measure;
 
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
 bool displayReady = false;
-// The e-ink "invert flash" page-turn effect; toggled from the HUD and the
-// Aa sheet (and honest about being an LCD imitating e-ink).
+// The e-ink "invert flash" effect; toggled from the HUD and the Aa sheet
+// (and honest about being an LCD imitating e-ink). Cadence lives in
+// renderCurrent(): like a real e-reader it fires on the big transitions
+// (open/chapter/jump) and every 6th sequential turn -- flashing EVERY
+// render read as constant flicker on glass.
 bool invertFlash = true;
+// Gesture layer (src/InkGestures.h): CrowTouch-style release debounce plus
+// tap/swipe classification. scrubDragging consumes a whole press that
+// began on the HUD progress bar -- track live, commit the jump on release.
+Ink::Gestures gestures;
+bool scrubDragging = false;
+uint16_t scrubPermille = 0;
+uint32_t lastScrubDrawMs = 0;
 InkwellGfx::GfxMeasure gfxMeasure(1);
 // Touch screen state machine. Reader is the page itself; the HUD is an
 // overlay flag on top of it rather than a screen of its own so closing it
@@ -92,6 +103,18 @@ bool bookOpen = false;
 // Rate-limits savePositionCurrent()'s SD-failure warning to state changes
 // (see its own comment) rather than once per page turn.
 bool lastSavePositionOk = true;
+
+// E-ink flash cadence state. Action cores mark the big transitions
+// (open/chapter/jump) via requestFullFlash(); sequential page turns tick
+// turnsSinceFlash and request one every 6th turn. renderCurrent() consumes
+// the flag on display builds; serial-only builds set it and never read it.
+bool flashNextRender = false;
+uint8_t turnsSinceFlash = 0;
+
+void requestFullFlash() {
+  flashNextRender = true;
+  turnsSinceFlash = 0;
+}
 
 // Mirrors Paginator.cpp's own private kListIndentPerDepthPx (24px/depth) --
 // there's no public accessor for it, so this is a second copy of the same
@@ -205,6 +228,7 @@ void loadChapterAndLayout(size_t chapter) {
   paginator.layout(currentBlocks, layoutSettings, activeMeasure());
   currentChapter = chapter;
   currentPage = 0;
+  requestFullFlash();  // a chapter (re)load is always a "full refresh" moment
   writePageIndexSidecar();
 }
 
@@ -356,7 +380,13 @@ void renderCurrent() {
   footer.page = currentPage;
   footer.pageCount = paginator.pageCount();
   footer.permille = book.permille(currentChapter, paginator.pageStartOffset(currentPage));
-  if (invertFlash) {
+  // Cadence: flash only when an action core requested one (open/chapter/
+  // jump/every 6th turn) AND the user setting is on. Consuming the flag
+  // here keeps sequential turns and HUD/Aa closes flash-free -- flashing
+  // every render read as constant flicker on glass.
+  bool doFlash = invertFlash && flashNextRender;
+  flashNextRender = false;
+  if (doFlash) {
     // The e-ink refresh look, done where it can actually reach the panel:
     // fill, SYNC, hold ~90ms, then draw the page (ReaderView itself never
     // flushes -- under manual flush an unsynced fill would be invisible).
@@ -365,7 +395,7 @@ void renderCurrent() {
     delay(90);
   }
   ReaderView::drawPage(CrowDisplay::canvas(), paginator, currentPage, currentBlocks,
-                       layoutSettings, layoutSettings.fontStep, footer, invertFlash);
+                       layoutSettings, layoutSettings.fontStep, footer, doFlash);
   CrowDisplay::flush();  // manualFlush build: one cache sync per page draw
 #endif
 }
@@ -555,6 +585,7 @@ void nextPage() {
   if (!bookOpen) return;
   if (currentPage + 1 < paginator.pageCount()) {
     ++currentPage;
+    if (++turnsSinceFlash >= 6) requestFullFlash();  // Kindle-style cadence
   } else if (currentChapter + 1 < book.chapterCount()) {
     loadChapterAndLayout(currentChapter + 1);
     currentPage = 0;
@@ -575,6 +606,7 @@ void prevPage() {
   if (!bookOpen) return;
   if (currentPage > 0) {
     --currentPage;
+    if (++turnsSinceFlash >= 6) requestFullFlash();  // Kindle-style cadence
   } else if (currentChapter > 0) {
     loadChapterAndLayout(currentChapter - 1);
     currentPage = paginator.pageCount() > 0 ? paginator.pageCount() - 1 : 0;
@@ -628,6 +660,7 @@ void gotoPermille(uint16_t target) {
     if (targetPage >= pages) targetPage = pages - 1;
   }
   currentPage = targetPage;
+  requestFullFlash();  // a scrub/goto jump is a big transition even in-chapter
   renderCurrent();
   savePositionCurrent();
 }
@@ -672,6 +705,7 @@ void jumpToTocEntry(size_t n) {
   uint32_t offset = book.tocOffset(n);
   if (chapter != currentChapter) loadChapterAndLayout(chapter);
   currentPage = paginator.pageForOffset(offset);
+  requestFullFlash();  // TOC jump: full refresh even within the same chapter
   renderCurrent();
   savePositionCurrent();
 }
@@ -811,12 +845,18 @@ void drawAaScreen() {
   CrowDisplay::flush();
 }
 
-void drawHudOverlay() {
+// Paints the sheet showing an explicit permille -- the live scrub drag
+// calls this with the finger-tracked value; everything else goes through
+// drawHudOverlay(), which shows the real reading position.
+void drawHudAt(uint16_t permille) {
   hudOpen = true;
-  uint16_t permille =
-      bookOpen ? book.permille(currentChapter, paginator.pageStartOffset(currentPage)) : 0;
   InkUi::drawHud(CrowDisplay::canvas(), permille, CrowDisplay::backlight(), invertFlash);
   CrowDisplay::flush();
+}
+
+void drawHudOverlay() {
+  drawHudAt(bookOpen ? book.permille(currentChapter, paginator.pageStartOffset(currentPage))
+                     : 0);
 }
 
 // Every branch below calls the SAME action cores the serial commands call
@@ -937,22 +977,89 @@ void handleTap(int16_t x, int16_t y) {
     drawHudOverlay();
   }
 }
+
+// Swipe dispatch: horizontal swipes page whatever paged surface is showing
+// (reader pages, library grid pages, TOC pages) -- swiping IS the scroll on
+// a paged reader. The Aa sheet (discrete controls) and an open HUD (tap-
+// driven; the scrub bar owns its own drag) ignore swipes. forward == finger
+// moved LEFT == advance, matching every e-reader.
+void handleSwipe(bool forward) {
+  if (screen == Screen::Library) {
+    size_t pages = (library.count() + InkUi::kCardsPerPage - 1) / InkUi::kCardsPerPage;
+    if (forward && libraryGridPage + 1 < pages) {
+      ++libraryGridPage;
+      drawLibraryScreen();
+    } else if (!forward && libraryGridPage > 0) {
+      --libraryGridPage;
+      drawLibraryScreen();
+    }
+    return;
+  }
+  if (screen == Screen::Toc) {
+    size_t pages = (book.toc().size() + InkUi::kTocRowsPerPage - 1) / InkUi::kTocRowsPerPage;
+    if (forward && tocPage + 1 < pages) {
+      ++tocPage;
+      drawTocScreen();
+    } else if (!forward && tocPage > 0) {
+      --tocPage;
+      drawTocScreen();
+    }
+    return;
+  }
+  if (screen == Screen::Aa || hudOpen) return;
+  if (forward) {
+    nextPage();
+  } else {
+    prevPage();
+  }
+}
 #endif
 
 void loop() {
   router.poll();
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
   if (displayReady) {
-    static bool wasDown = false;
-    static int16_t lastX = 0, lastY = 0;
+    // Raw contact -> debounced gestures. The first flash's hand-rolled
+    // wasDown edge fired a phantom tap on every GT911 dropout mid-swipe
+    // (each one a full redraw = the "glitchy/flickery" first impression);
+    // the recognizer holds through dropouts and classifies on release.
     int16_t tx = 0, ty = 0;
-    if (CrowDisplay::touchPoint(tx, ty)) {
-      wasDown = true;
-      lastX = tx;
-      lastY = ty;
-    } else if (wasDown) {
-      wasDown = false;
-      handleTap(lastX, lastY);
+    bool contact = CrowDisplay::touchPoint(tx, ty);
+    Ink::GestureEvent ev = gestures.tick(contact, tx, ty, millis());
+
+    // A press landing on the HUD's progress bar becomes a live scrub drag:
+    // track the finger with throttled repaints, commit the jump on release.
+    // The whole press is consumed here -- its release-time Tap/Swipe
+    // classification is skipped below so nothing double-fires.
+    if (gestures.pressedEdge() && screen == Screen::Reader && hudOpen &&
+        InkUi::hudHitTest(gestures.x(), gestures.y()).kind == InkUi::HudTap::Scrub) {
+      scrubDragging = true;
+      scrubPermille = InkUi::hudScrubPermilleAt(gestures.x());
+      lastScrubDrawMs = 0;  // force the first repaint below
+    }
+    if (scrubDragging) {
+      if (gestures.down()) {
+        uint16_t p = InkUi::hudScrubPermilleAt(gestures.x());
+        uint32_t now = millis();
+        // Repaint at most ~15Hz and only on movement: each repaint is a
+        // full-canvas flush, and unthrottled it reads as flicker.
+        if ((p != scrubPermille || lastScrubDrawMs == 0) &&
+            (lastScrubDrawMs == 0 || now - lastScrubDrawMs >= 66)) {
+          scrubPermille = p;
+          lastScrubDrawMs = now;
+          drawHudAt(p);
+        }
+      } else {
+        scrubDragging = false;
+        hudOpen = false;
+        gotoPermille(scrubPermille);  // requests its own full flash
+      }
+    } else if (ev.kind == Ink::GestureEvent::Tap) {
+      handleTap(ev.x, ev.y);
+    } else if (ev.kind == Ink::GestureEvent::SwipeLeft) {
+      handleSwipe(true);
+    } else if (ev.kind == Ink::GestureEvent::SwipeRight) {
+      handleSwipe(false);
     }
   }
 #endif

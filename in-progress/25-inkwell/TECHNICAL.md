@@ -19,13 +19,27 @@ EpubBook (vendored miniz) ─ InkBook facade ─┘
 ```
 
 - The whole core above is Arduino-free and host-tested:
-  `./scripts/test-inkwell.sh` — 501 checks covering parser fixtures,
+  `./scripts/test-inkwell.sh` — 545 checks covering parser fixtures,
   malformed EPUBs, pagination arithmetic (hand-counted in test comments),
-  resume offsets, and perf scaling guards (linear-vs-quadratic ratio
-  assertions with min-of-5 timing).
-- One pipeline on device: serial commands and touch taps call the same
+  resume offsets, perf scaling guards (linear-vs-quadratic ratio
+  assertions with min-of-5 timing), and the touch gesture state machine
+  (scripted contact streams on a fake clock).
+- One pipeline on device: serial commands and touch gestures call the same
   action cores (`nextPage`/`gotoPermille`/…); every state change funnels
   through `renderCurrent()` (Serial print + panel draw).
+- Touch: `src/InkGestures.h` (pure, host-tested) turns the GT911 contact
+  stream into debounced one-shot events — CrowTouch's 30 ms release
+  window (a dropout mid-swipe must not split the gesture), taps on
+  release at the press point, swipes at ≥80 px of ≥1.5:1 horizontal
+  travel, wandering drags fire nothing. The shared `CrowTouch` itself is
+  landscape-bound (clamps Y at 599), hence the project-local recognizer,
+  same as projects 09/21/22. Swipes page the reader, library grid, and
+  TOC; a press on the HUD scrub bar becomes a live drag (throttled ~15 Hz
+  repaints, jump commits on release).
+- Flash cadence: the e-ink invert flash fires on open/chapter/jump
+  (`requestFullFlash()` in the action cores) and every 6th sequential
+  turn — never on plain rerenders (HUD close, Aa tweaks). Flashing every
+  render read as constant flicker on glass (2026-08-07).
 - Layout metrics: `SerialMeasure` (host-parity tables) with all flags
   off; `GfxMeasure` (glyph-advance cache over the vendored FreeSerif/
   FreeMono GFXfonts, int16-saturating) when the display is up.

@@ -17,7 +17,7 @@ and a 3-chapter in-RAM EPUB) with page turns, TOC jumps, font/spacing/
 margin re-layout, and resume. The host suite proves the core:
 
 ```bash
-./scripts/test-inkwell.sh   # 501 g++ checks: parsers, EPUB, paginator, facade
+./scripts/test-inkwell.sh   # 545 g++ checks: parsers, EPUB, paginator, facade, gestures
 ```
 
 Hardware paths behind flags: `USE_DISPLAY` (portrait panel + touch UI),
@@ -55,13 +55,20 @@ Commands: `books`, `open <n>`, `page`, `next`, `prev`, `goto <pct>`,
 ## Touch UI (`USE_DISPLAY=1`, portrait)
 
 - **Library** — 2×2 card grid; covers appear after a book has been opened
-  once (see TECHNICAL.md); tap a card to resume where you left off.
-- **Reading** — tap right 40% next page, left 25% previous, center opens
-  the HUD (progress scrubber, Library / Contents / Aa, page-flash toggle,
-  brightness). Optional e-ink-style invert flash on page turns.
+  once (see TECHNICAL.md); tap a card to resume where you left off; swipe
+  left/right to page the grid.
+- **Reading** — swipe left/right to turn pages (or tap: right 40% next,
+  left 25% previous); tap center to open the HUD (draggable progress
+  scrubber, Library / Contents / Aa, page-flash toggle, brightness).
 - **Contents** — chapter list from the EPUB TOC or Markdown headings;
-  unresolved entries are greyed.
+  unresolved entries are greyed; swipe to page long lists.
 - **Aa** — font size (3 FreeSerif steps), line spacing, margins, flash.
+
+All touch goes through a debounced gesture layer (`src/InkGestures.h`):
+taps fire on release at the press point, swipes need ~80 px of clearly
+horizontal travel, and the e-ink invert flash fires Kindle-style — on
+book open, chapter changes, and jumps, plus every 6th page turn — rather
+than on every render.
 
 ## SD layout (`USE_INKWELL_SD=1`)
 

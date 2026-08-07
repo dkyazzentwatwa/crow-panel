@@ -13,6 +13,7 @@
 #include "../src/Paginator.h"
 #include "../src/InkBook.h"
 #include "../src/SampleBooks.h"
+#include "../src/InkGestures.h"
 #include <vector>
 
 static int checks = 0;
@@ -2242,6 +2243,189 @@ static int testSampleMarkdownCensus() {
   return 0;
 }
 
+// ---- Gestures (src/InkGestures.h): the touch layer's debounce + tap/swipe
+// state machine, driven by scripted contact streams on a fake 8ms clock
+// (the shared layer's GT911 sample cadence, CROW_TOUCH_SAMPLE_MS).
+
+// Releases the finger and ticks contact-free until the debounce window
+// elapses, returning the event the release finally produced. Asserts (by
+// return of a poisoned event) that nothing fires INSIDE the window.
+static Ink::GestureEvent releaseAndSettle(Ink::Gestures &g, uint32_t &t) {
+  Ink::GestureEvent ev;
+  for (int i = 0; i < 10; ++i) {
+    t += 8;
+    ev = g.tick(false, 0, 0, t);
+    if (ev.kind != Ink::GestureEvent::None) return ev;
+    if (!g.down()) break;  // release committed with no event (drag)
+  }
+  return ev;
+}
+
+static int testGestureTapFiresAtPressPoint() {
+  Ink::Gestures g;
+  uint32_t t = 1000;
+  Ink::GestureEvent ev = g.tick(true, 300, 400, t);
+  CHECK(ev.kind == Ink::GestureEvent::None);
+  CHECK(g.pressedEdge());
+  CHECK(g.down());
+  // Wobble inside the tap slop: still a tap, and pressedEdge is one-shot.
+  t += 8;
+  ev = g.tick(true, 310, 408, t);
+  CHECK(ev.kind == Ink::GestureEvent::None);
+  CHECK(!g.pressedEdge());
+  // Release: nothing may fire until the debounce window fully elapses.
+  t += 8;
+  ev = g.tick(false, 0, 0, t);
+  CHECK(ev.kind == Ink::GestureEvent::None);
+  CHECK(g.down());  // still held through the window
+  t += 8;
+  ev = g.tick(false, 0, 0, t);  // 8ms into the 30ms window
+  CHECK(ev.kind == Ink::GestureEvent::None);
+  t += 40;
+  ev = g.tick(false, 0, 0, t);  // 48ms > 30ms: commit
+  CHECK(ev.kind == Ink::GestureEvent::Tap);
+  CHECK(!g.down());
+  CHECK(ev.x == 300);  // press position, not the wobbled last position
+  CHECK(ev.y == 400);
+  return 0;
+}
+
+static int testGestureDropoutDoesNotSplit() {
+  Ink::Gestures g;
+  uint32_t t = 0;
+  g.tick(true, 100, 100, t);
+  // One-poll sensor dropout (8ms < the 30ms debounce) mid-press: the
+  // gesture must hold. This is the exact GT911 behavior that made the
+  // first flash's raw wasDown edge fire phantom taps mid-swipe.
+  t += 8;
+  CHECK(g.tick(false, 0, 0, t).kind == Ink::GestureEvent::None);
+  CHECK(g.down());
+  t += 8;
+  CHECK(g.tick(true, 104, 102, t).kind == Ink::GestureEvent::None);
+  CHECK(g.down());
+  CHECK(!g.pressedEdge());  // NOT a new press: the gesture never ended
+  Ink::GestureEvent ev = releaseAndSettle(g, t);
+  CHECK(ev.kind == Ink::GestureEvent::Tap);  // exactly one event total
+  CHECK(ev.x == 100 && ev.y == 100);
+  return 0;
+}
+
+static int testGestureSwipeLeftRight() {
+  {
+    Ink::Gestures g;
+    uint32_t t = 0;
+    g.tick(true, 500, 600, t);
+    for (int i = 1; i <= 10; ++i) {
+      t += 8;
+      g.tick(true, (int16_t)(500 - 20 * i), (int16_t)(600 + 3 * i), t);
+    }
+    Ink::GestureEvent ev = releaseAndSettle(g, t);
+    CHECK(ev.kind == Ink::GestureEvent::SwipeLeft);
+    CHECK(ev.x == 500 && ev.y == 600);  // swipes also report the press point
+  }
+  {
+    Ink::Gestures g;
+    uint32_t t = 0;
+    g.tick(true, 120, 500, t);
+    for (int i = 1; i <= 10; ++i) {
+      t += 8;
+      g.tick(true, (int16_t)(120 + 18 * i), (int16_t)(500 - 2 * i), t);
+    }
+    Ink::GestureEvent ev = releaseAndSettle(g, t);
+    CHECK(ev.kind == Ink::GestureEvent::SwipeRight);
+  }
+  return 0;
+}
+
+static int testGestureDragsThatFireNothing() {
+  // Vertical drag: no event (nothing scrolls vertically; firing a page
+  // turn here is exactly the misfire the first flash had).
+  {
+    Ink::Gestures g;
+    uint32_t t = 0;
+    g.tick(true, 300, 200, t);
+    for (int i = 1; i <= 10; ++i) {
+      t += 8;
+      g.tick(true, (int16_t)(300 + i), (int16_t)(200 + 50 * i), t);
+    }
+    CHECK(releaseAndSettle(g, t).kind == Ink::GestureEvent::None);
+  }
+  // Wandering diagonal (dx 90, dy 80): not clearly flat, no event.
+  {
+    Ink::Gestures g;
+    uint32_t t = 0;
+    g.tick(true, 200, 200, t);
+    t += 8;
+    g.tick(true, 290, 280, t);
+    CHECK(releaseAndSettle(g, t).kind == Ink::GestureEvent::None);
+  }
+  // Past the tap slop but under the swipe minimum (dx 40): no event --
+  // the CrowTouch rule that a drag between controls hits neither.
+  {
+    Ink::Gestures g;
+    uint32_t t = 0;
+    g.tick(true, 200, 200, t);
+    t += 8;
+    g.tick(true, 240, 205, t);
+    CHECK(releaseAndSettle(g, t).kind == Ink::GestureEvent::None);
+  }
+  // Round trip back to the start: moved_ latches, so no tap either.
+  {
+    Ink::Gestures g;
+    uint32_t t = 0;
+    g.tick(true, 200, 200, t);
+    t += 8;
+    g.tick(true, 350, 205, t);
+    t += 8;
+    g.tick(true, 202, 201, t);
+    CHECK(releaseAndSettle(g, t).kind == Ink::GestureEvent::None);
+  }
+  return 0;
+}
+
+static int testGestureSwipeDominanceBoundary() {
+  // |dx| >= 1.5*|dy| exactly (dx 90, dy 60): swipe.
+  {
+    Ink::Gestures g;
+    uint32_t t = 0;
+    g.tick(true, 400, 300, t);
+    t += 8;
+    g.tick(true, 310, 360, t);
+    CHECK(releaseAndSettle(g, t).kind == Ink::GestureEvent::SwipeLeft);
+  }
+  // Just past the ratio (dx 90, dy 61): no event.
+  {
+    Ink::Gestures g;
+    uint32_t t = 0;
+    g.tick(true, 400, 300, t);
+    t += 8;
+    g.tick(true, 310, 361, t);
+    CHECK(releaseAndSettle(g, t).kind == Ink::GestureEvent::None);
+  }
+  // Exactly the minimum travel (dx 80, flat): swipe.
+  {
+    Ink::Gestures g;
+    uint32_t t = 0;
+    g.tick(true, 400, 300, t);
+    t += 8;
+    g.tick(true, 480, 300, t);
+    CHECK(releaseAndSettle(g, t).kind == Ink::GestureEvent::SwipeRight);
+  }
+  return 0;
+}
+
+static int testGestureIdleNoContact() {
+  Ink::Gestures g;
+  uint32_t t = 0;
+  for (int i = 0; i < 5; ++i) {
+    t += 8;
+    CHECK(g.tick(false, 0, 0, t).kind == Ink::GestureEvent::None);
+    CHECK(!g.down());
+    CHECK(!g.pressedEdge());
+  }
+  return 0;
+}
+
 int main() {
   if (testTxtParagraphs()) return 1;
   if (testTxtEdges()) return 1;
@@ -2349,6 +2533,12 @@ int main() {
   if (testInkBookCoverImage()) return 1;
   if (testSampleEpubIntegration()) return 1;
   if (testSampleMarkdownCensus()) return 1;
+  if (testGestureTapFiresAtPressPoint()) return 1;
+  if (testGestureDropoutDoesNotSplit()) return 1;
+  if (testGestureSwipeLeftRight()) return 1;
+  if (testGestureDragsThatFireNothing()) return 1;
+  if (testGestureSwipeDominanceBoundary()) return 1;
+  if (testGestureIdleNoContact()) return 1;
   std::printf("inkwell host tests: %d checks passed\n", checks);
   return 0;
 }

@@ -209,15 +209,19 @@ void drawHud(Arduino_GFX *g, uint16_t permille, uint8_t backlight,
   g->print(String((backlight * 100) / 255) + "%");
 }
 
+uint16_t hudScrubPermilleAt(int16_t x) {
+  int32_t rel = x - kHudBarX0;
+  if (rel < 0) rel = 0;
+  if (rel > kHudBarX1 - kHudBarX0) rel = kHudBarX1 - kHudBarX0;
+  return (uint16_t)(rel * 1000 / (kHudBarX1 - kHudBarX0));
+}
+
 HudTap hudHitTest(int16_t x, int16_t y) {
   HudTap t;
   if (y < kHudTop) { t.kind = HudTap::Outside; return t; }
   if (inRect(x, y, kHudBarX0 - 8, kHudBarY - 16, kHudBarX1 - kHudBarX0 + 16, 48)) {
     t.kind = HudTap::Scrub;
-    int32_t rel = x - kHudBarX0;
-    if (rel < 0) rel = 0;
-    if (rel > kHudBarX1 - kHudBarX0) rel = kHudBarX1 - kHudBarX0;
-    t.permille = (uint16_t)(rel * 1000 / (kHudBarX1 - kHudBarX0));
+    t.permille = hudScrubPermilleAt(x);
     return t;
   }
   if (inRect(x, y, 48, kHudRow1, 152, kHudBtnH)) t.kind = HudTap::Library;

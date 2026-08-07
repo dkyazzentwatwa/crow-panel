@@ -47,6 +47,11 @@ struct HudTap {
 void drawHud(Arduino_GFX *g, uint16_t permille, uint8_t backlight,
              bool flashOn);
 HudTap hudHitTest(int16_t x, int16_t y);
+// The scrub bar's x -> permille map on its own, clamped to the bar: a live
+// scrub DRAG tracks the finger's x even after it drifts off the bar's own
+// y-band (hudHitTest would stop reporting Scrub there, which is right for
+// taps but wrong for a grab already in progress).
+uint16_t hudScrubPermilleAt(int16_t x);
 
 // ---- Contents (TOC) list.
 constexpr size_t kTocRowsPerPage = 14;
