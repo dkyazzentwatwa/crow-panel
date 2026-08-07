@@ -12,6 +12,7 @@
 #include "src/GfxMeasure.h"
 #include "src/InkTheme.h"
 #include "src/ReaderView.h"
+#include "src/InkUi.h"
 #endif
 
 SerialCommandRouter router;
@@ -55,10 +56,19 @@ SerialMeasure measure;
 
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
 bool displayReady = false;
-// The e-ink "invert flash" page-turn effect; a real Aa-menu toggle lands
-// with Task 12's settings sheet.
+// The e-ink "invert flash" page-turn effect; toggled from the HUD and the
+// Aa sheet (and honest about being an LCD imitating e-ink).
 bool invertFlash = true;
 InkwellGfx::GfxMeasure gfxMeasure(1);
+// Touch screen state machine. Reader is the page itself; the HUD is an
+// overlay flag on top of it rather than a screen of its own so closing it
+// redraws the same page. Serial commands stay live on every screen -- the
+// cores they call set `screen` so the two surfaces can't disagree.
+enum class Screen : uint8_t { Library, Reader, Toc, Aa };
+Screen screen = Screen::Library;
+bool hudOpen = false;
+size_t libraryGridPage = 0;
+size_t tocPage = 0;
 #endif
 
 // One measurer drives every layout: real font metrics once the panel is
@@ -315,20 +325,10 @@ void printPage() {
 }
 
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
-// Paper placeholder until Task 12's touch library grid lands. NOT
-// HARDWARE-VERIFIED (like every draw call in this build).
-void drawIdleScreen() {
-  Arduino_GFX *g = CrowDisplay::canvas();
-  if (g == nullptr) return;
-  g->fillScreen(InkTheme::to565(InkTheme::kPaper));
-  g->setFont(InkwellGfx::inkFont(Ink::kStyleH1, 1));
-  g->setTextColor(InkTheme::to565(InkTheme::kText));
-  g->setCursor(48, 120);
-  g->print("Inkwell");
-  g->setFont(InkwellGfx::inkFont(Ink::kStyleBody, 1));
-  g->setTextColor(InkTheme::to565(InkTheme::kFaint));
-  g->setCursor(48, 180);
-  g->print("open a book over Serial (touch library: Task 12)");
+void drawLibraryScreen() {
+  screen = Screen::Library;
+  hudOpen = false;
+  InkUi::drawLibrary(CrowDisplay::canvas(), library, libraryGridPage);
   CrowDisplay::flush();
 }
 #endif
@@ -341,9 +341,11 @@ void renderCurrent() {
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
   if (!displayReady) return;
   if (!bookOpen) {
-    drawIdleScreen();
+    drawLibraryScreen();
     return;
   }
+  screen = Screen::Reader;
+  hudOpen = false;
   const BookEntry &e = library.entry((size_t)currentBookIndex);
   String label = e.title.length() ? e.title : e.id;  // outlives drawPage
   ReaderView::FooterInfo footer;
@@ -742,7 +744,7 @@ void setup() {
   // mirrored (see DisplayBringup.cpp's quadrant-mapping comment).
   displayReady = CrowDisplay::begin(activeHardwareProfile(), "Inkwell", true,
                                     (uint8_t)INKWELL_ROTATION);
-  if (displayReady) drawIdleScreen();
+  if (displayReady) drawLibraryScreen();
 #endif
 
   layoutSettings.pageW = INKWELL_PAGE_W;
@@ -777,18 +779,143 @@ void setup() {
 }
 
 #if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
-// Kindle-style tap zones on the logical portrait width: right 40% = next
-// page, left 25% = previous, center reserved for Task 12's HUD overlay.
-// Fired on the release edge (finger up) so a drag doesn't repeat-turn.
+void drawTocScreen() {
+  screen = Screen::Toc;
+  InkUi::drawToc(CrowDisplay::canvas(), book, tocPage);
+  CrowDisplay::flush();
+}
+
+void drawAaScreen() {
+  screen = Screen::Aa;
+  InkUi::drawAa(CrowDisplay::canvas(), layoutSettings, invertFlash);
+  CrowDisplay::flush();
+}
+
+void drawHudOverlay() {
+  hudOpen = true;
+  uint16_t permille =
+      bookOpen ? book.permille(currentChapter, paginator.pageStartOffset(currentPage)) : 0;
+  InkUi::drawHud(CrowDisplay::canvas(), permille, CrowDisplay::backlight(), invertFlash);
+  CrowDisplay::flush();
+}
+
+// Every branch below calls the SAME action cores the serial commands call
+// (one pipeline); the views' hit-tests are pure geometry. Fired on the
+// release edge (finger up) so a drag doesn't repeat-turn.
 void handleTap(int16_t x, int16_t y) {
-  (void)y;
-  if (!bookOpen) return;  // Task 12: library-grid taps land here
+  if (screen == Screen::Library) {
+    InkUi::LibraryTap t = InkUi::libraryHitTest(x, y, library, libraryGridPage);
+    size_t pages = (library.count() + InkUi::kCardsPerPage - 1) / InkUi::kCardsPerPage;
+    if (t.kind == InkUi::LibraryTap::Book) {
+      openBook(t.index);  // sets screen via renderCurrent()
+    } else if (t.kind == InkUi::LibraryTap::PageNext && libraryGridPage + 1 < pages) {
+      ++libraryGridPage;
+      drawLibraryScreen();
+    } else if (t.kind == InkUi::LibraryTap::PagePrev && libraryGridPage > 0) {
+      --libraryGridPage;
+      drawLibraryScreen();
+    }
+    return;
+  }
+
+  if (screen == Screen::Toc) {
+    InkUi::TocTap t = InkUi::tocHitTest(x, y, book, tocPage);
+    size_t pages = (book.toc().size() + InkUi::kTocRowsPerPage - 1) / InkUi::kTocRowsPerPage;
+    if (t.kind == InkUi::TocTap::Entry) {
+      jumpToTocEntry(t.index);  // unresolved entries no-op with a serial note
+    } else if (t.kind == InkUi::TocTap::Back) {
+      renderCurrent();
+    } else if (t.kind == InkUi::TocTap::PageNext && tocPage + 1 < pages) {
+      ++tocPage;
+      drawTocScreen();
+    } else if (t.kind == InkUi::TocTap::PagePrev && tocPage > 0) {
+      --tocPage;
+      drawTocScreen();
+    }
+    return;
+  }
+
+  if (screen == Screen::Aa) {
+    InkUi::AaTap t = InkUi::aaHitTest(x, y);
+    switch (t.kind) {
+      case InkUi::AaTap::Font:
+        setFontStep((uint8_t)t.value);   // relayout -> renderCurrent (Reader)
+        drawAaScreen();                  // stay on the sheet, refreshed
+        break;
+      case InkUi::AaTap::Spacing:
+        setSpacingPct((uint8_t)t.value);
+        drawAaScreen();
+        break;
+      case InkUi::AaTap::Margin:
+        setMarginX(t.value);
+        drawAaScreen();
+        break;
+      case InkUi::AaTap::Flash:
+        invertFlash = !invertFlash;
+        drawAaScreen();
+        break;
+      case InkUi::AaTap::Back:
+        renderCurrent();
+        break;
+      default:
+        break;
+    }
+    return;
+  }
+
+  // Reader.
+  if (hudOpen) {
+    InkUi::HudTap t = InkUi::hudHitTest(x, y);
+    switch (t.kind) {
+      case InkUi::HudTap::Scrub:
+        hudOpen = false;
+        gotoPermille(t.permille);
+        break;
+      case InkUi::HudTap::Library:
+        closeBook();  // saves position; renderCurrent -> library grid
+        break;
+      case InkUi::HudTap::Contents:
+        hudOpen = false;
+        tocPage = 0;
+        drawTocScreen();
+        break;
+      case InkUi::HudTap::Aa:
+        hudOpen = false;
+        drawAaScreen();
+        break;
+      case InkUi::HudTap::Flash:
+        invertFlash = !invertFlash;
+        drawHudOverlay();
+        break;
+      case InkUi::HudTap::BriDown:
+      case InkUi::HudTap::BriUp: {
+        // Keep a usable floor (32): 0 renders an invisible-but-live panel
+        // (DisplayBringup.h's own warning).
+        int level = (int)CrowDisplay::backlight() +
+                    (t.kind == InkUi::HudTap::BriUp ? 32 : -32);
+        if (level < 32) level = 32;
+        if (level > 255) level = 255;
+        CrowDisplay::setBacklight((uint8_t)level);
+        drawHudOverlay();
+        break;
+      }
+      case InkUi::HudTap::Outside:
+      default:
+        renderCurrent();  // close the sheet by redrawing the page
+        break;
+    }
+    return;
+  }
+
+  // Kindle-style zones on the logical portrait width: right 40% next,
+  // left 25% previous, center opens the HUD.
   if (x >= (int16_t)((int32_t)INKWELL_PAGE_W * 60 / 100)) {
     nextPage();
   } else if (x <= (int16_t)((int32_t)INKWELL_PAGE_W * 25 / 100)) {
     prevPage();
+  } else {
+    drawHudOverlay();
   }
-  // else: center -- HUD overlay, Task 12.
 }
 #endif
 
