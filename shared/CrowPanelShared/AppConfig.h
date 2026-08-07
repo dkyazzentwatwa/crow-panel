@@ -135,16 +135,17 @@
 #define USE_SD_POKEDEX 0
 #endif
 
-#ifndef USE_INKWELL_SD
-#define USE_INKWELL_SD 0
-#endif
-
 #ifndef USE_POKEDEX_SPRITES
 #define USE_POKEDEX_SPRITES 0
 #endif
 
 #ifndef USE_POKEDEX_AUDIO
 #define USE_POKEDEX_AUDIO 0
+#endif
+
+// Project 25 (Inkwell): SD book library. Mock-first, off by default.
+#ifndef USE_INKWELL_SD
+#define USE_INKWELL_SD 0
 #endif
 
 // Project 19 (Starbeam Console): native nRF24/CC1101 stack + UART co-processor

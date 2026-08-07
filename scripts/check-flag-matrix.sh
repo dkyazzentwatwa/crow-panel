@@ -50,6 +50,7 @@ P19="in-progress/19-starbeam-console"
 P20="projects/20-pipboy-terminal"
 P21="projects/21-cypher-keys-hid-deck"
 P22="projects/22-cypher-boy"
+P25="in-progress/25-inkwell"
 
 # Rows: "<project>|<tag>|<flags>|<required libs, comma-separated>"
 ROWS=(
@@ -73,6 +74,7 @@ ROWS=(
   "$P20|baseline||"
   "$P21|baseline||"
   "$P22|baseline||"
+  "$P25|baseline||"
   "$P1|display|-DUSE_DISPLAY=1|GFX Library for Arduino,SensorLib"
   "$P2|display|-DUSE_DISPLAY=1|GFX Library for Arduino,SensorLib"
   "$P3|display|-DUSE_DISPLAY=1|GFX Library for Arduino,SensorLib"
@@ -192,6 +194,9 @@ ROWS=(
   "$P22|nes|-DUSE_NES_CORE=1|"
   "$P22|nes-full|-DUSE_DISPLAY=1 -DUSE_GB_SD=1 -DUSE_GB_AUDIO=1 -DUSE_NES_CORE=1|GFX Library for Arduino,SensorLib"
   "$P22|all-systems|-DUSE_DISPLAY=1 -DUSE_GB_SD=1 -DUSE_GB_AUDIO=1 -DUSE_GENESIS_CORE=1 -DUSE_NES_CORE=1|GFX Library for Arduino,SensorLib"
+  # Task 9: SD-backed library (/books scan, catalog cache, positions, sidecars).
+  # Display rows land with Task 11 once the touch UI exists.
+  "$P25|sd|-DUSE_INKWELL_SD=1|"
 )
 
 echo "Flag matrix: ${#ROWS[@]} rows on $FQBN"

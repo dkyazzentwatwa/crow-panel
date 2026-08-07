@@ -133,12 +133,29 @@ String renderSegs(const Ink::Line &ln) {
   return out;
 }
 
+// Task 9 hook: after every layout, ask the library to persist a page-index
+// sidecar for the SD backend (LibraryStore::writePageIndex() is a no-op that
+// returns false for the mock backend -- see src/LibraryStore.cpp -- so this
+// call site never has to branch on which backend is active). Built from
+// paginator.pageStartOffset(p) for every page just laid out, keyed by
+// layoutSettings.hash() so a font/spacing/margin change gets its own
+// sidecar rather than colliding with a stale one from a different layout.
+void writePageIndexSidecar() {
+  size_t pages = paginator.pageCount();
+  std::vector<uint32_t> starts;
+  starts.reserve(pages);
+  for (size_t p = 0; p < pages; ++p) starts.push_back(paginator.pageStartOffset(p));
+  library.writePageIndex((size_t)currentBookIndex, currentChapter, layoutSettings.hash(),
+                          starts);
+}
+
 void loadChapterAndLayout(size_t chapter) {
   currentBlocks.clear();
   book.loadChapter(chapter, currentBlocks);
   paginator.layout(currentBlocks, layoutSettings, measure);
   currentChapter = chapter;
   currentPage = 0;
+  writePageIndexSidecar();
 }
 
 // Saves the CURRENT page's leading offset as the resume point. Called on
@@ -267,6 +284,20 @@ void resetReaderState() {
 }
 
 void openBook(size_t idx) {
+  // Close whatever InkBook currently holds BEFORE asking the library for the
+  // next book's bytes. InkBook.h documents "data must outlive the InkBook":
+  // for EPUB that's not just a during-open() requirement -- EpubBook keeps
+  // miniz's mem-reader pointed at the caller's buffer for the book's whole
+  // life, since loadChapter() decompresses lazily on every call, not once at
+  // open(). The SD backend's bookData() (src/LibraryStore.cpp) only frees a
+  // book's PSRAM buffer once a NEW load has already succeeded, which by
+  // itself is already safe -- but closing `book` here first, rather than
+  // relying on book.open()'s own internal close() a few lines down, means no
+  // live InkBook/EpubBook ever holds a stale buffer pointer even
+  // momentarily, regardless of how bookData()'s single-slot policy evolves.
+  // A no-op on the very first open (book starts closed).
+  book.close();
+
   const uint8_t *data = nullptr;
   size_t size = 0;
   if (!library.bookData(idx, data, size)) {
@@ -277,9 +308,9 @@ void openBook(size_t idx) {
   if (!book.open(e.format, data, size)) {
     Serial.println(F("[open] failed to parse book"));
     // Latent with today's samples (only a malformed EPUB can fail this
-    // path, and sampleEpub() is always well-formed) -- real once Task 9's
-    // SD store can hand back a corrupt file. See resetReaderState()'s own
-    // comment for why this needs the same reset as a deliberate `close`.
+    // path, and sampleEpub() is always well-formed) -- real now that the SD
+    // store (Task 9) can hand back a corrupt file. See resetReaderState()'s
+    // own comment for why this needs the same reset as a deliberate `close`.
     resetReaderState();
     return;
   }
@@ -314,6 +345,10 @@ void relayoutAndLand() {
 void cmdStatus(const String &) {
   printSystemStatus(Serial, "inkwell", eventLog.size(), &router);
   Serial.print(F("library: "));
+  Serial.print(library.backendName());
+  Serial.print(F(" backend, SD "));
+  Serial.print(library.sdMounted() ? F("mounted") : F("not mounted"));
+  Serial.print(F(", "));
   Serial.print((unsigned)library.count());
   Serial.println(F(" books"));
   if (bookOpen) {
@@ -546,8 +581,12 @@ void setup() {
   library.begin();
   eventLog.add("Inkwell booted");
   Serial.print(F("library: "));
+  Serial.print(library.backendName());
+  Serial.print(F(" backend, SD "));
+  Serial.print(library.sdMounted() ? F("mounted") : F("not mounted"));
+  Serial.print(F(", "));
   Serial.print((unsigned)library.count());
-  Serial.println(F(" sample books loaded"));
+  Serial.println(F(" books loaded"));
 
   router.begin(Serial, "inkwell");
   router.on("status", "scaffold and proof status", cmdStatus, "system");
