@@ -92,6 +92,7 @@ bool inPageNextZone(int16_t x, int16_t y) {
 
 void drawLibrary(Arduino_GFX *g, const LibraryStore &lib, size_t gridPage) {
   if (g == nullptr) return;
+  g->setTextSize(1);  // sticky GFX multiplier -- see ReaderView.cpp
   g->fillScreen(paper());
   header(g, "Inkwell");
 
@@ -178,6 +179,7 @@ LibraryTap libraryHitTest(int16_t x, int16_t y, const LibraryStore &lib,
 void drawHud(Arduino_GFX *g, uint16_t permille, uint8_t backlight,
              bool flashOn) {
   if (g == nullptr) return;
+  g->setTextSize(1);  // sticky GFX multiplier -- see ReaderView.cpp
   // Sheet over the current page -- no full-screen clear.
   g->fillRect(0, kHudTop, kW, kH - kHudTop, card());
   g->drawFastHLine(0, kHudTop, kW, ink());
@@ -227,6 +229,7 @@ HudTap hudHitTest(int16_t x, int16_t y) {
 
 void drawToc(Arduino_GFX *g, const Ink::InkBook &book, size_t tocPage) {
   if (g == nullptr) return;
+  g->setTextSize(1);  // sticky GFX multiplier -- see ReaderView.cpp
   g->fillScreen(paper());
   header(g, "Contents");
   g->setFont(InkwellGfx::inkFont(Ink::kStyleMono, 0));
@@ -302,6 +305,7 @@ constexpr int16_t kAaMarginVals[3] = {32, 48, 64};
 
 void drawAa(Arduino_GFX *g, const Ink::LayoutSettings &s, bool flashOn) {
   if (g == nullptr) return;
+  g->setTextSize(1);  // sticky GFX multiplier -- see ReaderView.cpp
   g->fillScreen(paper());
   header(g, "Aa");
   g->setFont(InkwellGfx::inkFont(Ink::kStyleMono, 0));

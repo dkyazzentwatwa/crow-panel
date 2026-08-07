@@ -356,6 +356,14 @@ void renderCurrent() {
   footer.page = currentPage;
   footer.pageCount = paginator.pageCount();
   footer.permille = book.permille(currentChapter, paginator.pageStartOffset(currentPage));
+  if (invertFlash) {
+    // The e-ink refresh look, done where it can actually reach the panel:
+    // fill, SYNC, hold ~90ms, then draw the page (ReaderView itself never
+    // flushes -- under manual flush an unsynced fill would be invisible).
+    CrowDisplay::canvas()->fillScreen(InkTheme::to565(InkTheme::kText));
+    CrowDisplay::flush();
+    delay(90);
+  }
   ReaderView::drawPage(CrowDisplay::canvas(), paginator, currentPage, currentBlocks,
                        layoutSettings, layoutSettings.fontStep, footer, invertFlash);
   CrowDisplay::flush();  // manualFlush build: one cache sync per page draw

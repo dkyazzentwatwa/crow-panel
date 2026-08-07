@@ -18,7 +18,6 @@ namespace {
 // kListIndentPerDepthPx); ReaderView derives list depth from
 // Line::indentPx exactly like the serial renderer does.
 constexpr int16_t kListIndentPerDepthPx = 24;
-constexpr int16_t kFlashMs = 90;
 
 // GFX custom fonts draw from the BASELINE, not the top-left. Place the
 // baseline at ~3/4 of the line box: FreeFonts carry roughly 75/25
@@ -50,12 +49,14 @@ void drawPage(Arduino_GFX *gfx, const Ink::Paginator &p, size_t pageIdx,
   const uint16_t ink = InkTheme::to565(InkTheme::kText);
   const uint16_t faint = InkTheme::to565(InkTheme::kFaint);
 
-  if (invertFlash) {
-    // The e-ink refresh look: one full-frame ink flash, then the page.
-    // Full-screen fills at page cadence -- tearing is not a concern.
-    gfx->fillScreen(ink);
-    delay(kFlashMs);
-  }
+  (void)invertFlash;  // the flash frame is the .ino's job: under manual
+                      // flush an intermediate fillScreen here never reaches
+                      // the panel (no sync between fill and delay).
+  // GFX text-size multiplier is STICKY -- DisplayBringup's boot status
+  // screen leaves it at 3-4, which rendered every custom-font glyph at 3-4x
+  // and made pages overlap into garbage on first hardware boot. Reset it
+  // before any text.
+  gfx->setTextSize(1);
   gfx->fillScreen(paper);
 
   const Ink::Page &page = p.pages()[pageIdx];
