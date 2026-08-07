@@ -236,6 +236,16 @@ bool LibraryStore::begin() {
     Logger::warn("inkwell", "no SD card detected; library empty (see `books`)");
     return false;
   }
+  // A card that mounts but reports no capacity is the signature of a
+  // filesystem the core's FAT driver cannot read -- almost always exFAT,
+  // which is what a modern desktop formats a >32 GB card as by default.
+  // Same check and message as project 18's DeskStorageService::mountCard().
+  // Treated as a mount failure: sdMounted_ stays false and count_ stays 0,
+  // same as "no card" -- the .ino already handles an empty library.
+  if (SD_MMC.totalBytes() == 0) {
+    Logger::error("inkwell", "card is not FAT32; reformat as FAT32");
+    return false;
+  }
 
   if (!ensureDir(INKWELL_BOOKS_DIR)) {
     Logger::error("inkwell", "could not create " INKWELL_BOOKS_DIR " on the card");
@@ -300,6 +310,14 @@ void LibraryStore::scan() {
       title = stemOf(name);
       author = "";
     }
+    // Apply the SAME catalogSafe() scrub the catalog write below uses, right
+    // here at the source, so a book's displayed title/author is identical
+    // whether this is the scan that first read it from the EPUB or a later
+    // scan that hit the cache -- without this, boot 1 (raw EPUB metadata)
+    // and boot 2+ (already-scrubbed cached copy) would disagree on any
+    // title/author containing '|' or a newline.
+    title = catalogSafe(title);
+    author = catalogSafe(author);
 
     BookEntry &e = entries_[count_];
     e.id = name;
@@ -331,7 +349,11 @@ void LibraryStore::scan() {
 
   // Rewrite the catalog from exactly what's registered this pass -- drops
   // stale lines for files removed or renamed since the last scan, so the
-  // cache never grows without bound.
+  // cache never grows without bound. row.title/author were already scrubbed
+  // above before going into entries_[], so catalogSafe() here is a no-op in
+  // practice -- kept anyway so this write path stays correct on its own if
+  // a future caller ever builds a CatalogRow without going through that
+  // same scrub first.
   String body;
   for (const CatalogRow &row : fresh) {
     body += row.name + "|" + String(row.size) + "|" + catalogSafe(row.title) + "|" +
@@ -371,8 +393,11 @@ bool LibraryStore::bookData(size_t i, const uint8_t *&data, size_t &size) {
   // new one has loaded successfully -- never before. A failed load above
   // (short read, alloc failure, open failure) leaves whatever was already
   // resident untouched, so a bad SD read can never take down a book that was
-  // already open. The .ino satisfies InkBook's own "data must outlive the
-  // InkBook" contract (InkBook.h) on top of this by calling book.close()
+  // already open. This means old and new are briefly BOTH resident right
+  // here -- peak PSRAM use during a swap, not the steady-state one buffer
+  // (see kMaxBookBytes's comment in LibraryStore.h for the arithmetic this
+  // is sized against). The .ino satisfies InkBook's own "data must outlive
+  // the InkBook" contract (InkBook.h) on top of this by calling book.close()
   // before it ever calls back in here for a different book -- see openBook()
   // in 25-inkwell.ino.
   if (dataBuf_ != nullptr) heap_caps_free(dataBuf_);
@@ -380,6 +405,14 @@ bool LibraryStore::bookData(size_t i, const uint8_t *&data, size_t &size) {
   dataBufSize_ = fileSize;
   data = dataBuf_;
   size = dataBufSize_;
+  return true;
+}
+
+bool LibraryStore::releaseBookData() {
+  if (dataBuf_ == nullptr) return false;
+  heap_caps_free(dataBuf_);
+  dataBuf_ = nullptr;
+  dataBufSize_ = 0;
   return true;
 }
 
@@ -523,6 +556,10 @@ bool LibraryStore::bookData(size_t i, const uint8_t *&data, size_t &size) {
     }
   }
   return false;  // unreachable for a valid Format value
+}
+
+bool LibraryStore::releaseBookData() {
+  return false;  // no PSRAM buffer to release -- sample data is static/PROGMEM
 }
 
 bool LibraryStore::loadPosition(size_t i, uint16_t &spine, uint32_t &offset) {

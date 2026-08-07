@@ -75,7 +75,7 @@ per this repo's "FS prepends the mount point" invariant:
 
 ```
 /books/                     *.txt, *.md, *.epub (case-insensitive; dotfiles
-                             and files over 24MB are skipped at scan time)
+                             and files over 12MB are skipped at scan time)
 /books/.inkwell/catalog.txt name|size|title|author  ('|' in title/author is
                              escaped to '/'; a filename can never contain
                              '|' -- illegal on FAT/exFAT -- so the name field
@@ -96,13 +96,19 @@ Design decisions worth knowing before extending this:
   `LibraryStore` owns `SD_MMC.begin()`/mount state outright (same
   "don't re-mount a card another subsystem already brought up" guard as
   projects 18 and 22, just with no second subsystem here to hand off to).
-- **Single-slot whole-book buffer.** `bookData()` keeps exactly one
-  `heap_caps_malloc(..., MALLOC_CAP_SPIRAM)` buffer alive at a time, and
-  frees the previous one only after a new load has already succeeded — a
-  failed read can never take down a book that was already open. The `.ino`
-  additionally calls `book.close()` before ever asking the library for a
-  different book's bytes, so `InkBook`/`EpubBook` (which needs its buffer to
-  outlive it, not just survive `open()` — see `InkBook.h` and
+- **Whole-book buffer: one at steady state, briefly two during a swap.**
+  `bookData()` keeps at most one `heap_caps_malloc(..., MALLOC_CAP_SPIRAM)`
+  buffer alive between calls, and frees the previous one only after a new
+  load has already succeeded — a failed read can never take down a book
+  that was already open. That means for the moment between "new buffer
+  loaded" and "old buffer freed", BOTH books' bytes are resident at once;
+  peak PSRAM use during a swap is roughly two books' worth, not one. This is
+  why `kMaxBookBytes` is sized at 12MB rather than a larger number (see
+  below), and `releaseBookData()` exists to drop the buffer entirely once
+  the reader goes back to the library view rather than leaving it pinned.
+  The `.ino` additionally calls `book.close()` before ever asking the
+  library for a different book's bytes, so `InkBook`/`EpubBook` (which needs
+  its buffer to outlive it, not just survive `open()` — see `InkBook.h` and
   `EpubBook.h`) never holds a stale pointer, even momentarily.
 - **Catalog cache is a cache, not a source of truth.** It's rebuilt from
   exactly what's registered on every scan (stale rows for removed/renamed
@@ -110,10 +116,16 @@ Design decisions worth knowing before extending this:
   re-open every EPUB instead of failing — same self-healing story as the
   `.pos` and `.idx` sidecars, which is why none of them use the
   temp+rename+backup machinery `DeskStorage` (project 18) uses for its
-  index — these are all disposable caches, not user data.
-- **`kMaxBooks` is 32, `kMaxBookBytes` is 24MB** — see the comments on both
-  in `src/LibraryStore.h` for the memory reasoning (fixed-table cost per
-  slot; PSRAM headroom above one whole-book buffer).
+  index — these are all disposable caches, not user data. Title/author are
+  scrubbed (`catalogSafe()`) at the moment they're first read, not just at
+  catalog-write time, so a book's displayed metadata can't drift between the
+  scan that first parses its EPUB and a later scan that hits the cache.
+- **`kMaxBooks` is 32, `kMaxBookBytes` is 12MB** — see the comments on both
+  in `src/LibraryStore.h` for the memory reasoning: `kMaxBooks` is a
+  fixed-table cost per slot; `kMaxBookBytes` is sized so that TWO max-size
+  books (the transient swap peak above) is 24MB, leaving 8MB of the 32MB
+  PSRAM budget for everything else the app needs. 12MB remains enormous for
+  a single ebook.
 
 ## What's not here yet
 

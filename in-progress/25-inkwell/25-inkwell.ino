@@ -140,6 +140,10 @@ String renderSegs(const Ink::Line &ln) {
 // paginator.pageStartOffset(p) for every page just laid out, keyed by
 // layoutSettings.hash() so a font/spacing/margin change gets its own
 // sidecar rather than colliding with a stale one from a different layout.
+// Called from BOTH places a layout actually happens: loadChapterAndLayout()
+// (new chapter, same settings) and relayoutAndLand() (same chapter, new
+// settings) -- the latter is exactly the case the hash keying exists for,
+// so skipping it there would leave the whole stale-hash-cleanup path dead.
 void writePageIndexSidecar() {
   size_t pages = paginator.pageCount();
   std::vector<uint32_t> starts;
@@ -273,7 +277,14 @@ void printPage() {
 // previously held BEFORE it can fail, so a failed reopen over an
 // already-open book needs exactly the same reset a deliberate `close`
 // does; keeping one function means that reset can't drift between the two
-// call sites.
+// call sites. `book` is already closed by the time either caller reaches
+// here (cmdClose calls book.close() itself; book.open()'s own failure path
+// calls close() internally before returning false), so it's also the right
+// place to release the SD backend's whole-book PSRAM buffer
+// (releaseBookData() is a no-op for the mock backend) -- once we're back at
+// the library view, nothing needs that buffer valid anymore, and holding
+// megabytes of it pinned is exactly what Task 11's DSI framebuffer won't
+// want competing with.
 void resetReaderState() {
   currentBlocks.clear();
   paginator.layout(currentBlocks, layoutSettings, measure);
@@ -281,6 +292,7 @@ void resetReaderState() {
   currentBookIndex = -1;
   currentChapter = 0;
   currentPage = 0;
+  library.releaseBookData();
 }
 
 void openBook(size_t idx) {
@@ -338,6 +350,12 @@ void relayoutAndLand() {
   uint32_t offset = paginator.pageStartOffset(currentPage);
   paginator.layout(currentBlocks, layoutSettings, measure);
   currentPage = paginator.pageForOffset(offset);
+  // This is the OTHER place a layout happens (loadChapterAndLayout() is the
+  // first) and exactly the case the sidecar's hash keying exists for: a
+  // font/spacing/margin change lands here with the SAME chapter but a
+  // DIFFERENT layoutSettings.hash(), so this call is what actually writes
+  // the new sidecar and cleans up the previous layout's stale one.
+  writePageIndexSidecar();
   printPage();
   savePositionCurrent();
 }

@@ -50,15 +50,19 @@ class LibraryStore {
   // text): 32 slots is on the order of 2KB even full, negligible next to the
   // ~300KB of internal DRAM this board has to share with everything else.
   static const size_t kMaxBooks = 32;
-  // Skip anything on /books bigger than this. PSRAM is 32MB total; this
-  // store keeps exactly one whole-book buffer at a time (see bookData()
-  // below), but the paginator's Line/Page vectors for that same book scale
-  // with document size too (Paginator.h: "each Line costs roughly ~150
-  // bytes") and land in internal DRAM, not PSRAM -- 24MB leaves headroom for
-  // the book buffer itself plus everything else the app needs, without
-  // pretending to size the emitted Line vector out of ~300KB of DRAM
-  // exactly. A file over this is skipped at scan time, not truncated.
-  static const size_t kMaxBookBytes = 24UL * 1024 * 1024;
+  // Skip anything on /books bigger than this. PSRAM is 32MB total, and
+  // bookData() briefly holds TWO whole-book buffers at once while swapping
+  // books -- it only frees the old one once the new one has finished
+  // loading (see bookData() below), so peak PSRAM use during a swap is
+  // roughly TWO books' worth, not one. 12MB keeps that arithmetic safe with
+  // margin: two max-size books is 24MB, leaving 8MB of the 32MB PSRAM
+  // budget for the paginator's Line/Page vectors (Paginator.h: "each Line
+  // costs roughly ~150 bytes" -- those land in internal DRAM, not PSRAM, but
+  // the 8MB margin is deliberately generous rather than cut to the bone) and
+  // everything else the app needs. 12MB is still enormous for a single
+  // ebook (a multi-hundred-page EPUB with images rarely clears a few MB). A
+  // file over this is skipped at scan time, not truncated.
+  static const size_t kMaxBookBytes = 12UL * 1024 * 1024;
 #else
   // Mock registers exactly 3 samples; fixed-size (no heap growth on a
   // long-running panel), per the repo's storage-policy rule.
@@ -80,9 +84,18 @@ class LibraryStore {
   // Stable pointers: SampleBooks.h's samples are static-local, built once
   // and never freed, so data/size stay valid for the process lifetime.
   // SD: data points at a PSRAM buffer this store owns and reuses -- see the
-  // "single-slot" note on the SD half in LibraryStore.cpp. Valid until the
-  // NEXT bookData() call (any index, including the same one again).
+  // "single-slot, briefly two during a swap" note on the SD half in
+  // LibraryStore.cpp. Valid until the NEXT bookData() call (any index,
+  // including the same one again) or releaseBookData().
   bool bookData(size_t i, const uint8_t *&data, size_t &size);
+  // Frees the SD backend's whole-book buffer, if one is held, without
+  // loading a replacement -- for when the reader goes back to the library
+  // view and the pages already turned are the only reason the buffer was
+  // still resident. No-op (returns false) for the mock backend or when
+  // nothing is currently held. Call after book.close(), not before --
+  // InkBook/EpubBook still need the buffer valid until they're closed (see
+  // InkBook.h's "data must outlive the InkBook").
+  bool releaseBookData();
   // False (with spine=0, offset=0) when i is out of range OR no position
   // was ever saved for that book -- both cases mean "start of book" to the
   // caller, so openBook() doesn't need to distinguish them.
@@ -96,14 +109,16 @@ class LibraryStore {
   // reader pipeline (openBook/paginate) is identical either way.
   const char *backendName() const;
 
-  // Task 9 sidecar hook, called by the .ino's loadChapterAndLayout() right
-  // after every layout. Writes a page-start-offset index for (book i,
-  // chapter) keyed by the paginator's LayoutSettings::hash() if one isn't
-  // already on disk, and deletes any sidecar left over from a previous hash
-  // for the same book+chapter. No-op (returns false) for the mock backend,
-  // an unmounted card, or an out-of-range i. See LibraryStore.cpp's SD half
-  // for the v1 scope note: this only WRITES sidecars; nothing reads them
-  // back yet beyond the existence check that skips a redundant write.
+  // Task 9 sidecar hook, called by the .ino right after every layout --
+  // both loadChapterAndLayout() (new chapter) and relayoutAndLand() (same
+  // chapter, new font/spacing/margin). Writes a page-start-offset index for
+  // (book i, chapter) keyed by the paginator's LayoutSettings::hash() if one
+  // isn't already on disk, and deletes any sidecar left over from a
+  // previous hash for the same book+chapter. No-op (returns false) for the
+  // mock backend, an unmounted card, or an out-of-range i. See
+  // LibraryStore.cpp's SD half for the v1 scope note: this only WRITES
+  // sidecars; nothing reads them back yet beyond the existence check that
+  // skips a redundant write.
   bool writePageIndex(size_t i, size_t chapter, uint32_t layoutHash,
                        const std::vector<uint32_t> &pageStarts);
 
@@ -113,9 +128,11 @@ class LibraryStore {
 
 #if USE_INKWELL_SD
   bool sdMounted_ = false;
-  // Single-slot whole-book buffer: bookData() frees whatever this pointed at
-  // the moment a NEW load succeeds (never before -- see the .cpp) and hands
-  // back the fresh one. Only one book's bytes are ever resident at once.
+  // Single-slot whole-book buffer, in the sense that only ONE survives
+  // between calls -- bookData() frees whatever this pointed at the moment a
+  // NEW load succeeds, never before (see the .cpp), so DURING a swap both
+  // the old and the new book's bytes are briefly resident at once. That
+  // transient overlap is exactly what kMaxBookBytes above is sized against.
   uint8_t *dataBuf_ = nullptr;
   size_t dataBufSize_ = 0;
 
