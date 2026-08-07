@@ -2,11 +2,14 @@
 // these are the EXACT translation units that ship in the firmware.
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include "../src/InkDoc.h"
 #include "../src/MarkdownParser.h"
 #include "../src/TxtParser.h"
 #include "../src/XhtmlParser.h"
+#include "../src/EpubBook.h"
+#include "../src/miniz.h"
 
 static int checks = 0;
 #define CHECK(cond) do { \
@@ -595,6 +598,249 @@ static int testXhtmlUnterminatedTagAtEofIsLiteral() {
   return 0;
 }
 
+// --- EpubBook fixtures + tests -------------------------------------------
+
+// Builds a minimal but structurally honest EPUB in memory.
+static std::string buildFixtureEpub(bool navToc) {
+  mz_zip_archive z; memset(&z, 0, sizeof(z));
+  mz_zip_writer_init_heap(&z, 0, 16 * 1024);
+  auto add = [&](const char *name, const std::string &data) {
+    mz_zip_writer_add_mem(&z, name, data.data(), data.size(), MZ_DEFAULT_COMPRESSION);
+  };
+  add("mimetype", "application/epub+zip");
+  add("META-INF/container.xml",
+      "<?xml version=\"1.0\"?><container><rootfiles>"
+      "<rootfile full-path=\"OEBPS/content.opf\" media-type=\"application/oebps-package+xml\"/>"
+      "</rootfiles></container>");
+  std::string opf =
+      "<?xml version=\"1.0\"?><package><metadata>"
+      "<dc:title>Fixture Book</dc:title><dc:creator>Test Author</dc:creator>"
+      "<meta name=\"cover\" content=\"cov\"/></metadata><manifest>"
+      "<item id=\"c1\" href=\"ch1.xhtml\" media-type=\"application/xhtml+xml\"/>"
+      "<item id=\"c2\" href=\"ch2.xhtml\" media-type=\"application/xhtml+xml\"/>"
+      "<item id=\"cov\" href=\"cover.jpg\" media-type=\"image/jpeg\"/>";
+  if (navToc)
+    opf += "<item id=\"nav\" href=\"nav.xhtml\" media-type=\"application/xhtml+xml\" properties=\"nav\"/>";
+  else
+    opf += "<item id=\"ncx\" href=\"toc.ncx\" media-type=\"application/x-dtbncx+xml\"/>";
+  opf += "</manifest><spine";
+  if (!navToc) opf += " toc=\"ncx\"";
+  opf += "><itemref idref=\"c1\"/><itemref idref=\"c2\"/></spine></package>";
+  add("OEBPS/content.opf", opf);
+  add("OEBPS/ch1.xhtml", "<html><body><h1>One</h1><p>First chapter text.</p></body></html>");
+  add("OEBPS/ch2.xhtml", "<html><body><h1>Two</h1><p>Second chapter text.</p></body></html>");
+  add("OEBPS/cover.jpg", std::string("\xFF\xD8\xFF\xE0 fake jpeg", 14));
+  if (navToc)
+    add("OEBPS/nav.xhtml",
+        "<html><body><nav epub:type=\"toc\"><ol>"
+        "<li><a href=\"ch1.xhtml\">Chapter One</a></li>"
+        "<li><a href=\"ch2.xhtml#frag\">Chapter Two</a></li></ol></nav></body></html>");
+  else
+    add("OEBPS/toc.ncx",
+        "<ncx><navMap><navPoint><navLabel><text>Chapter One</text></navLabel>"
+        "<content src=\"ch1.xhtml\"/></navPoint><navPoint><navLabel>"
+        "<text>Chapter Two</text></navLabel><content src=\"ch2.xhtml\"/>"
+        "</navPoint></navMap></ncx>");
+  void *buf = nullptr; size_t size = 0;
+  mz_zip_writer_finalize_heap_archive(&z, &buf, &size);
+  std::string out((char *)buf, size);
+  mz_zip_writer_end(&z);
+  mz_free(buf);
+  return out;
+}
+
+static int testEpubOpen(bool navToc) {
+  std::string zipData = buildFixtureEpub(navToc);
+  Ink::EpubBook book;
+  CHECK(book.open((const uint8_t *)zipData.data(), zipData.size()));
+  CHECK(book.title() == "Fixture Book");
+  CHECK(book.author() == "Test Author");
+  CHECK(book.chapterCount() == 2);
+  std::string x;
+  CHECK(book.chapterXhtml(1, x) && x.find("Second chapter") != std::string::npos);
+  CHECK(book.toc().size() == 2);
+  CHECK(book.toc()[0].title == "Chapter One" && book.toc()[0].spineIndex == 0);
+  CHECK(book.toc()[1].spineIndex == 1);  // href fragment stripped
+  std::string cover, mediaType;
+  CHECK(book.coverImage(cover, mediaType) && mediaType == "image/jpeg");
+  return 0;
+}
+
+static int testEpubMalformed() {
+  Ink::EpubBook b1, b2, b3;
+  CHECK(!b1.open((const uint8_t *)"not a zip", 9));
+  std::string zipData = buildFixtureEpub(true);
+  CHECK(!b2.open((const uint8_t *)zipData.data(), zipData.size() / 2));  // truncated
+  // zip with no container.xml
+  mz_zip_archive z; memset(&z, 0, sizeof(z));
+  mz_zip_writer_init_heap(&z, 0, 1024);
+  mz_zip_writer_add_mem(&z, "hello.txt", "hi", 2, 0);
+  void *buf = nullptr; size_t size = 0;
+  mz_zip_writer_finalize_heap_archive(&z, &buf, &size);
+  CHECK(!b3.open((const uint8_t *)buf, size));
+  mz_zip_writer_end(&z); mz_free(buf);
+  return 0;
+}
+
+// TOC titles run through Ink::decodeEntities -- "A &amp; B" must come back
+// as "A & B", not the raw escaped text.
+static int testEpubNavTocEntityDecodedTitle() {
+  mz_zip_archive z; memset(&z, 0, sizeof(z));
+  mz_zip_writer_init_heap(&z, 0, 16 * 1024);
+  auto add = [&](const char *name, const std::string &data) {
+    mz_zip_writer_add_mem(&z, name, data.data(), data.size(), MZ_DEFAULT_COMPRESSION);
+  };
+  add("mimetype", "application/epub+zip");
+  add("META-INF/container.xml",
+      "<?xml version=\"1.0\"?><container><rootfiles>"
+      "<rootfile full-path=\"OEBPS/content.opf\" media-type=\"application/oebps-package+xml\"/>"
+      "</rootfiles></container>");
+  add("OEBPS/content.opf",
+      "<?xml version=\"1.0\"?><package><metadata>"
+      "<dc:title>T</dc:title></metadata><manifest>"
+      "<item id=\"c1\" href=\"ch1.xhtml\" media-type=\"application/xhtml+xml\"/>"
+      "<item id=\"nav\" href=\"nav.xhtml\" media-type=\"application/xhtml+xml\" properties=\"nav\"/>"
+      "</manifest><spine><itemref idref=\"c1\"/></spine></package>");
+  add("OEBPS/ch1.xhtml", "<html><body><p>x</p></body></html>");
+  add("OEBPS/nav.xhtml",
+      "<html><body><nav epub:type=\"toc\"><ol>"
+      "<li><a href=\"ch1.xhtml\">A &amp; B</a></li></ol></nav></body></html>");
+  void *buf = nullptr; size_t size = 0;
+  mz_zip_writer_finalize_heap_archive(&z, &buf, &size);
+  std::string zipData((char *)buf, size);
+  mz_zip_writer_end(&z); mz_free(buf);
+
+  Ink::EpubBook book;
+  CHECK(book.open((const uint8_t *)zipData.data(), zipData.size()));
+  CHECK(book.toc().size() == 1);
+  CHECK(book.toc()[0].title == "A & B");
+  return 0;
+}
+
+// A namespace-prefixed OPF root (<opf:package>) and dc: elements must still
+// resolve title/creator/manifest/spine normally.
+static int testEpubOpfNamespacePrefixes() {
+  mz_zip_archive z; memset(&z, 0, sizeof(z));
+  mz_zip_writer_init_heap(&z, 0, 16 * 1024);
+  auto add = [&](const char *name, const std::string &data) {
+    mz_zip_writer_add_mem(&z, name, data.data(), data.size(), MZ_DEFAULT_COMPRESSION);
+  };
+  add("mimetype", "application/epub+zip");
+  add("META-INF/container.xml",
+      "<?xml version=\"1.0\"?><container><rootfiles>"
+      "<rootfile full-path=\"OEBPS/content.opf\" media-type=\"application/oebps-package+xml\"/>"
+      "</rootfiles></container>");
+  add("OEBPS/content.opf",
+      "<?xml version=\"1.0\"?><opf:package xmlns:opf=\"x\"><opf:metadata>"
+      "<dc:title>Prefixed Title</dc:title><dc:creator>Prefixed Author</dc:creator>"
+      "</opf:metadata><opf:manifest>"
+      "<item id=\"c1\" href=\"ch1.xhtml\" media-type=\"application/xhtml+xml\"/>"
+      "</opf:manifest><opf:spine><itemref idref=\"c1\"/></opf:spine></opf:package>");
+  add("OEBPS/ch1.xhtml", "<html><body><p>x</p></body></html>");
+  void *buf = nullptr; size_t size = 0;
+  mz_zip_writer_finalize_heap_archive(&z, &buf, &size);
+  std::string zipData((char *)buf, size);
+  mz_zip_writer_end(&z); mz_free(buf);
+
+  Ink::EpubBook book;
+  CHECK(book.open((const uint8_t *)zipData.data(), zipData.size()));
+  CHECK(book.title() == "Prefixed Title");
+  CHECK(book.author() == "Prefixed Author");
+  CHECK(book.chapterCount() == 1);
+  return 0;
+}
+
+// Cover resolved via properties="cover-image" on the manifest item, with no
+// <meta name="cover"> present at all.
+static int testEpubCoverViaProperties() {
+  mz_zip_archive z; memset(&z, 0, sizeof(z));
+  mz_zip_writer_init_heap(&z, 0, 16 * 1024);
+  auto add = [&](const char *name, const std::string &data) {
+    mz_zip_writer_add_mem(&z, name, data.data(), data.size(), MZ_DEFAULT_COMPRESSION);
+  };
+  add("mimetype", "application/epub+zip");
+  add("META-INF/container.xml",
+      "<?xml version=\"1.0\"?><container><rootfiles>"
+      "<rootfile full-path=\"OEBPS/content.opf\" media-type=\"application/oebps-package+xml\"/>"
+      "</rootfiles></container>");
+  add("OEBPS/content.opf",
+      "<?xml version=\"1.0\"?><package><metadata><dc:title>T</dc:title></metadata>"
+      "<manifest>"
+      "<item id=\"c1\" href=\"ch1.xhtml\" media-type=\"application/xhtml+xml\"/>"
+      "<item id=\"cov\" href=\"cover.png\" media-type=\"image/png\" properties=\"cover-image\"/>"
+      "</manifest><spine><itemref idref=\"c1\"/></spine></package>");
+  add("OEBPS/ch1.xhtml", "<html><body><p>x</p></body></html>");
+  add("OEBPS/cover.png", std::string("\x89PNG fake", 9));
+  void *buf = nullptr; size_t size = 0;
+  mz_zip_writer_finalize_heap_archive(&z, &buf, &size);
+  std::string zipData((char *)buf, size);
+  mz_zip_writer_end(&z); mz_free(buf);
+
+  Ink::EpubBook book;
+  CHECK(book.open((const uint8_t *)zipData.data(), zipData.size()));
+  std::string cover, mediaType;
+  CHECK(book.coverImage(cover, mediaType));
+  CHECK(mediaType == "image/png");
+  CHECK(cover.size() == 9);
+  return 0;
+}
+
+// A TOC entry whose href resolves to nothing in the spine is kept (not
+// dropped), with spineIndex -1.
+static int testEpubTocEntryUnresolvedHrefKept() {
+  mz_zip_archive z; memset(&z, 0, sizeof(z));
+  mz_zip_writer_init_heap(&z, 0, 16 * 1024);
+  auto add = [&](const char *name, const std::string &data) {
+    mz_zip_writer_add_mem(&z, name, data.data(), data.size(), MZ_DEFAULT_COMPRESSION);
+  };
+  add("mimetype", "application/epub+zip");
+  add("META-INF/container.xml",
+      "<?xml version=\"1.0\"?><container><rootfiles>"
+      "<rootfile full-path=\"OEBPS/content.opf\" media-type=\"application/oebps-package+xml\"/>"
+      "</rootfiles></container>");
+  add("OEBPS/content.opf",
+      "<?xml version=\"1.0\"?><package><metadata><dc:title>T</dc:title></metadata>"
+      "<manifest>"
+      "<item id=\"c1\" href=\"ch1.xhtml\" media-type=\"application/xhtml+xml\"/>"
+      "<item id=\"nav\" href=\"nav.xhtml\" media-type=\"application/xhtml+xml\" properties=\"nav\"/>"
+      "</manifest><spine><itemref idref=\"c1\"/></spine></package>");
+  add("OEBPS/ch1.xhtml", "<html><body><p>x</p></body></html>");
+  add("OEBPS/nav.xhtml",
+      "<html><body><nav epub:type=\"toc\"><ol>"
+      "<li><a href=\"ch1.xhtml\">Real</a></li>"
+      "<li><a href=\"nowhere.xhtml\">Ghost</a></li></ol></nav></body></html>");
+  void *buf = nullptr; size_t size = 0;
+  mz_zip_writer_finalize_heap_archive(&z, &buf, &size);
+  std::string zipData((char *)buf, size);
+  mz_zip_writer_end(&z); mz_free(buf);
+
+  Ink::EpubBook book;
+  CHECK(book.open((const uint8_t *)zipData.data(), zipData.size()));
+  CHECK(book.toc().size() == 2);
+  CHECK(book.toc()[0].spineIndex == 0);
+  CHECK(book.toc()[1].title == "Ghost" && book.toc()[1].spineIndex == -1);
+  return 0;
+}
+
+static int testEpubChapterXhtmlOutOfRange() {
+  std::string zipData = buildFixtureEpub(true);
+  Ink::EpubBook book;
+  CHECK(book.open((const uint8_t *)zipData.data(), zipData.size()));
+  std::string out;
+  CHECK(!book.chapterXhtml(2, out));
+  CHECK(!book.chapterXhtml((size_t)-1, out));
+  return 0;
+}
+
+static int testEpubChapterSizePositive() {
+  std::string zipData = buildFixtureEpub(true);
+  Ink::EpubBook book;
+  CHECK(book.open((const uint8_t *)zipData.data(), zipData.size()));
+  CHECK(book.chapterSize(0) > 0);
+  CHECK(book.chapterSize(1) > 0);
+  return 0;
+}
+
 int main() {
   if (testTxtParagraphs()) return 1;
   if (testTxtEdges()) return 1;
@@ -647,6 +893,15 @@ int main() {
   if (testXhtmlListDepthCapsAtThree()) return 1;
   if (testXhtmlBrProducesSpace()) return 1;
   if (testXhtmlUnterminatedTagAtEofIsLiteral()) return 1;
+  if (testEpubOpen(true)) return 1;
+  if (testEpubOpen(false)) return 1;
+  if (testEpubMalformed()) return 1;
+  if (testEpubNavTocEntityDecodedTitle()) return 1;
+  if (testEpubOpfNamespacePrefixes()) return 1;
+  if (testEpubCoverViaProperties()) return 1;
+  if (testEpubTocEntryUnresolvedHrefKept()) return 1;
+  if (testEpubChapterXhtmlOutOfRange()) return 1;
+  if (testEpubChapterSizePositive()) return 1;
   std::printf("inkwell host tests: %d checks passed\n", checks);
   return 0;
 }
