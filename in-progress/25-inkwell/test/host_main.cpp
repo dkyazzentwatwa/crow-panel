@@ -11,6 +11,7 @@
 #include "../src/EpubBook.h"
 #include "../src/miniz.h"
 #include "../src/Paginator.h"
+#include "../src/InkBook.h"
 #include <vector>
 
 static int checks = 0;
@@ -1764,6 +1765,167 @@ static int testPaginatorOverflowGuard() {
   return 0;
 }
 
+// ---------------------------------------------------------------------
+// InkBook facade tests
+// ---------------------------------------------------------------------
+
+static int testInkBookTxt() {
+  std::string src = "First para.\n\nSecond para.\n";
+  Ink::InkBook book;
+  CHECK(book.open(Ink::Format::Txt, (const uint8_t *)src.data(), src.size()));
+  CHECK(book.format() == Ink::Format::Txt);
+  CHECK(book.chapterCount() == 1);
+  CHECK(book.title() == "");
+  CHECK(book.author() == "");
+  std::vector<Ink::Block> blocks;
+  CHECK(book.loadChapter(0, blocks));
+  CHECK(blocks.size() == 2);
+  CHECK(Ink::plainText(blocks[0]) == "First para.");
+  CHECK(Ink::plainText(blocks[1]) == "Second para.");
+  CHECK(!book.loadChapter(1, blocks));  // TXT/MD only ever have chapter 0
+  CHECK(book.permille(0, 0) == 0);
+  CHECK(book.permille(0, (uint32_t)src.size()) == 1000);
+  return 0;
+}
+
+// "# A\n\nbody\n\n## B\n\nbody\n\n### C" -- H3 excluded from the TOC per
+// spec, so only A (H1) and B (H2) show up.
+// Byte offsets, hand-counted:
+//   0:'#' 1:' ' 2:'A' 3:'\n' 4:'\n' 5:'b' 6:'o' 7:'d' 8:'y' 9:'\n' 10:'\n'
+//   11:'#' 12:'#' 13:' ' 14:'B' 15:'\n' 16:'\n' 17:'b' 18:'o' 19:'d' 20:'y'
+//   21:'\n' 22:'\n' 23:'#' 24:'#' 25:'#' 26:' ' 27:'C'
+// So "## B" (the H2's srcOffset) starts at byte 11.
+static int testInkBookMarkdownToc() {
+  std::string src = "# A\n\nbody\n\n## B\n\nbody\n\n### C";
+  Ink::InkBook book;
+  CHECK(book.open(Ink::Format::Markdown, (const uint8_t *)src.data(), src.size()));
+  CHECK(book.format() == Ink::Format::Markdown);
+  CHECK(book.chapterCount() == 1);
+  CHECK(book.toc().size() == 2);
+  CHECK(book.toc()[0].title == "A" && book.toc()[0].spineIndex == 0);
+  CHECK(book.toc()[1].title == "B" && book.toc()[1].spineIndex == 0);
+  CHECK(book.tocOffset(0) == 0);
+  CHECK(book.tocOffset(1) == 11);  // '#' of "## B" -- hand-counted above
+  return 0;
+}
+
+static int testInkBookMarkdownNoHeadings() {
+  std::string src = "Just a paragraph.\n\nAnother one.\n";
+  Ink::InkBook book;
+  CHECK(book.open(Ink::Format::Markdown, (const uint8_t *)src.data(), src.size()));
+  CHECK(book.toc().empty());
+  CHECK(book.chapterCount() == 1);
+  std::vector<Ink::Block> blocks;
+  CHECK(book.loadChapter(0, blocks));
+  CHECK(blocks.size() == 2);
+  return 0;
+}
+
+static int testInkBookEpubDelegation() {
+  std::string zipData = buildFixtureEpub(true);
+  Ink::InkBook book;
+  CHECK(book.open(Ink::Format::Epub, (const uint8_t *)zipData.data(), zipData.size()));
+  CHECK(book.format() == Ink::Format::Epub);
+  CHECK(book.title() == "Fixture Book");
+  CHECK(book.author() == "Test Author");
+  CHECK(book.chapterCount() == 2);
+  CHECK(book.toc().size() == 2);
+  CHECK(book.toc()[0].spineIndex == 0);
+  CHECK(book.toc()[1].spineIndex == 1);
+  CHECK(book.tocOffset(0) == 0);
+  CHECK(book.tocOffset(1) == 0);  // EPUB TOC offsets are always 0
+
+  std::vector<Ink::Block> blocks;
+  CHECK(book.loadChapter(0, blocks));
+  CHECK(blocks.size() == 2);  // "<h1>One</h1><p>First chapter text.</p>"
+  CHECK(blocks[0].type == Ink::BlockType::H1 && Ink::plainText(blocks[0]) == "One");
+  CHECK(blocks[1].type == Ink::BlockType::Body);
+  CHECK(!book.loadChapter(5, blocks));
+  return 0;
+}
+
+// A failed EPUB open must leave the InkBook in a clean, reusable state --
+// opening a TXT on the same instance right after must succeed normally.
+static int testInkBookEpubOpenFailureThenTxtSucceeds() {
+  Ink::InkBook book;
+  CHECK(!book.open(Ink::Format::Epub, (const uint8_t *)"not a zip", 9));
+  CHECK(book.format() == Ink::Format::Txt);   // reset, not left mid-EPUB
+  CHECK(book.chapterCount() == 1);
+  CHECK(book.title() == "");
+
+  std::string src = "hello world\n";
+  CHECK(book.open(Ink::Format::Txt, (const uint8_t *)src.data(), src.size()));
+  CHECK(book.format() == Ink::Format::Txt);
+  CHECK(book.chapterCount() == 1);
+  std::vector<Ink::Block> blocks;
+  CHECK(book.loadChapter(0, blocks));
+  CHECK(blocks.size() == 1);
+  return 0;
+}
+
+// permille is byte-weighted over EpubBook::chapterSize()'s COMPRESSED
+// entry sizes -- read them from the same API InkBook itself used at
+// open() rather than hardcoding miniz's output, so this doesn't break the
+// moment compression tuning changes a byte count.
+static int testInkBookPermilleEpub() {
+  std::string zipData = buildFixtureEpub(true);
+  Ink::InkBook book;
+  CHECK(book.open(Ink::Format::Epub, (const uint8_t *)zipData.data(), zipData.size()));
+
+  Ink::EpubBook raw;
+  CHECK(raw.open((const uint8_t *)zipData.data(), zipData.size()));
+  uint32_t s0 = raw.chapterSize(0);
+  uint32_t s1 = raw.chapterSize(1);
+  CHECK(s0 > 0 && s1 > 0);
+  uint64_t total = (uint64_t)s0 + (uint64_t)s1;
+  uint16_t expectedChapter1Start = (uint16_t)(((uint64_t)s0 * 1000ull) / total);
+
+  CHECK(book.permille(0, 0) == 0);
+  CHECK(book.permille(1, 0) == expectedChapter1Start);
+  CHECK(book.permille(1, 0xFFFFFFFFu) == 1000);  // huge offset clamps to end
+  return 0;
+}
+
+// open() on a live InkBook without an explicit close() first must behave
+// exactly like close()+open(): the previous format's state (title,
+// chapter count) is fully replaced, not merged or leaked.
+static int testInkBookReopenTxtThenEpub() {
+  Ink::InkBook book;
+  std::string src = "hello world\n";
+  CHECK(book.open(Ink::Format::Txt, (const uint8_t *)src.data(), src.size()));
+  CHECK(book.title() == "");
+  CHECK(book.chapterCount() == 1);
+
+  std::string zipData = buildFixtureEpub(true);
+  CHECK(book.open(Ink::Format::Epub, (const uint8_t *)zipData.data(), zipData.size()));
+  CHECK(book.format() == Ink::Format::Epub);
+  CHECK(book.title() == "Fixture Book");
+  CHECK(book.chapterCount() == 2);
+  return 0;
+}
+
+// Full pipe: EPUB fixture -> InkBook::loadChapter -> Paginator with the
+// existing host MockMeasure. Confirms the facade's output actually feeds
+// the real paginator, not just that it returns plausible-looking blocks.
+static int testInkBookIntegrationPaginate() {
+  std::string zipData = buildFixtureEpub(true);
+  Ink::InkBook book;
+  CHECK(book.open(Ink::Format::Epub, (const uint8_t *)zipData.data(), zipData.size()));
+  std::vector<Ink::Block> blocks;
+  CHECK(book.loadChapter(0, blocks));
+  CHECK(!blocks.empty());
+
+  Ink::LayoutSettings s;
+  MockMeasure m;
+  Ink::Paginator p;
+  p.layout(blocks, s, m);
+  CHECK(p.pageCount() >= 1);
+  CHECK(!p.lines().empty());
+  CHECK(!p.lines()[0].segs.empty());
+  CHECK(p.lines()[0].segs[0].text == "One");
+  return 0;
+}
+
 int main() {
   if (testTxtParagraphs()) return 1;
   if (testTxtEdges()) return 1;
@@ -1853,6 +2015,14 @@ int main() {
   if (testPaginatorGluedStyleChange()) return 1;
   if (testPaginatorWordAfterHardSplitStartsFreshLine()) return 1;
   if (testPaginatorOverflowGuard()) return 1;
+  if (testInkBookTxt()) return 1;
+  if (testInkBookMarkdownToc()) return 1;
+  if (testInkBookMarkdownNoHeadings()) return 1;
+  if (testInkBookEpubDelegation()) return 1;
+  if (testInkBookEpubOpenFailureThenTxtSucceeds()) return 1;
+  if (testInkBookPermilleEpub()) return 1;
+  if (testInkBookReopenTxtThenEpub()) return 1;
+  if (testInkBookIntegrationPaginate()) return 1;
   std::printf("inkwell host tests: %d checks passed\n", checks);
   return 0;
 }
