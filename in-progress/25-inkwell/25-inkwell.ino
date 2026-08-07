@@ -1,13 +1,18 @@
-// SERIAL MOCK READER. Three embedded sample books (TXT/Markdown/EPUB) page
-// through the same InkBook -> Paginator pipeline the real SD-backed reader
-// (Task 9) will use; only LibraryStore's bookData() source changes later.
-// No display, no SD, no touch yet -- every page renders as text to Serial.
+// Inkwell reader. One pipeline: the serial commands and the touch zones
+// call the SAME action cores (nextPage/prevPage/gotoPermille/...), and
+// every state change funnels through renderCurrent() -- Serial always
+// prints the page; the portrait panel redraws when USE_DISPLAY is up.
 
 #include "config/ProjectConfig.h"
 #include <CrowPanelShared.h>
 #include "src/InkBook.h"
 #include "src/Paginator.h"
 #include "src/LibraryStore.h"
+#if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
+#include "src/GfxMeasure.h"
+#include "src/InkTheme.h"
+#include "src/ReaderView.h"
+#endif
 
 SerialCommandRouter router;
 EventLog eventLog;
@@ -47,6 +52,27 @@ class SerialMeasure : public Ink::TextMeasure {
 };
 
 SerialMeasure measure;
+
+#if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
+bool displayReady = false;
+// The e-ink "invert flash" page-turn effect; a real Aa-menu toggle lands
+// with Task 12's settings sheet.
+bool invertFlash = true;
+InkwellGfx::GfxMeasure gfxMeasure(1);
+#endif
+
+// One measurer drives every layout: real font metrics once the panel is
+// up, the host-parity SerialMeasure tables otherwise. Synced to the live
+// fontStep here so no call site can layout with a stale step.
+Ink::TextMeasure &activeMeasure() {
+#if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
+  if (displayReady) {
+    gfxMeasure.setFontStep(layoutSettings.fontStep);
+    return gfxMeasure;
+  }
+#endif
+  return measure;
+}
 
 int currentBookIndex = -1;  // -1 = library view, no book open
 size_t currentChapter = 0;
@@ -130,7 +156,7 @@ String renderSegs(const Ink::Line &ln) {
   for (const Ink::LineSeg &seg : ln.segs) {
     if (!first && seg.x > prevEnd) out += ' ';
     out += styledText(seg);
-    prevEnd = (int16_t)(seg.x + measure.textWidth(seg.text, seg.style));
+    prevEnd = (int16_t)(seg.x + activeMeasure().textWidth(seg.text, seg.style));
     first = false;
   }
   return out;
@@ -165,7 +191,7 @@ void writePageIndexSidecar() {
 void loadChapterAndLayout(size_t chapter) {
   currentBlocks.clear();
   book.loadChapter(chapter, currentBlocks);
-  paginator.layout(currentBlocks, layoutSettings, measure);
+  paginator.layout(currentBlocks, layoutSettings, activeMeasure());
   currentChapter = chapter;
   currentPage = 0;
   writePageIndexSidecar();
@@ -288,6 +314,51 @@ void printPage() {
   Serial.println(F("% --"));
 }
 
+#if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
+// Paper placeholder until Task 12's touch library grid lands. NOT
+// HARDWARE-VERIFIED (like every draw call in this build).
+void drawIdleScreen() {
+  Arduino_GFX *g = CrowDisplay::canvas();
+  if (g == nullptr) return;
+  g->fillScreen(InkTheme::to565(InkTheme::kPaper));
+  g->setFont(InkwellGfx::inkFont(Ink::kStyleH1, 1));
+  g->setTextColor(InkTheme::to565(InkTheme::kText));
+  g->setCursor(48, 120);
+  g->print("Inkwell");
+  g->setFont(InkwellGfx::inkFont(Ink::kStyleBody, 1));
+  g->setTextColor(InkTheme::to565(InkTheme::kFaint));
+  g->setCursor(48, 180);
+  g->print("open a book over Serial (touch library: Task 12)");
+  CrowDisplay::flush();
+}
+#endif
+
+// The one render funnel: every action core ends here. Serial always prints
+// (the mock pipeline stays fully alive under USE_DISPLAY); the panel
+// redraws the same paginator state when the display is up.
+void renderCurrent() {
+  printPage();
+#if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
+  if (!displayReady) return;
+  if (!bookOpen) {
+    drawIdleScreen();
+    return;
+  }
+  const BookEntry &e = library.entry((size_t)currentBookIndex);
+  String label = e.title.length() ? e.title : e.id;  // outlives drawPage
+  ReaderView::FooterInfo footer;
+  footer.title = label.c_str();
+  footer.chapter = currentChapter;
+  footer.chapterCount = book.chapterCount();
+  footer.page = currentPage;
+  footer.pageCount = paginator.pageCount();
+  footer.permille = book.permille(currentChapter, paginator.pageStartOffset(currentPage));
+  ReaderView::drawPage(CrowDisplay::canvas(), paginator, currentPage, currentBlocks,
+                       layoutSettings, layoutSettings.fontStep, footer, invertFlash);
+  CrowDisplay::flush();  // manualFlush build: one cache sync per page draw
+#endif
+}
+
 // Shared teardown back to "library view, nothing open": clears
 // currentBlocks and re-layouts an empty chapter so no stale pages survive
 // (paginator.layout() on an empty block list produces one blank page, per
@@ -306,7 +377,7 @@ void printPage() {
 // want competing with.
 void resetReaderState() {
   currentBlocks.clear();
-  paginator.layout(currentBlocks, layoutSettings, measure);
+  paginator.layout(currentBlocks, layoutSettings, activeMeasure());
   bookOpen = false;
   currentBookIndex = -1;
   currentChapter = 0;
@@ -366,7 +437,7 @@ void openBook(size_t idx) {
 
   loadChapterAndLayout(spine);
   currentPage = paginator.pageForOffset(offset);
-  printPage();
+  renderCurrent();
   savePositionCurrent();
 }
 
@@ -377,7 +448,7 @@ void openBook(size_t idx) {
 // exercise for a font-size change (testPaginatorResume).
 void relayoutAndLand() {
   uint32_t offset = paginator.pageStartOffset(currentPage);
-  paginator.layout(currentBlocks, layoutSettings, measure);
+  paginator.layout(currentBlocks, layoutSettings, activeMeasure());
   currentPage = paginator.pageForOffset(offset);
   // This is the OTHER place a layout happens (loadChapterAndLayout() is the
   // first) and exactly the case the sidecar's hash keying exists for: a
@@ -385,7 +456,7 @@ void relayoutAndLand() {
   // DIFFERENT layoutSettings.hash(), so this call is what actually writes
   // the new sidecar and cleans up the previous layout's stale one.
   writePageIndexSidecar();
-  printPage();
+  renderCurrent();
   savePositionCurrent();
 }
 
@@ -457,11 +528,14 @@ void cmdOpen(const String &args) {
 
 void cmdPage(const String &) {
   if (!requireOpen()) return;
-  printPage();
+  renderCurrent();
 }
 
-void cmdNext(const String &) {
-  if (!requireOpen()) return;
+// Action cores: no String, no parsing. Called by BOTH the cmdX handlers
+// and the touch tap zones -- this is the one-pipeline property, structural
+// rather than aspirational (Task 8 review, "Step 0" refactor).
+void nextPage() {
+  if (!bookOpen) return;
   if (currentPage + 1 < paginator.pageCount()) {
     ++currentPage;
   } else if (currentChapter + 1 < book.chapterCount()) {
@@ -471,12 +545,17 @@ void cmdNext(const String &) {
     Serial.println(F("-- end of book --"));
     return;
   }
-  printPage();
+  renderCurrent();
   savePositionCurrent();
 }
 
-void cmdPrev(const String &) {
+void cmdNext(const String &) {
   if (!requireOpen()) return;
+  nextPage();
+}
+
+void prevPage() {
+  if (!bookOpen) return;
   if (currentPage > 0) {
     --currentPage;
   } else if (currentChapter > 0) {
@@ -486,8 +565,13 @@ void cmdPrev(const String &) {
     Serial.println(F("-- start of book --"));
     return;
   }
-  printPage();
+  renderCurrent();
   savePositionCurrent();
+}
+
+void cmdPrev(const String &) {
+  if (!requireOpen()) return;
+  prevPage();
 }
 
 // Approximation (documented per the task spec): rather than resolving an
@@ -498,12 +582,9 @@ void cmdPrev(const String &) {
 // sizes on its own). Good enough to "roughly" land in the right spot for a
 // mock scrubber; a real UI slider would want a tighter, offset-accurate
 // version once the display path can afford it.
-void cmdGoto(const String &args) {
-  if (!requireOpen()) return;
-  long pct = args.toInt();
-  if (pct < 0) pct = 0;
-  if (pct > 100) pct = 100;
-  uint16_t target = (uint16_t)(pct * 10);
+void gotoPermille(uint16_t target) {
+  if (!bookOpen) return;
+  if (target > 1000) target = 1000;
 
   size_t chapters = book.chapterCount();
   size_t chapter = 0;
@@ -530,8 +611,16 @@ void cmdGoto(const String &args) {
     if (targetPage >= pages) targetPage = pages - 1;
   }
   currentPage = targetPage;
-  printPage();
+  renderCurrent();
   savePositionCurrent();
+}
+
+void cmdGoto(const String &args) {
+  if (!requireOpen()) return;
+  long pct = args.toInt();
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+  gotoPermille((uint16_t)(pct * 10));
 }
 
 void cmdToc(const String &) {
@@ -556,24 +645,34 @@ void cmdToc(const String &) {
 // spine index -- it goes through InkBook::tocTarget()/tocOffset(), per the
 // task spec, so a TOC entry whose href never resolved to a spine item is
 // refused here rather than jumping nowhere.
-void cmdChapter(const String &args) {
-  if (!requireOpen()) return;
-  long n = args.toInt();
-  const std::vector<Ink::TocEntry> &toc = book.toc();
-  if (n < 0 || (size_t)n >= toc.size()) {
-    Serial.println(F("[chapter] invalid TOC index -- see `toc`"));
-    return;
-  }
+void jumpToTocEntry(size_t n) {
+  if (!bookOpen || n >= book.toc().size()) return;
   size_t chapter = 0;
-  if (!book.tocTarget((size_t)n, chapter)) {
+  if (!book.tocTarget(n, chapter)) {
     Serial.println(F("[chapter] unresolved TOC target"));
     return;
   }
-  uint32_t offset = book.tocOffset((size_t)n);
+  uint32_t offset = book.tocOffset(n);
   if (chapter != currentChapter) loadChapterAndLayout(chapter);
   currentPage = paginator.pageForOffset(offset);
-  printPage();
+  renderCurrent();
   savePositionCurrent();
+}
+
+void cmdChapter(const String &args) {
+  if (!requireOpen()) return;
+  long n = args.toInt();
+  if (n < 0 || (size_t)n >= book.toc().size()) {
+    Serial.println(F("[chapter] invalid TOC index -- see `toc`"));
+    return;
+  }
+  jumpToTocEntry((size_t)n);
+}
+
+void setFontStep(uint8_t step) {
+  if (!bookOpen || step > 2) return;
+  layoutSettings.fontStep = step;
+  relayoutAndLand();
 }
 
 void cmdFont(const String &args) {
@@ -583,7 +682,12 @@ void cmdFont(const String &args) {
     Serial.println(F("[font] 1-3"));
     return;
   }
-  layoutSettings.fontStep = (uint8_t)(v - 1);
+  setFontStep((uint8_t)(v - 1));
+}
+
+void setSpacingPct(uint8_t pct) {
+  if (!bookOpen) return;
+  layoutSettings.lineSpacingPct = pct;
   relayoutAndLand();
 }
 
@@ -594,7 +698,12 @@ void cmdSpacing(const String &args) {
     Serial.println(F("[spacing] 100 | 115 | 130"));
     return;
   }
-  layoutSettings.lineSpacingPct = (uint8_t)v;
+  setSpacingPct((uint8_t)v);
+}
+
+void setMarginX(int16_t px) {
+  if (!bookOpen) return;
+  layoutSettings.marginX = px;
   relayoutAndLand();
 }
 
@@ -605,24 +714,36 @@ void cmdMargin(const String &args) {
     Serial.println(F("[margin] 32 | 48 | 64"));
     return;
   }
-  layoutSettings.marginX = (int16_t)v;
-  relayoutAndLand();
+  setMarginX((int16_t)v);
 }
 
-void cmdClose(const String &) {
-  if (!requireOpen()) return;
+void closeBook() {
+  if (!bookOpen) return;
   savePositionCurrent();
   book.close();
   resetReaderState();
   Serial.println(F("closed -- back to library (see `books`)"));
+  renderCurrent();  // !bookOpen -> the idle/library screen when display is up
+}
+
+void cmdClose(const String &) {
+  if (!requireOpen()) return;
+  closeBook();
 }
 
 void setup() {
   Logger::begin(115200);
   Logger::info("app", "Inkwell -- portrait e-ink-style reader (serial mock)");
   printHardwareProfile(Serial, activeHardwareProfile());
-  // Task 11 wires CrowDisplay::begin(profile, title, manualFlush, INKWELL_ROTATION)
-  // here once the display path lands -- no display call exists yet.
+#if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
+  // Portrait panel + GT911. manualFlush=true batches every full-page draw
+  // into one cache sync (DisplayBringup.h). INKWELL_ROTATION comes from
+  // ProjectConfig -- NOT HARDWARE-VERIFIED; flip 1<->3 if the panel proves
+  // mirrored (see DisplayBringup.cpp's quadrant-mapping comment).
+  displayReady = CrowDisplay::begin(activeHardwareProfile(), "Inkwell", true,
+                                    (uint8_t)INKWELL_ROTATION);
+  if (displayReady) drawIdleScreen();
+#endif
 
   layoutSettings.pageW = INKWELL_PAGE_W;
   layoutSettings.pageH = INKWELL_PAGE_H;
@@ -655,7 +776,38 @@ void setup() {
   router.on("close", "save position and return to the library", cmdClose, "reader");
 }
 
+#if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
+// Kindle-style tap zones on the logical portrait width: right 40% = next
+// page, left 25% = previous, center reserved for Task 12's HUD overlay.
+// Fired on the release edge (finger up) so a drag doesn't repeat-turn.
+void handleTap(int16_t x, int16_t y) {
+  (void)y;
+  if (!bookOpen) return;  // Task 12: library-grid taps land here
+  if (x >= (int16_t)((int32_t)INKWELL_PAGE_W * 60 / 100)) {
+    nextPage();
+  } else if (x <= (int16_t)((int32_t)INKWELL_PAGE_W * 25 / 100)) {
+    prevPage();
+  }
+  // else: center -- HUD overlay, Task 12.
+}
+#endif
+
 void loop() {
   router.poll();
+#if USE_DISPLAY && defined(CONFIG_IDF_TARGET_ESP32P4)
+  if (displayReady) {
+    static bool wasDown = false;
+    static int16_t lastX = 0, lastY = 0;
+    int16_t tx = 0, ty = 0;
+    if (CrowDisplay::touchPoint(tx, ty)) {
+      wasDown = true;
+      lastX = tx;
+      lastY = ty;
+    } else if (wasDown) {
+      wasDown = false;
+      handleTap(lastX, lastY);
+    }
+  }
+#endif
   delay(1);
 }
