@@ -1,5 +1,6 @@
 // Host tests for Inkwell's format core. No Arduino, no SD, no display:
 // these are the EXACT translation units that ship in the firmware.
+#include <chrono>
 #include <cstdio>
 #include <string>
 #include "../src/InkDoc.h"
@@ -327,6 +328,158 @@ static int testXhtmlSrcOffsets() {
   return 0;
 }
 
+// --- Spec-review fixes (script/style raw text, bare '<', phantom blocks,
+// blockquote join, comments/bogus markup, quoted attrs, &#0;) ---
+
+// Fix 1 (SEVERE): a stray '<' inside <script>/<style> content (from JS
+// "a<b" or a CSS selector) must never be tokenized as a tag -- doing so
+// previously scanned straight past the real </script> closer and dropped
+// everything after it. <script>/<style> content is now consumed as raw
+// text via one linear scan for the literal closer.
+static int testXhtmlScriptRawTextSurvivesAfter() {
+  auto b = Ink::parseXhtml("<body><script>if(a<b){}</script><p>after</p></body>");
+  CHECK(b.size() == 1);
+  CHECK(Ink::plainText(b[0]) == "after");
+  return 0;
+}
+
+static int testXhtmlStyleRawTextSurvivesAfter() {
+  auto b = Ink::parseXhtml("<body><style>a<b{color:red}</style><p>after</p></body>");
+  CHECK(b.size() == 1);
+  CHECK(Ink::plainText(b[0]) == "after");
+  return 0;
+}
+
+// A '<' embedded inside a JS string literal within <script> must not be
+// mistaken for the closer either -- the case-insensitive scan for
+// "</script" only matches the real closing tag.
+static int testXhtmlScriptNestedMarkupInString() {
+  auto b = Ink::parseXhtml(
+      "<body><script>document.write(\"<p>x</p>\")</script><p>after</p></body>");
+  CHECK(b.size() == 1);
+  CHECK(Ink::plainText(b[0]) == "after");
+  return 0;
+}
+
+// Fix 2: '<' only opens a tag when followed by a letter, '/', '!' or '?'
+// (HTML5 rule) -- otherwise it's literal text.
+static int testXhtmlBareLtLiteral() {
+  auto b = Ink::parseXhtml("<body><p>a < b</p><p>next</p></body>");
+  CHECK(b.size() == 2);
+  CHECK(Ink::plainText(b[0]) == "a < b");
+  CHECK(Ink::plainText(b[1]) == "next");
+  return 0;
+}
+
+// '<' followed by a digit is not a tag opener either -- it degrades to a
+// literal character with no inserted whitespace, since none was present
+// in the source between '<' and '6'.
+static int testXhtmlBareLtBeforeDigit() {
+  auto b = Ink::parseXhtml("<body><p>5 <6 ok</p></body>");
+  CHECK(b.size() == 1);
+  CHECK(Ink::plainText(b[0]) == "5 <6 ok");
+  return 0;
+}
+
+// Fix 3: a block that opened (e.g. a <div>) but was superseded by a
+// nested block-opening tag before any real text arrived is a phantom --
+// dropped rather than materialized as an empty block.
+static int testXhtmlPhantomBlockDropped() {
+  auto b = Ink::parseXhtml("<body><div class=\"chapter\"><h1>T</h1><p>x</p></div></body>");
+  CHECK(b.size() == 2);
+  CHECK(b[0].type == Ink::BlockType::H1 && Ink::plainText(b[0]) == "T");
+  CHECK(b[1].type == Ink::BlockType::Body && Ink::plainText(b[1]) == "x");
+  return 0;
+}
+
+static int testXhtmlNestedDivMerges() {
+  auto b = Ink::parseXhtml("<body><div><div>a</div>b</div></body>");
+  CHECK(b.size() == 1);
+  CHECK(Ink::plainText(b[0]) == "ab");
+  return 0;
+}
+
+// Fix 4: a minified blockquote ("<p>a</p><p>b</p>" with no whitespace
+// between them) still joins with a space, as if real whitespace had
+// separated the two <p> elements.
+static int testXhtmlMinifiedBlockquoteJoins() {
+  auto b = Ink::parseXhtml("<body><blockquote><p>a</p><p>b</p></blockquote></body>");
+  CHECK(b.size() == 1);
+  CHECK(b[0].type == Ink::BlockType::Quote);
+  CHECK(Ink::plainText(b[0]) == "a b");
+  return 0;
+}
+
+// Fix 5: HTML comments are dropped via one linear scan to "-->", even
+// when the comment's own text contains a bare '>'.
+static int testXhtmlCommentDropped() {
+  auto b = Ink::parseXhtml("<body><p>a</p><!-- x > y --><p>b</p></body>");
+  CHECK(b.size() == 2);
+  CHECK(Ink::plainText(b[0]) == "a");
+  CHECK(Ink::plainText(b[1]) == "b");
+  return 0;
+}
+
+// DOCTYPE and other bogus "<!...>" declarations are skipped to their
+// next '>', not emitted as text.
+static int testXhtmlDoctypeDropped() {
+  auto b = Ink::parseXhtml("<!DOCTYPE html><body><p>a</p></body>");
+  CHECK(b.size() == 1);
+  CHECK(Ink::plainText(b[0]) == "a");
+  return 0;
+}
+
+// Fix 6: a quoted attribute value containing '>' must not end the tag
+// early.
+static int testXhtmlQuotedAttributeWithGt() {
+  auto b = Ink::parseXhtml("<body><p title=\"a>b\">x</p></body>");
+  CHECK(b.size() == 1);
+  CHECK(Ink::plainText(b[0]) == "x");
+  return 0;
+}
+
+// Fix 7: a numeric entity decoding to code point 0 emits nothing -- no
+// NUL byte leaks into the run text.
+static int testXhtmlNulEntitySuppressed() {
+  auto b = Ink::parseXhtml("<body><p>a&#0;b</p></body>");
+  CHECK(b.size() == 1);
+  CHECK(Ink::plainText(b[0]) == "ab");
+  CHECK(Ink::plainText(b[0]).find('\0') == std::string::npos);
+  return 0;
+}
+
+// Perf: the bounded/linear-scan discipline must keep even adversarial
+// bare-'<' and repeated-<script> inputs well under a second.
+static int testXhtmlPerfBareLt() {
+  std::string src = "<body>";
+  src.reserve(6 + 400000 + 7);
+  for (int i = 0; i < 200000; ++i) src += "< ";  // 400000 bytes of "< "
+  src += "</body>";
+  auto t0 = std::chrono::steady_clock::now();
+  auto b = Ink::parseXhtml(src);
+  auto t1 = std::chrono::steady_clock::now();
+  double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+  std::fprintf(stderr, "perf bare-lt (400KB): %.1f ms, blocks=%zu\n", ms, b.size());
+  CHECK(ms < 1000.0);
+  return 0;
+}
+
+static int testXhtmlPerfScriptRepeat() {
+  std::string unit = "<script>a<b</script>";
+  std::string src = "<body>";
+  size_t reps = 400000 / unit.size() + 1;
+  src.reserve(6 + reps * unit.size() + 7);
+  for (size_t i = 0; i < reps; ++i) src += unit;
+  src += "</body>";
+  auto t0 = std::chrono::steady_clock::now();
+  auto b = Ink::parseXhtml(src);
+  auto t1 = std::chrono::steady_clock::now();
+  double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+  std::fprintf(stderr, "perf script-repeat (~400KB): %.1f ms, blocks=%zu\n", ms, b.size());
+  CHECK(ms < 1000.0);
+  return 0;
+}
+
 int main() {
   if (testTxtParagraphs()) return 1;
   if (testTxtEdges()) return 1;
@@ -353,6 +506,20 @@ int main() {
   if (testXhtmlNumericEntityUtf8()) return 1;
   if (testXhtmlNumericEntityOverflow()) return 1;
   if (testXhtmlSrcOffsets()) return 1;
+  if (testXhtmlScriptRawTextSurvivesAfter()) return 1;
+  if (testXhtmlStyleRawTextSurvivesAfter()) return 1;
+  if (testXhtmlScriptNestedMarkupInString()) return 1;
+  if (testXhtmlBareLtLiteral()) return 1;
+  if (testXhtmlBareLtBeforeDigit()) return 1;
+  if (testXhtmlPhantomBlockDropped()) return 1;
+  if (testXhtmlNestedDivMerges()) return 1;
+  if (testXhtmlMinifiedBlockquoteJoins()) return 1;
+  if (testXhtmlCommentDropped()) return 1;
+  if (testXhtmlDoctypeDropped()) return 1;
+  if (testXhtmlQuotedAttributeWithGt()) return 1;
+  if (testXhtmlNulEntitySuppressed()) return 1;
+  if (testXhtmlPerfBareLt()) return 1;
+  if (testXhtmlPerfScriptRepeat()) return 1;
   std::printf("inkwell host tests: %d checks passed\n", checks);
   return 0;
 }

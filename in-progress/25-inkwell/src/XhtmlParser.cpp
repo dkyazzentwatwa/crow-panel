@@ -9,18 +9,13 @@ namespace {
 
 // Window bounds for the bounded scans below -- see MarkdownParser.cpp for
 // why these must be bounded rather than an unbounded find(): a pathological
-// unmatched '<' or '&' with no '>' / ';' anywhere later in the input would
-// otherwise turn every character's lookahead into an O(n) scan, making the
-// whole document O(n^2).
+// unmatched '<' with no '>' anywhere later in the input would otherwise
+// turn every character's lookahead into an O(n) scan, making the whole
+// document O(n^2). The comment/PI/raw-text scans further down are each a
+// single linear pass fired once per element (not once per character), so
+// they stay O(n) in aggregate without needing this same bound.
 constexpr size_t kTagWindow = 512;     // bytes scanned ahead of '<' for '>'
 constexpr size_t kEntityMaxName = 12;  // max chars between '&' and ';'
-
-size_t findCharBounded(const std::string &s, char target, size_t from, size_t limit) {
-  size_t end = std::min(s.size(), limit);
-  for (size_t j = from; j < end; ++j)
-    if (s[j] == target) return j;
-  return std::string::npos;
-}
 
 bool isWsChar(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
 
@@ -30,10 +25,51 @@ std::string lowerStr(const std::string &s) {
   return out;
 }
 
-// Appends the UTF-8 encoding of code point `cp`. Code points above 0xFFFF
-// (outside the range InkDoc's rendering pipeline is sized for) emit '?'
-// per the documented degrade.
+// Scans forward from `from` for the tag's closing '>', treating anything
+// inside a single- or double-quoted span as inert so a quoted attribute
+// value containing '>' (e.g. title="a>b") can't end the tag early.
+// Bounded to `limit` for the same O(n) reason as kTagWindow above; an
+// unterminated quote inside the window reports "no tag found" (npos),
+// same as a plain missing '>'.
+size_t findTagCloseBounded(const std::string &s, size_t from, size_t limit) {
+  size_t end = std::min(s.size(), limit);
+  char quote = 0;
+  for (size_t j = from; j < end; ++j) {
+    char c = s[j];
+    if (quote) {
+      if (c == quote) quote = 0;
+      continue;
+    }
+    if (c == '"' || c == '\'') { quote = c; continue; }
+    if (c == '>') return j;
+  }
+  return std::string::npos;
+}
+
+// Single linear case-insensitive search for `needle` starting at `from`.
+// Called once per <script>/<style> OPEN tag encountered -- never once per
+// character -- so summed across the whole document this is still O(n)
+// total, the same bound the rest of the file relies on: each byte of raw
+// element content is visited by exactly one such scan.
+size_t findCaseInsensitiveOnce(const std::string &s, const std::string &needle, size_t from) {
+  size_t n = s.size(), m = needle.size();
+  if (m == 0 || from >= n || m > n - from) return std::string::npos;
+  for (size_t j = from; j + m <= n; ++j) {
+    size_t k = 0;
+    while (k < m &&
+           std::tolower((unsigned char)s[j + k]) == std::tolower((unsigned char)needle[k]))
+      ++k;
+    if (k == m) return j;
+  }
+  return std::string::npos;
+}
+
+// Appends the UTF-8 encoding of code point `cp`. Code point 0 (e.g. a
+// literal &#0;) emits nothing rather than a NUL byte; code points above
+// 0xFFFF (outside the range InkDoc's rendering pipeline is sized for)
+// emit '?' per the documented degrade.
 void appendUtf8(std::string &out, unsigned long cp) {
+  if (cp == 0) return;
   if (cp <= 0x7F) {
     out += (char)cp;
   } else if (cp <= 0x7FF) {
@@ -52,7 +88,9 @@ void appendUtf8(std::string &out, unsigned long cp) {
 // exists anywhere -- the whole input is then parsed as-is. A single
 // forward pass over '<' occurrences; the extra find('>') fires at most
 // once (only once a body tag is actually spotted), so this stays O(n)
-// overall rather than O(n^2).
+// overall rather than O(n^2). Comments/DOCTYPEs ahead of <body> need no
+// special handling here: this scan only ever looks for the next literal
+// '<', so it skips over their text harmlessly either way.
 size_t findBodyStart(const std::string &src) {
   size_t n = src.size();
   size_t i = 0;
@@ -98,22 +136,27 @@ class Builder {
     runBold_ = runItalic_ = runMono_ = false;
   }
 
-  // Flushes whatever is pending, so a completed block's runs land in
-  // `blocks` in source order before this is called.
+  // Flushes whatever is pending. A block that never accumulated any real
+  // text (e.g. a <div> immediately superseded by a nested block-opening
+  // tag before any text arrived) is a phantom, not content, and is
+  // discarded rather than materialized with a placeholder empty run --
+  // Rule is pushed separately via pushRule() and is unaffected.
   void flush() {
     if (!blockOpen_) return;
     flushBuf();
-    // Zero-run guard convention (MarkdownParser.cpp): every non-Rule
-    // block keeps >=1 run so styleFor()/renderers never index an empty
-    // vector, even when every character turned out to be whitespace.
-    if (runs_.empty()) runs_.push_back({"", false, false, false});
-    Block b;
-    b.type = type_;
-    b.srcOffset = offset_;
-    b.listDepth = listDepth_;
-    b.ordered = ordered_;
-    b.runs = std::move(runs_);
-    blocks_.push_back(std::move(b));
+    bool hasText = false;
+    for (const Run &r : runs_) {
+      if (!r.text.empty()) { hasText = true; break; }
+    }
+    if (hasText) {
+      Block b;
+      b.type = type_;
+      b.srcOffset = offset_;
+      b.listDepth = listDepth_;
+      b.ordered = ordered_;
+      b.runs = std::move(runs_);
+      blocks_.push_back(std::move(b));
+    }
     runs_.clear();
     blockOpen_ = false;
     blockHasContent_ = false;
@@ -122,13 +165,22 @@ class Builder {
   }
 
   // Rule is the one BlockType with zero runs (InkDoc.h/MarkdownParser.h
-  // convention) -- pushed directly rather than through flush()'s guard.
+  // convention) -- pushed directly rather than through flush()'s text check.
   void pushRule(uint32_t offset) {
     flush();
     Block b;
     b.type = BlockType::Rule;
     b.srcOffset = offset;
     blocks_.push_back(std::move(b));
+  }
+
+  // Used for a block-boundary tag (p/div/h*/li, open or close) seen while
+  // it is being merged transparently into an enclosing block instead of
+  // starting a new one (a blockquote's minified "<p>a</p><p>b</p>") --
+  // inserts a single collapsible space between the joined segments, the
+  // same as a real whitespace run between them would have.
+  void markSoftBreak() {
+    if (blockHasContent_) spacePending_ = true;
   }
 
   // `inPre`: verbatim, no whitespace collapse. Inside <pre> the style is
@@ -230,7 +282,7 @@ size_t decodeEntity(const std::string &s, size_t i, std::string &out) {
       else return 0;
       cp = cp * (hex ? 16u : 10u) + (unsigned long)v;
     }
-    appendUtf8(out, cp);
+    appendUtf8(out, cp);  // cp == 0 emits nothing; see appendUtf8.
     return consumed;
   }
   return 0;  // unknown named entity -> caller emits it literally
@@ -262,22 +314,56 @@ std::vector<Block> parseXhtml(const std::string &src) {
   int boldDepth = 0, italicDepth = 0, monoDepth = 0;
   bool inPre = false;
   int quoteDepth = 0;
-  std::vector<std::string> dropStack;    // nested script/style/head
-  std::vector<ListEntry> listStack;      // nested ul/ol
+  int headDepth = 0;                 // nested <head>...</head> depth
+  std::vector<ListEntry> listStack;  // nested ul/ol
 
   while (i < n) {
     char c = src[i];
 
     if (c == '<') {
+      char next = (i + 1 < n) ? src[i + 1] : '\0';
+      bool looksLikeTag =
+          std::isalpha((unsigned char)next) || next == '/' || next == '!' || next == '?';
+      if (!looksLikeTag) {
+        // HTML5 rule: '<' only opens a tag when followed by a letter,
+        // '/', '!' or '?' -- anything else (space, digit, EOF, ...) is
+        // literal text. Advance one byte so a later real '<' elsewhere
+        // is still found normally.
+        if (headDepth == 0)
+          bd.addChar('<', (uint32_t)i, inPre, boldDepth > 0, italicDepth > 0, monoDepth > 0);
+        ++i;
+        continue;
+      }
+
+      if (next == '!') {
+        // Comment or bogus declaration (DOCTYPE etc.) -- one linear scan
+        // fired once for this element, not once per character, so this
+        // stays O(n) in aggregate across the whole document.
+        if (src.compare(i, 4, "<!--") == 0) {
+          size_t close = src.find("-->", i + 4);
+          i = (close == std::string::npos) ? n : close + 3;
+        } else {
+          size_t gtb = src.find('>', i + 2);
+          i = (gtb == std::string::npos) ? n : gtb + 1;
+        }
+        continue;
+      }
+      if (next == '?') {
+        // Processing instruction (e.g. <?xml version="1.0"?>) -- skip to
+        // the next '>', one linear scan for this element.
+        size_t gtb = src.find('>', i + 2);
+        i = (gtb == std::string::npos) ? n : gtb + 1;
+        continue;
+      }
+
       size_t tagStart = i;
       size_t limit = std::min(n, i + kTagWindow);
-      size_t gt = findCharBounded(src, '>', i, limit);
+      size_t gt = findTagCloseBounded(src, i, limit);
       if (gt == std::string::npos) {
-        // No '>' within the bounded window (including a genuinely missing
-        // '>' before EOF, since findCharBounded's window is itself capped
-        // at src.size()): tolerate by treating this one '<' as a literal
-        // text character and re-scanning from the next byte.
-        if (dropStack.empty())
+        // No unquoted '>' within the bounded window (an unterminated
+        // quote inside the window counts as this too): tolerate as a
+        // literal '<'.
+        if (headDepth == 0)
           bd.addChar('<', (uint32_t)i, inPre, boldDepth > 0, italicDepth > 0, monoDepth > 0);
         ++i;
         continue;
@@ -292,24 +378,38 @@ std::vector<Block> parseXhtml(const std::string &src) {
       bool selfClose = (gt > tagStart + 1 && src[gt - 1] == '/');
       i = gt + 1;
 
-      bool isDropName = (tag == "script" || tag == "style" || tag == "head");
-
-      if (!dropStack.empty()) {
-        // While dropping, only script/style/head opens/closes matter --
-        // everything else (including its text) is simply discarded.
-        if (!closing && !selfClose && isDropName) dropStack.push_back(tag);
-        else if (closing && isDropName) dropStack.pop_back();
+      if (tag == "script" || tag == "style") {
+        // Raw-text element: its content is opaque and must never be
+        // re-tokenized as markup (a stray '<' from e.g. "if(a<b)" or a
+        // CSS selector must not be mistaken for a tag). One linear scan
+        // for the literal closer, then one more for its own '>' -- both
+        // run once per <script>/<style> element, not once per character,
+        // so the whole document stays O(n) even with many such elements.
+        if (!closing && !selfClose) {
+          std::string closer = "</" + tag;
+          size_t found = findCaseInsensitiveOnce(src, closer, i);
+          if (found == std::string::npos) { i = n; continue; }
+          size_t gt2 = src.find('>', found);
+          i = (gt2 == std::string::npos) ? n : gt2 + 1;
+        }
+        // A stray closing tag (no matching open we handled) or a
+        // self-closed <script/> has no content to discard.
         continue;
       }
 
-      if (!closing && !selfClose && isDropName) {
-        dropStack.push_back(tag);
+      if (tag == "head") {
+        if (!closing && !selfClose) ++headDepth;
+        else if (closing && headDepth > 0) --headDepth;
         continue;
       }
+
+      if (headDepth > 0) continue;  // discard everything else inside <head>
 
       if (tag == "h1" || tag == "h2" || tag == "h3" || tag == "h4" || tag == "h5" ||
           tag == "h6") {
-        if (!closing && !selfClose && quoteDepth == 0) {
+        if (quoteDepth > 0) {
+          bd.markSoftBreak();
+        } else if (!closing && !selfClose) {
           BlockType t = tag == "h1" ? BlockType::H1 : tag == "h2" ? BlockType::H2 : BlockType::H3;
           bd.openBlock(t, (uint32_t)tagStart);
         }
@@ -317,8 +417,8 @@ std::vector<Block> parseXhtml(const std::string &src) {
       }
 
       if (tag == "p" || tag == "div") {
-        if (!closing && !selfClose && quoteDepth == 0)
-          bd.openBlock(BlockType::Body, (uint32_t)tagStart);
+        if (quoteDepth > 0) bd.markSoftBreak();
+        else if (!closing && !selfClose) bd.openBlock(BlockType::Body, (uint32_t)tagStart);
         continue;
       }
 
@@ -353,7 +453,9 @@ std::vector<Block> parseXhtml(const std::string &src) {
       }
 
       if (tag == "li") {
-        if (!closing && !selfClose && quoteDepth == 0) {
+        if (quoteDepth > 0) {
+          bd.markSoftBreak();
+        } else if (!closing && !selfClose) {
           uint8_t depth =
               listStack.empty() ? (uint8_t)1 : (uint8_t)std::min<size_t>(listStack.size(), 3);
           bool ordered = listStack.empty() ? false : listStack.back().ordered;
@@ -397,7 +499,7 @@ std::vector<Block> parseXhtml(const std::string &src) {
       continue;
     }
 
-    if (c == '&' && dropStack.empty()) {
+    if (c == '&' && headDepth == 0) {
       std::string decoded;
       size_t consumed = decodeEntity(src, i, decoded);
       if (consumed > 0) {
@@ -411,7 +513,7 @@ std::vector<Block> parseXhtml(const std::string &src) {
       continue;
     }
 
-    if (dropStack.empty())
+    if (headDepth == 0)
       bd.addChar(c, (uint32_t)i, inPre, boldDepth > 0, italicDepth > 0, monoDepth > 0);
     ++i;
   }
