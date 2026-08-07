@@ -2,16 +2,27 @@
 
 #include <algorithm>
 
-// Measure-call complexity for the whole file: textWidth() is called at
-// most once per word (or merged seg) during normal wrapping, plus
-// O(log wordLen) times per hard-split word (binary search over prefix
-// lengths, see hardSplitLen). It is NEVER called once per character in a
-// loop that re-measures growing prefixes -- on device, textWidth is the
-// bottleneck (glyph metrics), not this file's control flow.
+// Measure-call complexity for the whole file: textWidth() is called up to
+// TWICE per normal (non-hard-split) word -- once for the word itself, and
+// once more for the joining space if one precedes it -- never per
+// character in a loop that re-measures a growing prefix. A word that
+// needs hard-splitting instead costs one measurement per binary-search
+// probe PER CHUNK: O(log(min(remaining chars, contentW))) probes, each on
+// a prefix bounded to at most contentW characters (see hardSplitLen) so
+// the measured pixel width can't overflow int16_t. On device, textWidth
+// is the bottleneck (glyph metrics), not this file's control flow.
 
 namespace Ink {
 
 namespace {
+
+// Fixed layout constants named so the 24s scattered through this file
+// are visibly the same handful of design choices, not four coincidental
+// numbers.
+constexpr int16_t kListIndentPerDepthPx = 24;  // ListItem: 24 * listDepth
+constexpr int16_t kQuoteIndentPx = 24;         // Quote: flat, not depth-scaled
+constexpr int16_t kRuleHeightPx = 24;          // Rule: fixed, never measured
+constexpr int kParagraphGapPct = 40;           // % of raw body line height
 
 // Indent reserved for the block's own bullet/quote-bar (drawn by the
 // renderer, not here) -- ListItem scales with nesting depth; Quote is a
@@ -19,9 +30,9 @@ namespace {
 int16_t indentForBlock(const Block &b) {
   if (b.type == BlockType::ListItem) {
     uint8_t depth = b.listDepth ? b.listDepth : 1;
-    return (int16_t)(24 * depth);
+    return (int16_t)(kListIndentPerDepthPx * depth);
   }
-  if (b.type == BlockType::Quote) return 24;
+  if (b.type == BlockType::Quote) return kQuoteIndentPx;
   return 0;
 }
 
@@ -45,6 +56,13 @@ struct WordTok {
 // change with no intervening space still ends the current word (so
 // "bo**ld**" renders as two adjacent, unmerged segs with no visible gap
 // rather than one mixed-style seg or an incorrect line break).
+//
+// Splitting only on literal ' ' relies on a cross-module invariant: every
+// emitting parser (TxtParser / MarkdownParser / XhtmlParser) already
+// normalizes whitespace -- tabs, embedded newlines, runs of spaces -- down
+// to single ' ' characters per the shared InkDoc contract. Paginator does
+// not re-normalize; a raw '\t' or '\n' reaching here from a non-Code block
+// would be treated as an ordinary (if unusual) word character.
 void tokenizeWords(const Block &b, std::vector<WordTok> &words) {
   uint32_t pos = 0;
   bool active = false;
@@ -54,15 +72,18 @@ void tokenizeWords(const Block &b, std::vector<WordTok> &words) {
   bool wordSpaceBefore = false;
   bool sawSpace = false;
 
+  auto flushWord = [&]() {
+    if (!active) return;
+    words.push_back({cur, curStyle, wordSpaceBefore, curStart});
+    active = false;
+    cur.clear();
+  };
+
   for (const Run &r : b.runs) {
     uint8_t style = styleFor(b, r);
     for (char c : r.text) {
       if (c == ' ') {
-        if (active) {
-          words.push_back({cur, curStyle, wordSpaceBefore, curStart});
-          active = false;
-          cur.clear();
-        }
+        flushWord();
         sawSpace = true;
         ++pos;
         continue;
@@ -72,10 +93,7 @@ void tokenizeWords(const Block &b, std::vector<WordTok> &words) {
         ++pos;
         continue;
       }
-      if (active) {
-        words.push_back({cur, curStyle, wordSpaceBefore, curStart});
-        cur.clear();
-      }
+      flushWord();
       active = true;
       curStyle = style;
       curStart = pos;
@@ -85,23 +103,30 @@ void tokenizeWords(const Block &b, std::vector<WordTok> &words) {
       ++pos;
     }
   }
-  if (active) words.push_back({cur, curStyle, wordSpaceBefore, curStart});
+  flushWord();
 }
 
-// Largest prefix length (>=1, <=word.size()) of `word` whose measured
-// width fits within contentW. Binary search: O(log wordLen) textWidth()
-// calls. Always returns at least 1, even if a single character already
-// exceeds contentW -- guarantees the caller makes forward progress
-// instead of looping forever on a pathologically narrow content box.
-size_t hardSplitLen(const std::string &word, uint8_t style, int16_t contentW,
-                     TextMeasure &m) {
-  size_t n = word.size();
-  if (n == 0) return 0;
-  if (m.textWidth(word.substr(0, 1), style) > contentW) return 1;
-  size_t lo = 1, hi = n, best = 1;
+// Largest prefix length (>=1) of word[start..] whose measured width fits
+// within contentW. Binary search bounded to at most contentW characters
+// -- a glyph is never narrower than 1px, so no fitting prefix can ever be
+// longer than that many characters -- which does two things at once:
+// keeps every measured substring short enough that its pixel width can't
+// overflow int16_t, and lets the caller walk an arbitrarily long
+// unbreakable word by index instead of copying/erasing a shrinking tail
+// (that copy-per-chunk pattern is what made the naive version O(n^2) in
+// the word's length). O(log(min(remaining, contentW))) textWidth() calls.
+// Always returns at least 1: guarantees forward progress even when
+// contentW is smaller than one character.
+size_t hardSplitLen(const std::string &word, size_t start, uint8_t style,
+                     int16_t contentW, TextMeasure &m) {
+  size_t avail = word.size() - start;
+  if (avail == 0) return 0;
+  size_t cap = std::min(avail, (size_t)contentW);
+  if (m.textWidth(word.substr(start, 1), style) > contentW) return 1;
+  size_t lo = 1, hi = cap, best = 1;
   while (lo <= hi) {
     size_t mid = lo + (hi - lo) / 2;
-    if (m.textWidth(word.substr(0, mid), style) <= contentW) {
+    if (m.textWidth(word.substr(start, mid), style) <= contentW) {
       best = mid;
       lo = mid + 1;
     } else {
@@ -125,8 +150,9 @@ void wrapWords(const std::vector<WordTok> &words, int16_t contentW,
   bool lineHasContent = false;
 
   auto flushLine = [&]() {
-    emitLine(segs, lineStartPos);
-    segs.clear();
+    emitLine(std::move(segs), lineStartPos);
+    segs.clear();  // defensive: std::vector doesn't guarantee empty-after-
+                    // move, only valid-but-unspecified; we reuse segs next.
     lineWidth = 0;
     lineHasContent = false;
   };
@@ -134,21 +160,32 @@ void wrapWords(const std::vector<WordTok> &words, int16_t contentW,
   for (const WordTok &w : words) {
     int16_t wordW = m.textWidth(w.text, w.style);
 
-    if (wordW > contentW) {
+    // A glyph is never narrower than 1px, so a word longer than contentW
+    // characters can never fit a line regardless of what textWidth()
+    // reports -- and it's exactly the case where a long enough word times
+    // a wide enough font would have overflowed textWidth()'s int16_t
+    // return (wrapping to something small or negative and slipping past
+    // the "wordW > contentW" check below). Checking the length up front
+    // catches that unconditionally, before the (possibly garbage)
+    // measured width is trusted at all.
+    bool tooWide = wordW > contentW || w.text.size() > (size_t)contentW;
+
+    if (tooWide) {
       // Unbreakable word wider than a full line: finish whatever line is
       // pending, then hard-split by characters. Every chunk -- including
       // the final remnant -- ends its own line; the next word (if any)
       // always starts a fresh line rather than sharing one with a
       // hard-split tail.
       if (lineHasContent) flushLine();
-      std::string remaining = w.text;
+      size_t n = w.text.size();
+      size_t pos = 0;
       uint32_t chunkPos = w.startPos;
-      while (!remaining.empty()) {
-        size_t k = hardSplitLen(remaining, w.style, contentW, m);
+      while (pos < n) {
+        size_t k = hardSplitLen(w.text, pos, w.style, contentW, m);
         std::vector<LineSeg> chunkSegs;
-        chunkSegs.push_back({remaining.substr(0, k), w.style, 0});
-        emitLine(chunkSegs, chunkPos);
-        remaining.erase(0, k);
+        chunkSegs.push_back({w.text.substr(pos, k), w.style, 0});
+        emitLine(std::move(chunkSegs), chunkPos);
+        pos += k;
         chunkPos += (uint32_t)k;
       }
       continue;
@@ -189,6 +226,11 @@ void wrapWords(const std::vector<WordTok> &words, int16_t contentW,
 // still produces one coherent stream of source lines. Always emits at
 // least one line (even an entirely empty code block gets one blank
 // line), so callers never need a separate empty-block fallback for Code.
+//
+// A code block whose text ends in '\n' produces one extra, empty trailing
+// Line (splitting "a\n" on '\n' yields ["a", ""], same as any standard
+// line-split). Left as-is rather than special-cased away: a source file
+// that legitimately ends in a blank line should still render one.
 template <typename EmitFn>
 void emitCodeLines(const Block &b, EmitFn emitLine) {
   std::string cur;
@@ -199,7 +241,7 @@ void emitCodeLines(const Block &b, EmitFn emitLine) {
       if (c == '\n') {
         std::vector<LineSeg> segs;
         segs.push_back({cur, kStyleMono, 0});
-        emitLine(segs, lineStart);
+        emitLine(std::move(segs), lineStart);
         cur.clear();
         ++pos;
         lineStart = pos;
@@ -211,7 +253,7 @@ void emitCodeLines(const Block &b, EmitFn emitLine) {
   }
   std::vector<LineSeg> segs;
   segs.push_back({cur, kStyleMono, 0});
-  emitLine(segs, lineStart);
+  emitLine(std::move(segs), lineStart);
 }
 
 }  // namespace
@@ -264,6 +306,12 @@ void Paginator::layout(const std::vector<Block> &blocks,
           rawH = std::max(rawH, m.lineHeight(sg.style));
       }
       ln.height = scaledHeight(rawH, s.lineSpacingPct);
+      // relOffset counts plain-text characters consumed within the block;
+      // adding it to the block's byte-offset base stays monotonic and
+      // in-bounds because a block's plain text is always <= its source
+      // span (markup/entities collapse to fewer chars, never more) -- so
+      // this can undershoot a byte position but never run past the next
+      // block's start.
       ln.srcOffset = b.srcOffset + relOffset;
       ln.indentPx = indentPx;
       ln.blockType = b.type;
@@ -274,7 +322,7 @@ void Paginator::layout(const std::vector<Block> &blocks,
 
     if (b.type == BlockType::Rule) {
       Line ln;
-      ln.height = 24;  // fixed rule glyph height, never measured
+      ln.height = kRuleHeightPx;  // fixed, never measured
       ln.srcOffset = b.srcOffset;
       ln.indentPx = 0;
       ln.blockType = BlockType::Rule;
@@ -295,8 +343,11 @@ void Paginator::layout(const std::vector<Block> &blocks,
     // Paragraph gap: a flat 40% of the RAW (unscaled) body line height,
     // added to the block's last line -- simpler than synthesizing an
     // extra blank line, and deliberately independent of lineSpacingPct.
+    // Applies uniformly to every block type, Rule included (the spec
+    // carves out no exception for it).
     if (lines_.size() > blockFirstLine) {
-      int16_t gap = (int16_t)((int32_t)m.lineHeight(kStyleBody) * 40 / 100);
+      int16_t gap =
+          (int16_t)((int32_t)m.lineHeight(kStyleBody) * kParagraphGapPct / 100);
       lines_.back().height = (int16_t)(lines_.back().height + gap);
     }
   }
@@ -355,14 +406,20 @@ uint32_t Paginator::pageStartOffset(size_t page) const {
   return lines_[(size_t)pg.firstLine].srcOffset;
 }
 
-// Linear scan over pages (a chapter has at most a few hundred, so this
-// is cheap and simple -- not worth a binary search over a vector that
-// small; document the YAGNI rather than add index machinery).
+// Linear scan over pages (a chapter has at most a few hundred, so this is
+// cheap and simple -- not worth a binary search over a vector that small;
+// document the YAGNI rather than add index machinery). Early-breaks once
+// a page's start offset passes `off`, relying on the same monotonic-
+// srcOffset invariant documented at the emit() call site above (pages are
+// built from lines_ in source order, so pageStartOffset() is
+// non-decreasing in page index).
 size_t Paginator::pageForOffset(uint32_t off) const {
   if (pages_.empty()) return 0;
   size_t result = 0;
   for (size_t p = 0; p < pages_.size(); ++p) {
-    if (pageStartOffset(p) <= off) result = p;
+    uint32_t start = pageStartOffset(p);
+    if (start > off) break;
+    result = p;
   }
   return result;
 }

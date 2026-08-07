@@ -10,6 +10,20 @@ namespace Ink {
 
 // Abstract text metrics so pagination is testable on host and identical on
 // device (GfxMeasure wraps Arduino_GFX; tests use fixed per-style widths).
+//
+// Residual int16_t limit: textWidth() returns a pixel width in int16_t
+// (max 32767). Paginator protects itself against the one case that
+// actually occurs with real content -- a single unbroken word too long
+// to fit any line -- by never trusting a measured width for a string
+// longer than the current content width in CHARACTERS (a glyph is never
+// narrower than 1px, so no fitting prefix can be longer than that many
+// characters either); hard-split probes are then capped to that same
+// length, so every textWidth() call this file makes is on a short,
+// bounded prefix. It does NOT guard the fictional case of a short string
+// paired with an implausibly wide per-glyph metric (e.g. a 40-char word
+// at 1000px/char) -- that's assumed impossible for any real font on a
+// panel this size, and is a caller (TextMeasure implementation)
+// invariant, not one this class re-checks.
 class TextMeasure {
  public:
   virtual ~TextMeasure() = default;
@@ -40,6 +54,16 @@ struct Page { int firstLine = 0, lineCount = 0; };
 
 // Lays out a whole chapter. Wall-clock is measure-bound: cache glyph advances
 // inside the device TextMeasure, not here.
+//
+// Heap footprint: each Line costs roughly ~150 bytes (the segs vector's
+// own overhead plus each LineSeg's std::string, usually short-string-
+// optimized for wrapped chunks) plus about 3 small heap allocations
+// (the segs vector's buffer, and any seg text past SSO). On ESP32 these
+// are plain `new`/STL allocations that land in INTERNAL DRAM, not
+// PSRAM -- there is no PSRAM allocator wired in here. A very long
+// chapter's lines_ vector is therefore memory-bound on internal RAM
+// well before it would trouble the 32MB PSRAM budget. Known risk,
+// tracked for device bring-up rather than solved here.
 class Paginator {
  public:
   void layout(const std::vector<Block> &blocks, const LayoutSettings &s,

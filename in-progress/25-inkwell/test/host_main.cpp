@@ -1441,6 +1441,15 @@ static int testPaginatorResume() {
   return 0;
 }
 
+// Hand math for the tightened line count/heights (default settings,
+// contentW 504, char width 10, body raw height 20, gap = 40%*20 = 8):
+//   huge (80 'w's, unbreakable): hard-split 50+30 -> lines[0]=50 chars
+//   (not the block's last line: height 20*115/100=23, no gap), lines[1]=30
+//   chars (last line of huge's block: 23+8=31).
+//   empty (one empty-text run): zero words -> one blank placeholder line,
+//   lines[2] (its block's only/last line: body height 23+8=31).
+//   rule: one fixed-height line, lines[3] (its block's only/last line:
+//   24 (fixed, never run through lineSpacingPct) + 8 gap = 32).
 static int testPaginatorHardCases() {
   Ink::LayoutSettings s; MockMeasure m; Ink::Paginator p;
   std::vector<Ink::Block> blocks;
@@ -1452,8 +1461,20 @@ static int testPaginatorHardCases() {
   Ink::Block rule; rule.type = Ink::BlockType::Rule;
   blocks.push_back(rule);
   p.layout(blocks, s, m);
-  CHECK(p.lines().size() >= 3);
+  CHECK(p.lines().size() == 4);
   CHECK(p.lines()[0].segs[0].text.size() == 50);  // hard split at line width
+  CHECK(p.lines()[1].segs[0].text.size() == 30);  // hard-split remnant
+  CHECK(p.lines()[1].height == 31);
+  // The empty-run block still produces a real (blank) line.
+  CHECK(p.lines()[2].segs.empty());
+  CHECK(p.lines()[2].height == 31);
+  // Rule line's contract: fixed height (pre-gap 24, not scaled by
+  // lineSpacingPct), no segs, its own blockType, and firstOfBlock set
+  // (the renderer's cue to actually draw the rule glyph here).
+  CHECK(p.lines()[3].segs.empty());
+  CHECK(p.lines()[3].blockType == Ink::BlockType::Rule);
+  CHECK(p.lines()[3].firstOfBlock == true);
+  CHECK(p.lines()[3].height == 24 + 8);
   CHECK(p.pageCount() == 1);
   p.layout({}, s, m);
   CHECK(p.pageCount() == 1 && p.pages()[0].lineCount == 0);  // empty chapter = 1 blank page
@@ -1677,6 +1698,72 @@ static int testPaginatorCodeBlock() {
   return 0;
 }
 
+// Mid-word style change with NO space between ("bo" + "ld", bold) glues
+// the two segs directly: seg1.x must equal exactly seg0's width (20px),
+// not 20+space, because spaceBefore is false for a glued word. Contrast
+// with testPaginatorMultiStyleLine's x==31, which includes an 11px join
+// space -- the only difference between the two scenarios is whether a
+// space separated the words in the source.
+static int testPaginatorGluedStyleChange() {
+  Ink::LayoutSettings s; MockMeasure m; Ink::Paginator p;
+  Ink::Block b;
+  b.runs.push_back({"bo", false, false, false});
+  b.runs.push_back({"ld", true, false, false});  // no space, bold
+  p.layout({b}, s, m);
+  CHECK(p.lines().size() == 1);
+  CHECK(p.lines()[0].segs.size() == 2);
+  CHECK(p.lines()[0].segs[0].text == "bo");
+  CHECK(p.lines()[0].segs[0].style == Ink::kStyleBody);
+  CHECK(p.lines()[0].segs[0].x == 0);
+  CHECK(p.lines()[0].segs[1].text == "ld");
+  CHECK(p.lines()[0].segs[1].style == Ink::kStyleBold);
+  CHECK(p.lines()[0].segs[1].x == 20);  // == "bo" width (2*10), no space added
+  return 0;
+}
+
+// A real word immediately after a hard-split word must start its own
+// fresh line -- never share the hard-split remnant's line. 60 'a' chars
+// hard-splits into 50+10 (contentW 504, char width 10); "hi" comes right
+// after with a single joining space in the source.
+static int testPaginatorWordAfterHardSplitStartsFreshLine() {
+  Ink::LayoutSettings s; MockMeasure m; Ink::Paginator p;
+  Ink::Block b;
+  b.runs.push_back({std::string(60, 'a') + " hi", false, false, false});
+  p.layout({b}, s, m);
+  CHECK(p.lines().size() == 3);
+  CHECK(p.lines()[0].segs[0].text.size() == 50);
+  CHECK(p.lines()[1].segs.size() == 1);
+  CHECK(p.lines()[1].segs[0].text.size() == 10);  // hard-split remnant, alone
+  CHECK(p.lines()[2].segs.size() == 1);
+  CHECK(p.lines()[2].segs[0].text == "hi");
+  CHECK(p.lines()[2].segs[0].x == 0);  // fresh line, not appended to the remnant
+  return 0;
+}
+
+// REQUIRED regression: a word long enough to overflow
+// TextMeasure::textWidth's int16_t return must still be recognized as
+// unbreakable-and-too-wide and hard-split -- not silently accepted onto
+// one line because its measured width wrapped to something tiny.
+// MockMeasure computes (int16_t)(s.size()*widths[st]); for a 6554-char
+// body-style word that's 6554*10=65540, which truncates to int16_t as
+// 65540 mod 65536 = 4 -- a bogus "4px" width that would otherwise pass
+// the old `wordW > contentW` check with room to spare.
+// Hand math once the length guard forces a hard split (contentW 504,
+// char width 10 -> 50 chars/chunk): 6554 / 50 = 131 full 50-char chunks
+// (6550 chars) + one 4-char remainder chunk = 132 lines total, not 1.
+static int testPaginatorOverflowGuard() {
+  Ink::LayoutSettings s; MockMeasure m; Ink::Paginator p;
+  Ink::Block b;
+  b.runs.push_back({std::string(6554, 'a'), false, false, false});
+  p.layout({b}, s, m);
+  CHECK(p.lines().size() == 132);
+  CHECK(p.lines()[0].segs[0].text.size() == 50);
+  CHECK(p.lines()[130].segs[0].text.size() == 50);  // last full chunk
+  CHECK(p.lines()[131].segs[0].text.size() == 4);   // remainder
+  CHECK(p.pageCount() > 1);  // proof it wasn't clipped onto one page/line
+  return 0;
+}
+
 int main() {
   if (testTxtParagraphs()) return 1;
   if (testTxtEdges()) return 1;
@@ -1763,6 +1850,9 @@ int main() {
   if (testPaginatorOffsetBounds()) return 1;
   if (testPaginatorHashFields()) return 1;
   if (testPaginatorCodeBlock()) return 1;
+  if (testPaginatorGluedStyleChange()) return 1;
+  if (testPaginatorWordAfterHardSplitStartsFreshLine()) return 1;
+  if (testPaginatorOverflowGuard()) return 1;
   std::printf("inkwell host tests: %d checks passed\n", checks);
   return 0;
 }
