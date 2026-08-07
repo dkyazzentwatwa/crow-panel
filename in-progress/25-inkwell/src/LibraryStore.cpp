@@ -14,24 +14,17 @@ namespace {
 const BookEntry kEmptyEntry;
 
 #if USE_INKWELL_SD
-// True if `name` ends with `ext` (dot included), case-insensitively.
-bool hasExtensionCI(const String &name, const char *ext) {
-  size_t extLen = strlen(ext);
-  if (name.length() < extLen) return false;
-  String tail = name.substring(name.length() - extLen);
-  tail.toLowerCase();
-  String lowerExt(ext);
-  lowerExt.toLowerCase();
-  return tail == lowerExt;
-}
-
 // false (format left at its default) for any extension this store doesn't
 // recognize -- the caller skips the file entirely rather than guessing.
+// Lowercases `name` exactly once (rather than lowercasing each candidate
+// extension's tail separately) and compares against lowercase literals.
 Ink::Format formatForName(const String &name, bool &recognized) {
+  String lower(name);
+  lower.toLowerCase();
   recognized = true;
-  if (hasExtensionCI(name, ".txt")) return Ink::Format::Txt;
-  if (hasExtensionCI(name, ".md")) return Ink::Format::Markdown;
-  if (hasExtensionCI(name, ".epub")) return Ink::Format::Epub;
+  if (lower.endsWith(".txt")) return Ink::Format::Txt;
+  if (lower.endsWith(".md")) return Ink::Format::Markdown;
+  if (lower.endsWith(".epub")) return Ink::Format::Epub;
   recognized = false;
   return Ink::Format::Txt;
 }
@@ -73,8 +66,13 @@ String readSmallFile(const String &path, size_t maxLen) {
   if (!SD_MMC.exists(path)) return String();
   File f = SD_MMC.open(path, FILE_READ);
   if (!f) return String();
+  size_t fileSize = f.size();
   String body;
-  body.reserve(maxLen < 4096 ? maxLen : 4096);
+  // Reserve exactly what this read will actually use: the smaller of the
+  // real file size and the caller's cap, not a flat 4096 guess that either
+  // over-reserves for every tiny .pos/.idx sidecar or under-reserves (and
+  // triggers String's own grow-and-copy) for a catalog near its cap.
+  body.reserve(fileSize < maxLen ? fileSize : maxLen);
   while (f.available() && body.length() < maxLen) body += (char)f.read();
   f.close();
   return body;
@@ -147,6 +145,27 @@ const CatalogRow *findCatalogRow(const std::vector<CatalogRow> &rows, const Stri
   return nullptr;
 }
 
+// Order-independent equality (directory iteration order isn't guaranteed to
+// match the catalog file's line order even when nothing changed) -- lets
+// scan() skip rewriting the catalog entirely when a rescan finds nothing
+// different from what's already on disk. O(n^2) over at most kMaxBooks (32)
+// rows, negligible next to the SD I/O it's avoiding.
+bool catalogsEqual(const std::vector<CatalogRow> &a, const std::vector<CatalogRow> &b) {
+  if (a.size() != b.size()) return false;
+  for (const CatalogRow &ra : a) {
+    bool found = false;
+    for (const CatalogRow &rb : b) {
+      if (ra.name == rb.name && ra.size == rb.size && ra.title == rb.title &&
+          ra.author == rb.author) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) return false;
+  }
+  return true;
+}
+
 // Opens just long enough to read title/author, then frees the buffer --
 // scan()'s only reason to touch EpubBook/miniz. This buffer is entirely
 // separate from bookData()'s single-slot buffer: a metadata-only scan pass
@@ -216,6 +235,13 @@ void parsePositionLine(const String &body, uint16_t &spine, uint32_t &offset,
 }
 #endif  // USE_INKWELL_SD
 }  // namespace
+
+// Identical for both backends -- entries_/count_ are declared unconditionally
+// in LibraryStore.h, so this doesn't need to live inside the #if split below.
+const BookEntry &LibraryStore::entry(size_t i) const {
+  if (i >= count_) return kEmptyEntry;
+  return entries_[i];
+}
 
 #if USE_INKWELL_SD
 
@@ -349,22 +375,22 @@ void LibraryStore::scan() {
 
   // Rewrite the catalog from exactly what's registered this pass -- drops
   // stale lines for files removed or renamed since the last scan, so the
-  // cache never grows without bound. row.title/author were already scrubbed
-  // above before going into entries_[], so catalogSafe() here is a no-op in
-  // practice -- kept anyway so this write path stays correct on its own if
-  // a future caller ever builds a CatalogRow without going through that
-  // same scrub first.
-  String body;
-  for (const CatalogRow &row : fresh) {
-    body += row.name + "|" + String(row.size) + "|" + catalogSafe(row.title) + "|" +
-            catalogSafe(row.author) + "\n";
+  // cache never grows without bound. Skipped entirely when nothing actually
+  // changed (same rows as what's already on disk, any order) -- a card that
+  // hasn't been touched since the last boot shouldn't take an SD write on
+  // every single boot.
+  if (!catalogsEqual(fresh, cached)) {
+    // row.title/author were already scrubbed above before going into
+    // entries_[], so catalogSafe() here is a no-op in practice -- kept
+    // anyway so this write path stays correct on its own if a future caller
+    // ever builds a CatalogRow without going through that same scrub first.
+    String body;
+    for (const CatalogRow &row : fresh) {
+      body += row.name + "|" + String(row.size) + "|" + catalogSafe(row.title) + "|" +
+              catalogSafe(row.author) + "\n";
+    }
+    writeSmallFile(INKWELL_CATALOG_PATH, body);
   }
-  writeSmallFile(INKWELL_CATALOG_PATH, body);
-}
-
-const BookEntry &LibraryStore::entry(size_t i) const {
-  if (i >= count_) return kEmptyEntry;
-  return entries_[i];
 }
 
 bool LibraryStore::bookData(size_t i, const uint8_t *&data, size_t &size) {
@@ -460,6 +486,18 @@ bool LibraryStore::writePageIndex(size_t i, size_t chapter, uint32_t layoutHash,
   // layout's sidecar on the card forever. v1 scope: WRITE only -- nothing
   // reads these back beyond the SD_MMC.exists() check just above (see
   // LibraryStore.h's writePageIndex doc comment).
+  //
+  // Collect matching names into a fixed array FIRST, close the directory,
+  // THEN remove -- calling SD_MMC.remove() while `dir`'s openNextFile()
+  // cursor is still live would mutate the directory out from under a live
+  // FatFs DIR handle, which is undefined by the API (every other directory
+  // walk in this file closes its handle before touching the filesystem
+  // again). In practice there's at most one stale hash per book+chapter
+  // (the previous writePageIndex() call already cleaned up the one before
+  // that), so 8 slots is generous headroom, not a tight fit.
+  static const uint8_t kMaxStaleIdx = 8;
+  String staleNames[kMaxStaleIdx];
+  uint8_t staleCount = 0;
   String prefix = name + "." + String((unsigned)chapter) + ".";
   File dir = SD_MMC.open(INKWELL_CATALOG_DIR);
   if (dir && dir.isDirectory()) {
@@ -471,10 +509,18 @@ bool LibraryStore::writePageIndex(size_t i, size_t chapter, uint32_t layoutHash,
       int slash = fullName.lastIndexOf('/');
       String entryName = (slash >= 0) ? fullName.substring(slash + 1) : fullName;
       if (entryName.startsWith(prefix) && entryName.endsWith(".idx")) {
-        SD_MMC.remove(String(INKWELL_CATALOG_DIR) + "/" + entryName);
+        if (staleCount < kMaxStaleIdx) {
+          staleNames[staleCount++] = entryName;
+        } else {
+          Logger::error("inkwell", "more than kMaxStaleIdx stale .idx files; extras left behind");
+          break;
+        }
       }
     }
     dir.close();
+  }
+  for (uint8_t k = 0; k < staleCount; ++k) {
+    SD_MMC.remove(String(INKWELL_CATALOG_DIR) + "/" + staleNames[k]);
   }
 
   String body;
@@ -524,11 +570,6 @@ bool LibraryStore::begin() {
 
   for (size_t i = 0; i < kMaxBooks; ++i) positions_[i] = Position();
   return true;
-}
-
-const BookEntry &LibraryStore::entry(size_t i) const {
-  if (i >= count_) return kEmptyEntry;
-  return entries_[i];
 }
 
 bool LibraryStore::bookData(size_t i, const uint8_t *&data, size_t &size) {

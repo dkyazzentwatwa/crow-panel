@@ -18,14 +18,19 @@
 // CLAUDE.md's "Arduino FS prepends the mount point" invariant, and never mix
 // these with a C-stdio path that would need the "/sdcard" prefix spelled
 // out; this project only ever touches the card through Arduino FS calls).
+// CATALOG_DIR/PATH are derived from BOOKS_DIR via adjacent-string-literal
+// concatenation (valid because a macro that itself expands to a string
+// literal can appear next to another literal) so overriding BOOKS_DIR alone
+// relocates both -- there's exactly one place that says where the library
+// root lives.
 #ifndef INKWELL_BOOKS_DIR
 #define INKWELL_BOOKS_DIR "/books"
 #endif
 #ifndef INKWELL_CATALOG_DIR
-#define INKWELL_CATALOG_DIR "/books/.inkwell"
+#define INKWELL_CATALOG_DIR INKWELL_BOOKS_DIR "/.inkwell"
 #endif
 #ifndef INKWELL_CATALOG_PATH
-#define INKWELL_CATALOG_PATH "/books/.inkwell/catalog.txt"
+#define INKWELL_CATALOG_PATH INKWELL_CATALOG_DIR "/catalog.txt"
 #endif
 
 // Portrait rotation for Arduino_DSI_Display: 1 = 90° CW (USB at bottom),

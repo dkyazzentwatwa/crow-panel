@@ -52,6 +52,9 @@ int currentBookIndex = -1;  // -1 = library view, no book open
 size_t currentChapter = 0;
 size_t currentPage = 0;
 bool bookOpen = false;
+// Rate-limits savePositionCurrent()'s SD-failure warning to state changes
+// (see its own comment) rather than once per page turn.
+bool lastSavePositionOk = true;
 
 // Mirrors Paginator.cpp's own private kListIndentPerDepthPx (24px/depth) --
 // there's no public accessor for it, so this is a second copy of the same
@@ -145,6 +148,12 @@ String renderSegs(const Ink::Line &ln) {
 // settings) -- the latter is exactly the case the hash keying exists for,
 // so skipping it there would leave the whole stale-hash-cleanup path dead.
 void writePageIndexSidecar() {
+  // Defensive: every current call site only reaches here with a book open
+  // (currentBookIndex set before loadChapterAndLayout()/relayoutAndLand()
+  // run), but cast (size_t)currentBookIndex below would wrap -1 into a huge
+  // value if that ever stopped being true, so guard it explicitly rather
+  // than relying on call-site discipline alone.
+  if (currentBookIndex < 0) return;
   size_t pages = paginator.pageCount();
   std::vector<uint32_t> starts;
   starts.reserve(pages);
@@ -171,8 +180,18 @@ void savePositionCurrent() {
   if (!bookOpen) return;
   uint32_t offset = paginator.pageStartOffset(currentPage);
   uint16_t permille = book.permille(currentChapter, offset);
-  library.savePosition((size_t)currentBookIndex, (uint16_t)currentChapter, offset,
-                        permille);
+  bool ok = library.savePosition((size_t)currentBookIndex, (uint16_t)currentChapter, offset,
+                                  permille);
+  // Rate-limited to the ok->failed transition, not logged on every page
+  // turn: the mock backend's savePosition() only returns false for an
+  // out-of-range index, which can't happen here, so this only fires for the
+  // SD backend -- a card pulled mid-session, gone read-only, or full. Once
+  // it recovers (ok again), the flag resets so a LATER failure warns again
+  // instead of staying silent for the rest of the session.
+  if (!ok && lastSavePositionOk) {
+    Logger::warn("inkwell", "could not save position to SD");
+  }
+  lastSavePositionOk = ok;
 }
 
 void printPage() {
@@ -314,6 +333,16 @@ void openBook(size_t idx) {
   size_t size = 0;
   if (!library.bookData(idx, data, size)) {
     Serial.println(F("[open] failed to read book data"));
+    // `book` was already closed above, but bookOpen/currentBookIndex/
+    // currentChapter/currentPage/paginator still hold whatever the
+    // PREVIOUS book left behind -- without this reset, the reader is a
+    // zombie: bookOpen stays true over a closed InkBook, and the next
+    // `next`/`prev` calls printPage()/savePositionCurrent() against that
+    // stale state. book.permille() on a closed book always returns 0 (its
+    // chapterSizes_ is empty), so savePositionCurrent() would write a
+    // bogus 0% over the PREVIOUS book's real, valid .pos file. Same reset
+    // as the book.open() failure branch below, for the same reason.
+    resetReaderState();
     return;
   }
   const BookEntry &e = library.entry(idx);

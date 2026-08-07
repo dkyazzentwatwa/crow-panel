@@ -119,7 +119,16 @@ Design decisions worth knowing before extending this:
   index — these are all disposable caches, not user data. Title/author are
   scrubbed (`catalogSafe()`) at the moment they're first read, not just at
   catalog-write time, so a book's displayed metadata can't drift between the
-  scan that first parses its EPUB and a later scan that hits the cache.
+  scan that first parses its EPUB and a later scan that hits the cache. The
+  cache key is name+size, not a modification time (FAT's own mtime
+  resolution and Arduino FS's exposure of it aren't reliable enough to lean
+  on here) — a book edited in place without changing its byte count keeps
+  serving its old cached title/author until the file is renamed or its size
+  changes. Considered acceptable: EPUB metadata essentially never changes
+  after a file lands on the card, and a rescan is always one delete-and-
+  recopy away from picking up new metadata regardless. A rescan that finds
+  nothing changed skips rewriting the catalog file entirely (order-
+  independent comparison against what's already on disk).
 - **`kMaxBooks` is 32, `kMaxBookBytes` is 12MB** — see the comments on both
   in `src/LibraryStore.h` for the memory reasoning: `kMaxBooks` is a
   fixed-table cost per slot; `kMaxBookBytes` is sized so that TWO max-size
