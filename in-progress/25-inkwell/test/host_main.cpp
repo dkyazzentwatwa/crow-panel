@@ -1095,6 +1095,11 @@ static int testEpubOversizedEntryRejectedByReadEntry() {
   std::string x;
   CHECK(book.chapterXhtml(0, x) && x.find("normal chapter") != std::string::npos);
   CHECK(!book.chapterXhtml(1, x));  // oversized entry rejected
+  // chapterSize() must agree with chapterXhtml()/readEntry(): 0, not a
+  // clamped 16MB, so an unreadable oversized chapter can't eat most of a
+  // book's progress bar (permille weights chapters by chapterSize()).
+  CHECK(book.chapterSize(0) > 0);
+  CHECK(book.chapterSize(1) == 0);
   return 0;
 }
 
@@ -1870,14 +1875,25 @@ static int testInkBookEpubOpenFailureThenTxtSucceeds() {
 // InkBook itself used at open() rather than hardcoded, so this doesn't
 // break if the fixture's markup ever changes length.
 //
-// Hand check against the current fixture text (ch1.xhtml is 64 bytes,
-// ch2.xhtml is 65 bytes, both counted with a text editor / len(), and
-// re-derived below from the live API so the numbers can't drift silently):
-// total=129, permille(0,0)=0, permille(0,64)==permille(1,0)=floor(64000/
-// 129)=496, permille(0,32)=floor(32000/129)=248 -- strictly between 0 and
-// 496, proving the fixture's mid-chapter reading position is NOT pinned
-// to either end (the bug this test set guards: permille used to freeze at
-// the chapter's compression ratio instead of moving smoothly to 1000).
+// This block PINS THE FORMULA (exact division, chapter-boundary equality,
+// uint64_t range) against a fixture small enough to verify entirely by
+// hand: ch1.xhtml is 64 bytes, ch2.xhtml is 65 bytes (counted with
+// len()), and both are re-derived below from the live API so the numbers
+// can't drift silently. total=129, permille(0,0)=0, permille(0,64)==
+// permille(1,0)=floor(64000/129)=496, permille(0,32)=floor(32000/129)=248.
+//
+// It is deliberately NOT the compressed-vs-uncompressed-size regression
+// guard, and re-review confirmed it can't be: deflate can't meaningfully
+// shrink 64 bytes of unique markup (small inputs often expand slightly
+// under deflate instead), and s0/s1 here are read from
+// raw.chapterSize() -- the very function under test -- so a reverted
+// (compressed-size) build would simply recompute the same "expected"
+// numbers from its own (buggy) units and this block would still pass.
+// testInkBookPermilleEpubDiscriminatesCompression below is the actual
+// regression guard: a real compressible chapter, offsets measured in the
+// decompressed domain via chapterXhtml() (independent of whatever
+// chapterSize() currently returns), verified to fail against a
+// deliberately-reverted m_comp_size build.
 static int testInkBookPermilleEpub() {
   std::string zipData = buildFixtureEpub(true);
   Ink::InkBook book;
@@ -1897,14 +1913,78 @@ static int testInkBookPermilleEpub() {
   CHECK(book.permille(0, s0) == expectedChapter1Start);  // end of ch0 == start of ch1
   CHECK(book.permille(1, 0xFFFFFFFFu) == 1000);  // huge offset clamps to end
 
-  // The regression probe: a MID-chapter offset must land strictly between
-  // the chapter's start and end permille, not saturate early the way a
-  // compressed-byte weighting could (this is exactly what the old
-  // compressed-size bug broke -- see the AMENDED note above).
+  // Formula sanity at a mid-chapter offset -- exact-division arithmetic
+  // only, not a discrimination test (see the file comment above).
   uint16_t atStart = book.permille(0, 0);
   uint16_t atMid = book.permille(0, s0 / 2);
   uint16_t atEnd = book.permille(0, s0);
   CHECK(atMid == expectedMid);
+  CHECK(atStart < atMid && atMid < atEnd);
+  return 0;
+}
+
+// Same fixture SHAPE as buildFixtureEpub(true) (mimetype/container/OPF
+// wiring, 2-chapter spine), but chapter 0 is ~60 repetitions of one
+// prose paragraph instead of one hand-written sentence -- large and
+// redundant enough for deflate to hit a REAL compression ratio. Tiny,
+// unique markup (like buildFixtureEpub's 64-byte chapters) often expands
+// slightly under deflate and can't discriminate a compressed-size bug
+// from a correct uncompressed-size implementation at all; this fixture
+// exists specifically so the two implementations disagree.
+static std::string buildFixtureEpubCompressibleChapter() {
+  ZipBuilder zb;
+  zb.add("mimetype", "application/epub+zip");
+  zb.add("META-INF/container.xml",
+         "<?xml version=\"1.0\"?><container><rootfiles>"
+         "<rootfile full-path=\"OEBPS/content.opf\" media-type=\"application/oebps-package+xml\"/>"
+         "</rootfiles></container>");
+  zb.add("OEBPS/content.opf",
+         "<?xml version=\"1.0\"?><package><metadata><dc:title>T</dc:title></metadata>"
+         "<manifest>"
+         "<item id=\"c1\" href=\"ch1.xhtml\" media-type=\"application/xhtml+xml\"/>"
+         "<item id=\"c2\" href=\"ch2.xhtml\" media-type=\"application/xhtml+xml\"/>"
+         "</manifest><spine><itemref idref=\"c1\"/><itemref idref=\"c2\"/></spine></package>");
+  const std::string paragraph =
+      "<p>The quick brown fox jumps over the lazy dog while the old clock "
+      "in the hallway keeps its slow and steady time, page after page, "
+      "chapter after chapter, exactly as repetitive prose compresses.</p>";
+  std::string bigChapter = "<html><body>";
+  for (int i = 0; i < 60; ++i) bigChapter += paragraph;
+  bigChapter += "</body></html>";
+  zb.add("OEBPS/ch1.xhtml", bigChapter);
+  zb.add("OEBPS/ch2.xhtml", "<html><body><p>Second chapter, unrelated text.</p></body></html>");
+  return zb.finalize();
+}
+
+// THE discriminating regression test (re-review requested this after
+// confirming testInkBookPermilleEpub above passes unchanged against a
+// reverted m_comp_size build). Two things make this one actually catch
+// the bug where the one above couldn't:
+//   1. buildFixtureEpubCompressibleChapter()'s chapter 0 compresses at a
+//      real ratio, so compressed and uncompressed sizes meaningfully
+//      diverge (unlike the 64-byte hand-written fixture above).
+//   2. The mid/end offsets come from raw.chapterXhtml()'s DECOMPRESSED
+//      length -- the domain Block::srcOffset and the paginator actually
+//      work in -- not from chapterSize() itself, so a buggy
+//      compressed-size build can't launder its own wrong unit into the
+//      test's expectations the way testInkBookPermilleEpub's s0/s1 do.
+// Manually verified against a temporarily-reverted chapterSize()
+// (returning stat.m_comp_size): atMid saturated to the same value as
+// atEnd instead of landing strictly between atStart and atEnd -- exactly
+// the failure mode this asserts against.
+static int testInkBookPermilleEpubDiscriminatesCompression() {
+  std::string zipData = buildFixtureEpubCompressibleChapter();
+  Ink::InkBook book;
+  CHECK(book.open(Ink::Format::Epub, (const uint8_t *)zipData.data(), zipData.size()));
+
+  Ink::EpubBook raw;
+  CHECK(raw.open((const uint8_t *)zipData.data(), zipData.size()));
+  std::string x;
+  CHECK(raw.chapterXhtml(0, x));  // decompressed text -- the unit Block::srcOffset lives in
+
+  uint16_t atStart = book.permille(0, 0);
+  uint16_t atMid = book.permille(0, (uint32_t)(x.size() / 2));
+  uint16_t atEnd = book.permille(0, (uint32_t)x.size());
   CHECK(atStart < atMid && atMid < atEnd);
   return 0;
 }
@@ -2177,6 +2257,7 @@ int main() {
   if (testInkBookEpubDelegation()) return 1;
   if (testInkBookEpubOpenFailureThenTxtSucceeds()) return 1;
   if (testInkBookPermilleEpub()) return 1;
+  if (testInkBookPermilleEpubDiscriminatesCompression()) return 1;
   if (testInkBookReopenTxtThenEpub()) return 1;
   if (testInkBookIntegrationPaginate()) return 1;
   if (testInkBookTocTargetEpub()) return 1;

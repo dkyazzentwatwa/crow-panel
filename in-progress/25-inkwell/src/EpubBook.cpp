@@ -335,12 +335,16 @@ uint32_t EpubBook::chapterSize(size_t i) const {
   // chapters against DECOMPRESSED reading-position offsets, so mixing in
   // the compressed byte count would skew intra-chapter progress by that
   // chapter's own compression ratio. Same stat call either way, no extra
-  // cost. Clamped to kMaxEntryBytes for consistency with readEntry's own
-  // cap -- a chapter this function reports a size for is a chapter
-  // readEntry would actually agree to extract.
-  uint64_t uncomp = stat.m_uncomp_size;
-  if (uncomp > kMaxEntryBytes) uncomp = kMaxEntryBytes;
-  return (uint32_t)uncomp;
+  // cost.
+  //
+  // Rejected outright (0), not clamped, past kMaxEntryBytes -- matching
+  // readEntry()'s own cap exactly: a chapter this reports a NONZERO size
+  // for is a chapter readEntry() would actually agree to extract.
+  // Clamping instead of rejecting would have an unreadable chapter
+  // claiming, say, 20MB eat ~87% of a small book's progress bar (16MB /
+  // 18.4MB total) for content nobody can ever open.
+  if (stat.m_uncomp_size > kMaxEntryBytes) return 0;
+  return (uint32_t)stat.m_uncomp_size;
 }
 
 bool EpubBook::chapterXhtml(size_t i, std::string &out) {
