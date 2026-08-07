@@ -166,8 +166,12 @@ void printPage() {
   if (pages.empty()) {
     Serial.println(F("(empty chapter)"));
   } else {
-    size_t p = currentPage < pages.size() ? currentPage : pages.size() - 1;
-    const Ink::Page &pg = pages[p];
+    // Clamp the MEMBER itself, not a local copy -- every other read of
+    // currentPage in this function (and the footer below) sees the same
+    // clamped value this way, so the body and footer can never disagree
+    // about which page is actually showing.
+    if (currentPage >= pages.size()) currentPage = pages.size() - 1;
+    const Ink::Page &pg = pages[currentPage];
     // Ordered-list numbering restarts every page rather than tracking a
     // true continuing count across pages/lists -- a documented
     // approximation (see the task spec); a list that spans a page break
@@ -244,6 +248,24 @@ void printPage() {
   Serial.println(F("% --"));
 }
 
+// Shared teardown back to "library view, nothing open": clears
+// currentBlocks and re-layouts an empty chapter so no stale pages survive
+// (paginator.layout() on an empty block list produces one blank page, per
+// its own documented empty-chapter behavior) -- used by both cmdClose and
+// openBook()'s failure path. InkBook::open() tears down whatever `book`
+// previously held BEFORE it can fail, so a failed reopen over an
+// already-open book needs exactly the same reset a deliberate `close`
+// does; keeping one function means that reset can't drift between the two
+// call sites.
+void resetReaderState() {
+  currentBlocks.clear();
+  paginator.layout(currentBlocks, layoutSettings, measure);
+  bookOpen = false;
+  currentBookIndex = -1;
+  currentChapter = 0;
+  currentPage = 0;
+}
+
 void openBook(size_t idx) {
   const uint8_t *data = nullptr;
   size_t size = 0;
@@ -254,21 +276,11 @@ void openBook(size_t idx) {
   const BookEntry &e = library.entry(idx);
   if (!book.open(e.format, data, size)) {
     Serial.println(F("[open] failed to parse book"));
-    // InkBook::open() calls its own close() unconditionally BEFORE trying
-    // to parse the new format -- so a failed open here has already torn
-    // down whatever `book` previously held, even if that was a different,
-    // successfully-open book. Reset our own tracking to match: leaving
-    // bookOpen/currentBookIndex pointing at the old book would let every
-    // later command read `book` (now empty) through stale sketch state.
     // Latent with today's samples (only a malformed EPUB can fail this
     // path, and sampleEpub() is always well-formed) -- real once Task 9's
-    // SD store can hand back a corrupt file.
-    bookOpen = false;
-    currentBookIndex = -1;
-    currentChapter = 0;
-    currentPage = 0;
-    currentBlocks.clear();
-    paginator.layout(currentBlocks, layoutSettings, measure);
+    // SD store can hand back a corrupt file. See resetReaderState()'s own
+    // comment for why this needs the same reset as a deliberate `close`.
+    resetReaderState();
     return;
   }
 
@@ -519,9 +531,7 @@ void cmdClose(const String &) {
   if (!requireOpen()) return;
   savePositionCurrent();
   book.close();
-  currentBlocks.clear();
-  bookOpen = false;
-  currentBookIndex = -1;
+  resetReaderState();
   Serial.println(F("closed -- back to library (see `books`)"));
 }
 

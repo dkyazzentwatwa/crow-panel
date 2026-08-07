@@ -151,15 +151,19 @@ inline std::string buildSampleEpubZip() {
   if (!mz_zip_writer_init_heap(&zip, 0, 32 * 1024)) return std::string();
 
   bool ok = true;
-  auto add = [&](const char *name, const std::string &data) {
+  auto add = [&](const char *name, const std::string &data,
+                 int levelAndFlags = MZ_DEFAULT_COMPRESSION) {
     if (!ok) return;
-    if (!mz_zip_writer_add_mem(&zip, name, data.data(), data.size(),
-                                MZ_DEFAULT_COMPRESSION)) {
+    if (!mz_zip_writer_add_mem(&zip, name, data.data(), data.size(), (mz_uint)levelAndFlags)) {
       ok = false;
     }
   };
 
-  add("mimetype", "application/epub+zip");
+  // Per the OCF spec, the "mimetype" entry must be stored (uncompressed),
+  // not deflated -- it's the one byte-exact signature a real EPUB reader
+  // is allowed to sniff before parsing any XML. Every other entry keeps
+  // MZ_DEFAULT_COMPRESSION.
+  add("mimetype", "application/epub+zip", MZ_NO_COMPRESSION);
   add("META-INF/container.xml",
       "<?xml version=\"1.0\"?><container><rootfiles>"
       "<rootfile full-path=\"OEBPS/content.opf\" "

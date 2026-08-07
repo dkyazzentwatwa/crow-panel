@@ -56,6 +56,8 @@ const BookEntry &LibraryStore::entry(size_t i) const {
 
 bool LibraryStore::bookData(size_t i, const uint8_t *&data, size_t &size) {
   if (i >= count_) return false;
+  // mock-only: dispatch works because each sample has a unique format;
+  // Task 9's SD backend replaces this wholesale.
   switch (entries_[i].format) {
     case Ink::Format::Txt: {
       const std::string &s = Ink::sampleTxt();
