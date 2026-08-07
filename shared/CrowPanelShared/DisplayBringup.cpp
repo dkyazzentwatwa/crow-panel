@@ -73,6 +73,9 @@ bool displayReady = false;
 // When true, the panel was built with auto_flush=false and the app owns flushing
 // via CrowDisplay::flush(). Default false preserves every existing project.
 bool manualFlush = false;
+// Software rotation forwarded to Arduino_DSI_Display, 0-3. Default 0
+// preserves every existing project's landscape-native behavior.
+uint8_t rotation_ = 0;
 bool touchSampled = false;
 CrowDisplay::TouchPointData cachedPoints[TouchPoints::MAX_POINTS];
 uint8_t cachedPointCount = 0;
@@ -106,10 +109,36 @@ void sampleTouch() {
   if (count > TouchPoints::MAX_POINTS) {
     count = TouchPoints::MAX_POINTS;
   }
+  // NOT HARDWARE-VERIFIED: rotation quadrant mapping -- verify corners on
+  // glass before trusting; flip 1<->3 if mirrored.
+  //
+  // GT911 reports native landscape coordinates (tx in [0,kWidth-1], ty in
+  // [0,kHeight-1]) in the same frame as the panel's unrotated (rotation=0)
+  // framebuffer, where a pixel's native address is nativeY*kWidth+nativeX.
+  // Derived as the exact inverse of Arduino_DSI_Display::writePixelPreclipped's
+  // per-rotation address math (GFX_Library_for_Arduino src/display/
+  // Arduino_DSI_Display.cpp), so a tap lands under the same logical (x,y)
+  // that drawing to that logical (x,y) would have lit up:
+  //   rotation 1: fb address = x_logical*fb_width + (fb_max_x - y_logical)
+  //               => nativeY=x_logical, nativeX=kWidth-1-y_logical
+  //               => x_logical=ty, y_logical=kWidth-1-tx
+  //   rotation 2: fb address = (fb_max_y-y_logical)*fb_width + (fb_max_x-x_logical)
+  //               => x_logical=kWidth-1-tx, y_logical=kHeight-1-ty
+  //   rotation 3: fb address = (fb_max_y-x_logical)*fb_width + y_logical
+  //               => nativeY=kHeight-1-x_logical, nativeX=y_logical
+  //               => x_logical=kHeight-1-ty, y_logical=tx
   for (uint8_t i = 0; i < count; ++i) {
     const TouchPoint &point = points.getPoint(i);
-    cachedPoints[i].x = point.x;
-    cachedPoints[i].y = point.y;
+    int16_t tx = point.x, ty = point.y;
+    int16_t x = tx, y = ty;
+    switch (rotation_) {
+      case 1: x = ty;               y = kWidth - 1 - tx; break;
+      case 2: x = kWidth - 1 - tx;  y = kHeight - 1 - ty; break;
+      case 3: x = kHeight - 1 - ty; y = tx;               break;
+      default: break;
+    }
+    cachedPoints[i].x = x;
+    cachedPoints[i].y = y;
     cachedPoints[i].id = point.id;
   }
   cachedPointCount = count;
@@ -126,7 +155,7 @@ bool beginPanel(const HardwareProfile &profile) {
       t.hsyncPulse, t.hsyncBackPorch, t.hsyncFrontPorch,
       t.vsyncPulse, t.vsyncBackPorch, t.vsyncFrontPorch,
       t.preferSpeedHz, t.laneBitRateMbps);
-  gfx = new Arduino_DSI_Display(kWidth, kHeight, dsiPanel, 0 /*rotation*/,
+  gfx = new Arduino_DSI_Display(kWidth, kHeight, dsiPanel, rotation_,
                                 !manualFlush /*auto_flush*/, profile.display.lcdReset,
                                 kEk79007InitOperations,
                                 sizeof(kEk79007InitOperations) / sizeof(kEk79007InitOperations[0]));
@@ -187,8 +216,13 @@ namespace CrowDisplay {
 void setBacklight(uint8_t level) { setBacklightLevel(level); }
 uint8_t backlight() { return backlightLevel; }
 
-bool begin(const HardwareProfile &profile, const char *title, bool manual) {
+bool begin(const HardwareProfile &profile, const char *title, bool manual, uint8_t rotation) {
   manualFlush = manual;
+  if (rotation > 3) {
+    Logger::error("display", "rotation " + String(rotation) + " out of range 0-3, using 0");
+    rotation = 0;
+  }
+  rotation_ = rotation;
   const UiTheme &theme = defaultUiTheme();
   bgColor = toColor565(theme.background);
   fgColor = toColor565(theme.foreground);
@@ -215,22 +249,46 @@ void flush(int16_t x, int16_t y, int16_t w, int16_t h) {
   if (!gfx || !manualFlush) {
     return;
   }
-  // Clamp to the panel, then sync the full rows spanning [y, y+h). Whole rows
-  // are contiguous in the framebuffer, so this is one cache_msync of h rows -
-  // still a fraction of the screen for a key/band, far cheaper than the full FB.
-  if (y < 0) { h += y; y = 0; }
-  if (h <= 0 || y >= kHeight) {
+  // Map the logical (post-rotation) rect to the native framebuffer's row
+  // span BEFORE the existing clamp/msync logic below, which always operates
+  // in native rows against kHeight/kWidth.
+  //
+  // Derived as the exact inverse of Arduino_DSI_Display::writePixelPreclipped's
+  // per-rotation framebuffer-address math (GFX_Library_for_Arduino src/
+  // display/Arduino_DSI_Display.cpp), so the rows synced here are exactly
+  // the native rows a draw to logical rect (x,y,w,h) actually touched:
+  //   rotation 1: fb address = x*fb_width + (fb_max_x-y) -> native row = x,
+  //               so a logical x-span of width w covers native rows [x, x+w).
+  //   rotation 2: fb address = (fb_max_y-y)*fb_width + (fb_max_x-x) ->
+  //               native row = kHeight-1-y, so a logical y-span of height h
+  //               covers native rows [kHeight-y-h, kHeight-y).
+  //   rotation 3: fb address = (fb_max_y-x)*fb_width + y -> native row =
+  //               kHeight-1-x, so a logical x-span of width w covers native
+  //               rows [kHeight-x-w, kHeight-x).
+  int16_t ny = y, nh = h;
+  switch (rotation_) {
+    case 1: ny = x; nh = w; break;                    // logical x -> native rows
+    case 2: ny = kHeight - y - h; nh = h; break;
+    case 3: ny = kHeight - x - w; nh = w; break;
+    default: break;
+  }
+  // Clamp to the panel, then sync the full rows spanning [ny, ny+nh). Whole
+  // rows are contiguous in the framebuffer, so this is one cache_msync of nh
+  // rows - still a fraction of the screen for a key/band, far cheaper than
+  // the full FB.
+  if (ny < 0) { nh += ny; ny = 0; }
+  if (nh <= 0 || ny >= kHeight) {
     return;
   }
-  if (y + h > kHeight) { h = kHeight - y; }
+  if (ny + nh > kHeight) { nh = kHeight - ny; }
   (void)x;
   (void)w;
   uint16_t *fb = gfx->getFramebuffer();
   if (!fb) {
     return;
   }
-  uint16_t *start = fb + (size_t)y * kWidth;
-  size_t bytes = (size_t)h * kWidth * sizeof(uint16_t);
+  uint16_t *start = fb + (size_t)ny * kWidth;
+  size_t bytes = (size_t)nh * kWidth * sizeof(uint16_t);
   esp_cache_msync(start, bytes,
                   ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
 }
@@ -240,12 +298,12 @@ void setLine(uint8_t index, const String &text) {
     return;
   }
   int16_t y = kFirstLineY + index * kLinePitch;
-  gfx->fillRect(0, y, kWidth, kLinePitch - 8, bgColor);
+  gfx->fillRect(0, y, gfx->width(), kLinePitch - 8, bgColor);
   gfx->setTextColor(fgColor);
   gfx->setTextSize(kLineSize);
   gfx->setCursor(kMarginX, y);
   gfx->print(text);
-  flush(0, y, kWidth, kLinePitch - 8);  // no-op unless manualFlush
+  flush(0, y, gfx->width(), kLinePitch - 8);  // no-op unless manualFlush
 }
 
 void tick() {

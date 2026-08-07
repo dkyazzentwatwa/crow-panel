@@ -44,8 +44,12 @@ namespace CrowDisplay {
 // cached PSRAM framebuffer and nothing appears until the caller invokes flush().
 // This turns Arduino_GFX's per-pixel esp_cache_msync into one sync per frame -
 // an order-of-magnitude win for text-heavy UIs that redraw often.
+// rotation: 0-3, forwarded to Arduino_DSI_Display's software rotation
+// (0=landscape native, 1/3=portrait, 2=landscape upside-down). Values
+// outside 0-3 clamp to 0. Default 0 preserves every existing caller's
+// landscape behavior.
 bool begin(const HardwareProfile &profile, const char *title,
-           bool manualFlush = false);
+           bool manualFlush = false, uint8_t rotation = 0);
 
 // Push the cached framebuffer to the panel. No-op unless begin() was called
 // with manualFlush=true. The region overload syncs only the given rectangle
@@ -83,7 +87,7 @@ uint8_t touchPoints(TouchPointData *out, uint8_t maxPoints);
 class Arduino_GFX;
 
 namespace CrowDisplay {
-inline bool begin(const HardwareProfile &, const char *, bool = false) { return false; }
+inline bool begin(const HardwareProfile &, const char *, bool = false, uint8_t = 0) { return false; }
 inline void flush() {}
 inline void flush(int16_t, int16_t, int16_t, int16_t) {}
 inline void setBacklight(uint8_t) {}

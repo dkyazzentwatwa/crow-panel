@@ -621,6 +621,8 @@ void setup() {
   Logger::begin(115200);
   Logger::info("app", "Inkwell -- portrait e-ink-style reader (serial mock)");
   printHardwareProfile(Serial, activeHardwareProfile());
+  // Task 11 wires CrowDisplay::begin(profile, title, manualFlush, INKWELL_ROTATION)
+  // here once the display path lands -- no display call exists yet.
 
   layoutSettings.pageW = INKWELL_PAGE_W;
   layoutSettings.pageH = INKWELL_PAGE_H;
