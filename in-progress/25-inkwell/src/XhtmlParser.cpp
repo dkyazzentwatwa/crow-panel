@@ -5,6 +5,27 @@
 
 namespace Ink {
 
+// Whitespace check shared with EpubBook.cpp (declared in XhtmlParser.h).
+bool isWsChar(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
+
+// Quote-aware tag-close scan shared with EpubBook.cpp (declared in
+// XhtmlParser.h) -- see the header comment for why the quote-awareness
+// matters to both callers.
+size_t findTagCloseBounded(const std::string &s, size_t from, size_t limit) {
+  size_t end = std::min(s.size(), limit);
+  char quote = 0;
+  for (size_t j = from; j < end; ++j) {
+    char c = s[j];
+    if (quote) {
+      if (c == quote) quote = 0;
+      continue;
+    }
+    if (c == '"' || c == '\'') { quote = c; continue; }
+    if (c == '>') return j;
+  }
+  return std::string::npos;
+}
+
 namespace {
 
 // Window bounds for the bounded scans below -- see MarkdownParser.cpp for
@@ -21,33 +42,10 @@ namespace {
 constexpr size_t kTagCloseWindow = 512;  // bytes scanned ahead of '<' for '>'
 constexpr size_t kEntityMaxName = 12;    // max chars between '&' and ';'
 
-bool isWsChar(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
-
 std::string lowerStr(const std::string &s) {
   std::string out(s.size(), '\0');
   for (size_t i = 0; i < s.size(); ++i) out[i] = (char)std::tolower((unsigned char)s[i]);
   return out;
-}
-
-// Scans forward from `from` for the tag's closing '>', treating anything
-// inside a single- or double-quoted span as inert so a quoted attribute
-// value containing '>' (e.g. title="a>b") can't end the tag early.
-// Bounded to `limit` for the same O(n) reason as kTagCloseWindow above;
-// an unterminated quote inside the window reports "no tag found" (npos),
-// same as a plain missing '>'.
-size_t findTagCloseBounded(const std::string &s, size_t from, size_t limit) {
-  size_t end = std::min(s.size(), limit);
-  char quote = 0;
-  for (size_t j = from; j < end; ++j) {
-    char c = s[j];
-    if (quote) {
-      if (c == quote) quote = 0;
-      continue;
-    }
-    if (c == '"' || c == '\'') { quote = c; continue; }
-    if (c == '>') return j;
-  }
-  return std::string::npos;
 }
 
 // Single linear case-insensitive search for `needle` starting at `from`.

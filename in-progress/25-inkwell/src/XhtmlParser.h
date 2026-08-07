@@ -92,6 +92,23 @@ std::string decodeEntities(const std::string &s);
 // into an unbounded find().
 size_t decodeEntity(const std::string &s, size_t i, std::string &out);
 
+// Whitespace check (space/tab/newline/CR) shared with EpubBook's own
+// tag/attribute scans, so both files agree on what counts as whitespace.
+bool isWsChar(char c);
+
+// Scans forward from `from` for a tag's closing '>', treating anything
+// inside a single- or double-quoted span as inert so a quoted attribute
+// value containing '>' (e.g. title="a>b") can't end the tag early.
+// Bounded to `limit` (clamped to s.size()) for the same O(n) reason the
+// rest of this file bounds its own tag-close lookahead -- an unterminated
+// quote inside the window reports "no tag found" (npos), same as a plain
+// missing '>'. Shared with EpubBook.cpp: an OPF/NCX/nav tag-close scan
+// done with a plain find('>', tagPos) would stop at a '>' embedded inside
+// an EARLIER attribute's quoted value in the SAME tag (e.g.
+// `<item title="a>b" href="ch1.xhtml" .../>`), truncating the perceived
+// tag span and silently losing every attribute after it.
+size_t findTagCloseBounded(const std::string &s, size_t from, size_t limit);
+
 }  // namespace Ink
 
 #endif

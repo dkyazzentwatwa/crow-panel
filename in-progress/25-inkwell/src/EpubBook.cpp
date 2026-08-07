@@ -12,7 +12,9 @@ namespace Ink {
 
 namespace {
 
-bool isWsChar(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
+// isWsChar and findTagCloseBounded are shared with XhtmlParser.cpp (see
+// XhtmlParser.h) -- EpubBook.cpp is already inside namespace Ink, so both
+// resolve unqualified.
 
 std::string trim(const std::string &s) {
   size_t b = 0, e = s.size();
@@ -47,6 +49,12 @@ std::string collapseWs(const std::string &s) {
 // tag-close lookahead.
 constexpr size_t kNsPrefixWindow = 32;
 
+// readEntry() rejects any zip entry whose stated uncompressed size
+// exceeds this. A chapter or cover image on this reader should never
+// approach 16 MB; a corrupt or crafted zip claiming a huge uncomp_size is
+// rejected before any allocation is attempted (see readEntry()'s comment).
+constexpr uint64_t kMaxEntryBytes = 16ull * 1024 * 1024;
+
 // Bounded search for a single character within [from, limit) -- never
 // scans past `limit` even when `ch` doesn't occur before the end of the
 // whole string, which is what keeps callers below (the namespace-prefix
@@ -60,19 +68,47 @@ size_t findCharBounded(const std::string &s, char ch, size_t from, size_t limit)
   return std::string::npos;
 }
 
+// Finds the '>' that actually closes the tag starting at `tagStart`,
+// quote-aware (via XhtmlParser's shared findTagCloseBounded). Every
+// tag-span scan in this file MUST go through this rather than a plain
+// unguarded s.find('>', tagStart): an attribute value containing a raw
+// '>' (e.g.
+// `<item title="a>b" href="ch1.xhtml" media-type="application/xhtml+xml"/>`)
+// would otherwise end the perceived tag at the '>' INSIDE the quoted
+// value, truncating the span and silently dropping every attribute after
+// it -- an item losing its href this way drops out of the manifest
+// entirely, and a whole book can resolve to 0 chapters over one `>` in a
+// title attribute. Falls back to s.size() (rest-of-document) as the
+// close position when no real '>' is found, matching the old
+// find('>', ...) == npos degrade used throughout this file.
+size_t tagCloseOf(const std::string &s, size_t tagStart) {
+  return findTagCloseBounded(s, tagStart, s.size());
+}
+
 // Locates the next opening tag whose local name is `localName`, at or
-// after `from`. Tolerates an XML namespace prefix on the tag itself (e.g.
+// after `from` and strictly before `limit` (default npos = end of
+// document). Tolerates an XML namespace prefix on the tag itself (e.g.
 // "<opf:spine" as well as plain "<spine") -- some EPUB generators prefix
-// the OPF package/metadata/manifest/spine wrapper elements. A single
-// forward pass over '<' occurrences (each visited once across the whole
-// document, even when this is called repeatedly with an advancing `from`
-// to walk a list of sibling tags), so aggregate cost stays O(n) rather
-// than O(n^2). Returns the position of the tag's '<', or npos.
-size_t findTagLocal(const std::string &xml, const std::string &localName, size_t from) {
-  size_t n = xml.size();
+// the OPF package/metadata/manifest/spine wrapper elements.
+//
+// The '<' search itself is bounded to `limit` via findCharBounded rather
+// than delegating to xml.find('<', pos) -- that distinction matters: a
+// plain find() scans all the way to the end of the WHOLE document before
+// this function can even check whether the match landed past `limit`, so
+// a caller bounding "search up to the next sibling tag" (e.g.
+// parseNcxToc's per-navPoint <text>/<content> lookups, bounded to the
+// next <navPoint) would still pay for a document-wide scan every time the
+// tag being searched for doesn't exist in that span -- turning an N-node
+// document with no matches anywhere into O(n^2). Bounding the '<' probe
+// itself means a caller's `limit` genuinely caps the cost of one call at
+// O(limit - from), so aggregate cost across a walk of sibling tags stays
+// O(n) rather than O(n^2). Returns the position of the tag's '<', or npos.
+size_t findTagLocal(const std::string &xml, const std::string &localName, size_t from,
+                     size_t limit = std::string::npos) {
+  size_t n = std::min(xml.size(), limit);
   size_t pos = from;
   while (pos < n) {
-    size_t lt = xml.find('<', pos);
+    size_t lt = findCharBounded(xml, '<', pos, n);
     if (lt == std::string::npos) return std::string::npos;
     size_t p = lt + 1;
     if (p < n && xml[p] == '/') {  // closing tag: never a match for an open-tag search
@@ -80,7 +116,7 @@ size_t findTagLocal(const std::string &xml, const std::string &localName, size_t
       continue;
     }
     size_t nameStart = p;
-    size_t colon = findCharBounded(xml, ':', p, p + kNsPrefixWindow);
+    size_t colon = findCharBounded(xml, ':', p, std::min(n, p + kNsPrefixWindow));
     if (colon != std::string::npos) {
       bool prefixLooksValid = true;
       for (size_t k = p; k < colon; ++k) {
@@ -113,11 +149,18 @@ size_t findTagLocal(const std::string &xml, const std::string &localName, size_t
 // span itself char-by-char, and the closing-quote search is bounded the
 // same way via findCharBounded -- so cost is proportional to one tag's
 // length, never the document's, even when the attribute is absent.
+//
+// A candidate match must sit at a real attribute boundary: the preceding
+// character (if any within the span) must be whitespace. Without this, a
+// search for "href" would also match the tail of "data-href" -- the
+// attribute name doesn't start there, but a plain substring search can't
+// tell the difference.
 std::string attrInSpan(const std::string &s, size_t tagStart, size_t tagEnd,
                         const std::string &attrName) {
   size_t alen = attrName.size();
   if (alen == 0 || tagEnd <= tagStart || alen > tagEnd - tagStart) return "";
   for (size_t i = tagStart; i + alen <= tagEnd; ++i) {
+    if (i != tagStart && !isWsChar(s[i - 1])) continue;
     if (s.compare(i, alen, attrName) != 0) continue;
     size_t eq = i + alen;
     while (eq < tagEnd && isWsChar(s[eq])) ++eq;
@@ -152,7 +195,7 @@ std::string attrValue(const std::string &xml, const std::string &tagNeedle,
       searchFrom = tagPos + 1;
       continue;
     }
-    size_t tagEnd = xml.find('>', tagPos);
+    size_t tagEnd = tagCloseOf(xml, tagPos);
     if (tagEnd == std::string::npos) tagEnd = xml.size();
     return attrInSpan(xml, tagPos, tagEnd, attrName);
   }
@@ -180,7 +223,7 @@ std::string attrValue(const std::string &xml, const std::string &tagNeedle,
 std::string extractSimpleText(const std::string &xml, const std::string &localName) {
   size_t tagPos = findTagLocal(xml, localName, 0);
   if (tagPos == std::string::npos) return "";
-  size_t tagEnd = xml.find('>', tagPos);
+  size_t tagEnd = tagCloseOf(xml, tagPos);
   if (tagEnd == std::string::npos) return "";
   size_t contentStart = tagEnd + 1;
   size_t end = xml.find('<', contentStart);
@@ -257,17 +300,33 @@ bool EpubBook::readEntry(const std::string &name, std::string &out) {
   auto *zip = reinterpret_cast<mz_zip_archive *>(zip_);
   int idx = mz_zip_reader_locate_file(zip, name.c_str(), nullptr, 0);
   if (idx < 0) return false;
-  size_t extractedSize = 0;
-  void *buf = mz_zip_reader_extract_to_heap(zip, (mz_uint)idx, &extractedSize, 0);
-  if (!buf) return false;
-  out.assign((const char *)buf, extractedSize);
-  mz_free(buf);
+  // Stat before extracting, and reject anything past kMaxEntryBytes. A
+  // chapter or cover image should never come remotely close to 16 MB; a
+  // corrupt or hostile zip claiming otherwise would otherwise drive
+  // out.resize() to attempt an enormous allocation. This codebase has no
+  // try/catch around Serial-loop code by design (mock-first, no heap
+  // growth on the long-running panel) -- an uncaught std::bad_alloc
+  // aborts the whole panel, so the size is checked BEFORE any allocation
+  // is attempted, not caught after.
+  mz_zip_archive_file_stat stat;
+  if (!mz_zip_reader_file_stat(zip, (mz_uint)idx, &stat)) return false;
+  if (stat.m_uncomp_size > kMaxEntryBytes) return false;
+  // extract_to_mem into a pre-sized std::string, not extract_to_heap +
+  // assign: the latter briefly holds the decompressed bytes twice (once
+  // in miniz's malloc'd heap buffer, once in the std::string's own copy
+  // from assign()) -- halving peak memory matters on a 32 MB-PSRAM panel
+  // holding a whole EPUB in memory already.
+  out.resize((size_t)stat.m_uncomp_size);
+  if (!out.empty() && !mz_zip_reader_extract_to_mem(zip, (mz_uint)idx, &out[0], out.size(), 0)) {
+    out.clear();
+    return false;
+  }
   return true;
 }
 
 uint32_t EpubBook::chapterSize(size_t i) const {
   if (!zipOpen_ || i >= spineHrefs_.size()) return 0;
-  auto *zip = reinterpret_cast<mz_zip_archive *>(const_cast<unsigned char *>(zip_));
+  auto *zip = reinterpret_cast<mz_zip_archive *>(zip_);
   int idx = mz_zip_reader_locate_file(zip, spineHrefs_[i].c_str(), nullptr, 0);
   if (idx < 0) return 0;
   mz_zip_archive_file_stat stat;
@@ -310,7 +369,7 @@ void EpubBook::parseOpf(const std::string &opf, const std::string &opfDir) {
   for (;;) {
     size_t tagPos = findTagLocal(opf, "item", pos);
     if (tagPos == std::string::npos) break;
-    size_t tagEnd = opf.find('>', tagPos);
+    size_t tagEnd = tagCloseOf(opf, tagPos);
     if (tagEnd == std::string::npos) break;
     std::string id = attrInSpan(opf, tagPos, tagEnd, "id");
     if (!id.empty()) {
@@ -329,7 +388,7 @@ void EpubBook::parseOpf(const std::string &opf, const std::string &opfDir) {
   for (;;) {
     size_t tagPos = findTagLocal(opf, "itemref", pos);
     if (tagPos == std::string::npos) break;
-    size_t tagEnd = opf.find('>', tagPos);
+    size_t tagEnd = tagCloseOf(opf, tagPos);
     if (tagEnd == std::string::npos) break;
     std::string idref = attrInSpan(opf, tagPos, tagEnd, "idref");
     auto it = manifest.find(idref);
@@ -356,7 +415,7 @@ void EpubBook::parseOpf(const std::string &opf, const std::string &opfDir) {
     for (;;) {
       size_t tagPos = findTagLocal(opf, "meta", pos);
       if (tagPos == std::string::npos) break;
-      size_t tagEnd = opf.find('>', tagPos);
+      size_t tagEnd = tagCloseOf(opf, tagPos);
       if (tagEnd == std::string::npos) break;
       if (attrInSpan(opf, tagPos, tagEnd, "name") == "cover") {
         coverMetaId = attrInSpan(opf, tagPos, tagEnd, "content");
@@ -378,7 +437,7 @@ void EpubBook::parseOpf(const std::string &opf, const std::string &opfDir) {
   } else {
     size_t spinePos = findTagLocal(opf, "spine", 0);
     if (spinePos != std::string::npos) {
-      size_t spineTagEnd = opf.find('>', spinePos);
+      size_t spineTagEnd = tagCloseOf(opf, spinePos);
       if (spineTagEnd != std::string::npos) {
         std::string tocId = attrInSpan(opf, spinePos, spineTagEnd, "toc");
         if (!tocId.empty() && manifest.count(tocId)) {
@@ -394,7 +453,7 @@ void EpubBook::parseNavToc(const std::string &navXhtml) {
   toc_.clear();
   size_t navPos = findTagLocal(navXhtml, "nav", 0);
   if (navPos == std::string::npos) return;
-  size_t navOpenEnd = navXhtml.find('>', navPos);
+  size_t navOpenEnd = tagCloseOf(navXhtml, navPos);
   if (navOpenEnd == std::string::npos) return;
   size_t navCloseStart = navXhtml.find("</nav", navOpenEnd);
   size_t navEnd = (navCloseStart == std::string::npos) ? navXhtml.size() : navCloseStart;
@@ -403,7 +462,7 @@ void EpubBook::parseNavToc(const std::string &navXhtml) {
   while (pos < navEnd) {
     size_t aPos = findTagLocal(navXhtml, "a", pos);
     if (aPos == std::string::npos || aPos >= navEnd) break;
-    size_t aTagEnd = navXhtml.find('>', aPos);
+    size_t aTagEnd = tagCloseOf(navXhtml, aPos);
     if (aTagEnd == std::string::npos || aTagEnd >= navEnd) break;
     std::string href = attrInSpan(navXhtml, aPos, aTagEnd, "href");
     size_t closeA = navXhtml.find("</a", aTagEnd);
@@ -425,7 +484,7 @@ void EpubBook::parseNcxToc(const std::string &ncx) {
   for (;;) {
     size_t npPos = findTagLocal(ncx, "navPoint", pos);
     if (npPos == std::string::npos) break;
-    size_t npOpenEnd = ncx.find('>', npPos);
+    size_t npOpenEnd = tagCloseOf(ncx, npPos);
     if (npOpenEnd == std::string::npos) break;
 
     // Bound this navPoint's own <navLabel><text> and <content> search to
@@ -438,13 +497,22 @@ void EpubBook::parseNcxToc(const std::string &ncx) {
     // rather than reaching into the NEXT navPoint's own text/content,
     // when this one is missing a <navLabel> or <content> (malformed or
     // simply degenerate input).
+    //
+    // The bound is passed as findTagLocal's `limit`, not just checked
+    // after the fact: a navPoint missing <navLabel>/<content> entirely,
+    // repeated across many navPoints (a label-less NCX), would otherwise
+    // have EVERY findTagLocal(ncx, "text"/"content", npOpenEnd) call scan
+    // all the way to EOF looking for a tag that doesn't exist anywhere in
+    // the whole document -- O(n) wasted work per navPoint, O(n^2)
+    // aggregate (measured ~514ms at 4000 label-less navPoints). Passing
+    // npBound caps each call's cost at the gap to the next navPoint.
     size_t nextNp = findTagLocal(ncx, "navPoint", npOpenEnd);
     size_t npBound = (nextNp == std::string::npos) ? ncx.size() : nextNp;
 
     std::string title;
-    size_t textPos = findTagLocal(ncx, "text", npOpenEnd);
+    size_t textPos = findTagLocal(ncx, "text", npOpenEnd, npBound);
     if (textPos != std::string::npos && textPos < npBound) {
-      size_t textOpenEnd = ncx.find('>', textPos);
+      size_t textOpenEnd = tagCloseOf(ncx, textPos);
       if (textOpenEnd != std::string::npos && textOpenEnd < npBound) {
         size_t textCloseStart = ncx.find("</text", textOpenEnd);
         size_t textEnd = (textCloseStart == std::string::npos || textCloseStart > npBound)
@@ -457,9 +525,9 @@ void EpubBook::parseNcxToc(const std::string &ncx) {
 
     std::string src;
     size_t afterContentTag = npOpenEnd;  // resume point if <content> is missing/out of bound
-    size_t contentPos = findTagLocal(ncx, "content", npOpenEnd);
+    size_t contentPos = findTagLocal(ncx, "content", npOpenEnd, npBound);
     if (contentPos != std::string::npos && contentPos < npBound) {
-      size_t contentTagEnd = ncx.find('>', contentPos);
+      size_t contentTagEnd = tagCloseOf(ncx, contentPos);
       if (contentTagEnd != std::string::npos && contentTagEnd < npBound) {
         src = attrInSpan(ncx, contentPos, contentTagEnd, "src");
         afterContentTag = contentTagEnd;

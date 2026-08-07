@@ -18,6 +18,11 @@ struct TocEntry {
 // outlive the EpubBook.
 class EpubBook {
  public:
+  EpubBook() = default;
+  ~EpubBook() { close(); }
+  EpubBook(const EpubBook &) = delete;             // zip_ is a raw mz_zip_archive:
+  EpubBook &operator=(const EpubBook &) = delete;  // a copy would double-free m_pState
+
   bool open(const uint8_t *data, size_t size);  // false = not a usable EPUB
   void close();
   const std::string &title() const { return title_; }
@@ -36,7 +41,12 @@ class EpubBook {
   int spineIndexForHref(const std::string &href) const;
   // pimpl-free: keep the mz_zip_archive in an opaque aligned buffer so the
   // header stays miniz-free (host tests include miniz.h themselves).
-  alignas(8) unsigned char zip_[128];
+  // `mutable` + zero-initialized: chapterSize() is logically const (it
+  // doesn't change what the book reports) but miniz's reader calls take a
+  // non-const mz_zip_archive*, so the buffer needs mutable rather than a
+  // const_cast at every const call site. Zero-initializing means a
+  // pre-open() or post-close() inspection never reads uninitialized bytes.
+  alignas(8) mutable unsigned char zip_[128] = {};
   bool zipOpen_ = false;
   std::string opfDir_;
   std::string title_, author_;
