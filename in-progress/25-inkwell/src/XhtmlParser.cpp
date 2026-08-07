@@ -5,8 +5,7 @@
 
 namespace Ink {
 
-// Whitespace check shared with EpubBook.cpp (declared in XhtmlParser.h).
-bool isWsChar(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
+// isWsChar is defined inline in XhtmlParser.h (shared with EpubBook.cpp).
 
 // Quote-aware tag-close scan shared with EpubBook.cpp (declared in
 // XhtmlParser.h) -- see the header comment for why the quote-awareness

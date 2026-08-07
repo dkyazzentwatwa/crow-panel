@@ -16,6 +16,8 @@ struct TocEntry {
 // Reads an EPUB from a memory buffer (the whole .epub lives in PSRAM on
 // device — 32 MB makes that the simple, robust choice). The buffer must
 // outlive the EpubBook.
+// Non-copyable and non-movable (declared dtor suppresses moves); hold as
+// direct member or unique_ptr.
 class EpubBook {
  public:
   EpubBook() = default;

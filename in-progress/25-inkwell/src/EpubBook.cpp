@@ -78,9 +78,9 @@ size_t findCharBounded(const std::string &s, char ch, size_t from, size_t limit)
 // value, truncating the span and silently dropping every attribute after
 // it -- an item losing its href this way drops out of the manifest
 // entirely, and a whole book can resolve to 0 chapters over one `>` in a
-// title attribute. Falls back to s.size() (rest-of-document) as the
-// close position when no real '>' is found, matching the old
-// find('>', ...) == npos degrade used throughout this file.
+// title attribute. Returns npos (not s.size()) when no real '>' is
+// found; callers that want the old find('>', ...) == npos degrade to
+// rest-of-document (e.g. attrValue) apply that fallback themselves.
 size_t tagCloseOf(const std::string &s, size_t tagStart) {
   return findTagCloseBounded(s, tagStart, s.size());
 }

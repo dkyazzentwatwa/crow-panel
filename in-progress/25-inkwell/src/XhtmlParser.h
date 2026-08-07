@@ -94,7 +94,9 @@ size_t decodeEntity(const std::string &s, size_t i, std::string &out);
 
 // Whitespace check (space/tab/newline/CR) shared with EpubBook's own
 // tag/attribute scans, so both files agree on what counts as whitespace.
-bool isWsChar(char c);
+// Defined here (not in the .cpp) so it stays inlinable across both
+// translation units now that it has external linkage.
+inline bool isWsChar(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
 
 // Scans forward from `from` for a tag's closing '>', treating anything
 // inside a single- or double-quoted span as inert so a quoted attribute
