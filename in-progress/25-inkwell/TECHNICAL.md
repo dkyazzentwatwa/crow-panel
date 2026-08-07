@@ -1,146 +1,104 @@
-# Inkwell — Technical Notes
+# Inkwell Reader — technical reference
 
-Under construction. `25-inkwell.ino` is a serial mock reader: the shared
-`SerialCommandRouter` + `EventLog` + `StatusReport` stack, plus the full
-text/EPUB core (`src/TxtParser`, `MarkdownParser`, `XhtmlParser`, `EpubBook`,
-`Paginator`, `InkBook`) and `LibraryStore`, which now has two backends behind
-one interface (mock samples, or a real SD-backed `/books` library — see
-below). No display or touch drivers are wired in yet.
+Proof state: **compile-ready**. Four flag combos build green for
+`esp32:esp32:esp32p4` (core 3.3.8): baseline 447 KB, `USE_INKWELL_SD`
+517 KB, `USE_DISPLAY` 577 KB, kitchen-sink 700 KB — with real library
+linkage verified under `<build-path>/libraries/` (GFX/SensorLib/SD_MMC/
+JPEGDEC/PNGdec present exactly when their flags are on). **Nothing has
+run on a real CrowPanel.** The repo-wide `compile-all` / flag-matrix
+sweeps were deliberately skipped in this round (user call); run them
+before merging to main.
 
-## Proof state
-
-**compile-ready, serial reader.** Verified with `arduino-cli compile` against
-the esp32p4 FQBN used by the rest of the repo, in BOTH flag states:
-
-```bash
-# mock backend (USE_INKWELL_SD=0, default)
-arduino-cli compile --fqbn "esp32:esp32:esp32p4:USBMode=hwcdc,PSRAM=enabled,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,UploadSpeed=921600" \
-  --libraries shared --build-path _arduino-build/25-inkwell in-progress/25-inkwell
-
-# SD backend
-arduino-cli compile --fqbn "esp32:esp32:esp32p4:USBMode=hwcdc,PSRAM=enabled,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,UploadSpeed=921600" \
-  --libraries shared --build-property compiler.cpp.extra_flags=-DUSE_INKWELL_SD=1 \
-  --build-path _arduino-build/25-inkwell-sd in-progress/25-inkwell
-```
-
-The host test suite (`scripts/test-inkwell.sh`) is at 501 checks covering the
-parsers, EPUB container walk, and paginator (`LibraryStore` itself is
-Arduino-only and isn't built by the host suite — see its header comment).
-
-**The SD backend (`USE_INKWELL_SD=1`) is compile-verified only. It has never
-been run against a real card or board** — there is no SD card in the
-environment this was written in. What's actually verified for it:
-
-- Both flag states compile green (commands above).
-- `strings`/`nm` on the SD build's `LibraryStore.cpp.o` show the SD-only
-  code path is real, not dead: `catalog.txt`, `.pos`, `/books/.inkwell`,
-  `SD_MMC`, `heap_caps_malloc`/`heap_caps_free` all appear; none of them
-  appear in the mock build's object.
-- `_arduino-build/25-inkwell-sd/libraries/` contains `SD_MMC` and `FS`; the
-  mock build's `libraries/` does not — confirming real linkage, not just a
-  green compile (the `__has_include` trap this repo has hit before).
-- Code-level review of every path (mount, scan, catalog cache, position
-  sidecars, page-index sidecars, the single whole-book PSRAM buffer).
-
-No claim beyond that. Hardware bring-up (a real card, real files, an actual
-mount) is a separate, later step and must not be inferred from this.
-
-Nothing has been uploaded to a board for either backend, and no display
-hardware behavior has been observed — pagination and page turns are only
-proven against `SerialMeasure`'s fixed per-style metrics, not real glyph
-widths.
-
-## Config
-
-`config/ProjectConfig.h`:
-
-- `USE_INKWELL_SD` — real SD card access (off by default; mock-first).
-  Consumed by `src/LibraryStore.{h,cpp}` (Task 9).
-- `INKWELL_SDMMC_1BIT` — SD_MMC 1-bit bus mode, matching every other
-  CrowPanel SD consumer in this repo.
-- `INKWELL_BOOKS_DIR` / `INKWELL_CATALOG_DIR` / `INKWELL_CATALOG_PATH` — the
-  on-card layout (FS-relative; SD_MMC prepends its own mount point).
-- `INKWELL_ROTATION` — portrait rotation for `Arduino_DSI_Display`
-  (1 = 90° CW, 3 = 90° CCW; default 1 until hardware bring-up decides)
-- `INKWELL_PAGE_W` / `INKWELL_PAGE_H` — logical portrait page geometry
-  (600 x 1024)
-
-The rotation/page-geometry flags aren't consumed yet; they exist so the
-later display task has an agreed-on place to read from.
-
-## SD backend (Task 9)
-
-On-card layout, all reached through Arduino FS (`SD_MMC`) — never C stdio,
-per this repo's "FS prepends the mount point" invariant:
+## Architecture
 
 ```
-/books/                     *.txt, *.md, *.epub (case-insensitive; dotfiles
-                             and files over 12MB are skipped at scan time)
-/books/.inkwell/catalog.txt name|size|title|author  ('|' in title/author is
-                             escaped to '/'; a filename can never contain
-                             '|' -- illegal on FAT/exFAT -- so the name field
-                             itself is never escaped)
-/books/.inkwell/<name>.pos  "spine=N off=N pct=N", rewritten on every
-                             page turn (parsed tolerantly; missing/garbled
-                             falls back to position 0, never a crash)
-/books/.inkwell/<name>.<chapter>.<layouthash>.idx
-                             page-start-offset list, one per line, written
-                             after layout (v1: write + stale-hash cleanup
-                             only; nothing reads these back yet beyond an
-                             existence check that skips a redundant write)
+TxtParser ─┐
+MarkdownParser ─┼─> InkDoc blocks ─> Paginator (TextMeasure callback) ─> pages
+XhtmlParser ─┘         ^                    ^
+EpubBook (vendored miniz) ─ InkBook facade ─┘
 ```
 
-Design decisions worth knowing before extending this:
+- The whole core above is Arduino-free and host-tested:
+  `./scripts/test-inkwell.sh` — 501 checks covering parser fixtures,
+  malformed EPUBs, pagination arithmetic (hand-counted in test comments),
+  resume offsets, and perf scaling guards (linear-vs-quadratic ratio
+  assertions with min-of-5 timing).
+- One pipeline on device: serial commands and touch taps call the same
+  action cores (`nextPage`/`gotoPermille`/…); every state change funnels
+  through `renderCurrent()` (Serial print + panel draw).
+- Layout metrics: `SerialMeasure` (host-parity tables) with all flags
+  off; `GfxMeasure` (glyph-advance cache over the vendored FreeSerif/
+  FreeMono GFXfonts, int16-saturating) when the display is up.
 
-- **One SD_MMC owner.** Inkwell is the only SD consumer in this project, so
-  `LibraryStore` owns `SD_MMC.begin()`/mount state outright (same
-  "don't re-mount a card another subsystem already brought up" guard as
-  projects 18 and 22, just with no second subsystem here to hand off to).
-- **Whole-book buffer: one at steady state, briefly two during a swap.**
-  `bookData()` keeps at most one `heap_caps_malloc(..., MALLOC_CAP_SPIRAM)`
-  buffer alive between calls, and frees the previous one only after a new
-  load has already succeeded — a failed read can never take down a book
-  that was already open. That means for the moment between "new buffer
-  loaded" and "old buffer freed", BOTH books' bytes are resident at once;
-  peak PSRAM use during a swap is roughly two books' worth, not one. This is
-  why `kMaxBookBytes` is sized at 12MB rather than a larger number (see
-  below), and `releaseBookData()` exists to drop the buffer entirely once
-  the reader goes back to the library view rather than leaving it pinned.
-  The `.ino` additionally calls `book.close()` before ever asking the
-  library for a different book's bytes, so `InkBook`/`EpubBook` (which needs
-  its buffer to outlive it, not just survive `open()` — see `InkBook.h` and
-  `EpubBook.h`) never holds a stale pointer, even momentarily.
-- **Catalog cache is a cache, not a source of truth.** It's rebuilt from
-  exactly what's registered on every scan (stale rows for removed/renamed
-  files are dropped), and a torn/corrupt catalog just makes the next scan
-  re-open every EPUB instead of failing — same self-healing story as the
-  `.pos` and `.idx` sidecars, which is why none of them use the
-  temp+rename+backup machinery `DeskStorage` (project 18) uses for its
-  index — these are all disposable caches, not user data. Title/author are
-  scrubbed (`catalogSafe()`) at the moment they're first read, not just at
-  catalog-write time, so a book's displayed metadata can't drift between the
-  scan that first parses its EPUB and a later scan that hits the cache. The
-  cache key is name+size, not a modification time (FAT's own mtime
-  resolution and Arduino FS's exposure of it aren't reliable enough to lean
-  on here) — a book edited in place without changing its byte count keeps
-  serving its old cached title/author until the file is renamed or its size
-  changes. Considered acceptable: EPUB metadata essentially never changes
-  after a file lands on the card, and a rescan is always one delete-and-
-  recopy away from picking up new metadata regardless. A rescan that finds
-  nothing changed skips rewriting the catalog file entirely (order-
-  independent comparison against what's already on disk).
-- **`kMaxBooks` is 32, `kMaxBookBytes` is 12MB** — see the comments on both
-  in `src/LibraryStore.h` for the memory reasoning: `kMaxBooks` is a
-  fixed-table cost per slot; `kMaxBookBytes` is sized so that TWO max-size
-  books (the transient swap peak above) is 24MB, leaving 8MB of the 32MB
-  PSRAM budget for everything else the app needs. 12MB remains enormous for
-  a single ebook.
+## Format subsets (degrade, never crash)
 
-## What's not here yet
+- **Markdown**: `#`–`###` headings (deeper → H3), bold/italic/mono,
+  lists (tab or 2-space nesting, depth ≤ 3), quotes, fenced code
+  (verbatim), rules, links keep text, images drop. No tables/setext/
+  entities — kept literal (see `MarkdownParser.h`'s degrade list).
+- **XHTML (EPUB chapters)**: h1–h6/p/div/li/pre/blockquote/hr/br +
+  inline styles as nesting counters; script/style consumed as raw text;
+  comments/DOCTYPE skipped; quote-aware attribute scanning; entities
+  incl. numeric (saturating, NUL dropped); everything else transparent.
+- **EPUB**: container → OPF (namespace-tolerant, attributed metadata
+  tags OK) → spine (xhtml-only, first-wins duplicates) → TOC (nav doc
+  or NCX, nested entries flattened, unresolved hrefs kept with
+  `spineIndex -1`) → cover (properties or meta). `open()` fails only on
+  unreadable zip / missing container / missing OPF. 16 MB per-entry cap
+  (`kMaxEntryBytes`); oversized chapters read as size 0 and unreadable.
 
-- Display rendering (portrait DSI path) — pages render as text to Serial
-- Touch input / page-turn UI
-- Reading page-index sidecars back for anything (out of scope for Task 9 —
-  see `LibraryStore::writePageIndex()`'s doc comment)
+## Memory model (32 MB PSRAM, ~300 KB internal DRAM free)
 
-See the design and implementation plan docs for the full task sequence.
+- Whole `.epub`/book file in one PSRAM buffer (`heap_caps_malloc`,
+  `MALLOC_CAP_SPIRAM`), single slot in `LibraryStore`; 12 MB/book cap so
+  two books always fit during the old+new swap overlap. Freed on close.
+- Chapters parse on demand; blocks + laid-out lines live in normal heap —
+  each `Line` costs ~150 B + ~3 small allocations in INTERNAL DRAM (the
+  small-alloc path never goes to PSRAM), so very long chapters are the
+  known memory risk to watch at bring-up.
+- `permille` progress is uncompressed-byte-weighted (chapter sizes from
+  zip stat, no decompression).
+
+## SD formats (all Arduino FS via SD_MMC — never C stdio)
+
+- `/books/.inkwell/catalog.txt` — `name|size|title|author` per line
+  ('|' in titles → '/'); cache key is name+size (no mtime: an in-place
+  re-export at identical byte count keeps stale metadata until renamed).
+- `<book>.pos` — `spine=N off=N pct=N`, tolerant parse, garbled → 0.
+- `<book>.<chapter>.<layouthash>.idx` — one page-start offset per line;
+  write-only in v1 (stale-hash cleanup on write; nothing reads them yet).
+- `<book>.thumb` — `uint16 w,h` + 220×300 RGB565; written the first time
+  an EPUB is opened (while its bytes are resident — grid-time decode
+  would evict the single-slot book buffer), read by the library grid.
+- exFAT cards are detected (`totalBytes()==0`) and refused with a
+  "reformat as FAT32" log, matching project 18.
+
+## Fonts
+
+Vendored Adafruit GFX FreeFonts (BSD) in `src/fonts/`, `#include
+<Adafruit_GFX.h>` line stripped per `shared/CrowPanelShared/fonts/`
+convention, included from exactly one TU (`GfxMeasure.cpp`). ASCII
+0x20–0x7E only — non-ASCII draws blank and the paginator's hard-split is
+byte-based, so multibyte text may split mid-codepoint (accepted v1
+limit). Font table: body Serif 9/12/18 pt by step; headings bold one
+size up capped at 24 pt; mono steps with body.
+
+## Hardware bring-up (in order, one flag at a time)
+
+1. `USE_DISPLAY=1` only. **First check: rotation.** The shared
+   `CrowDisplay` rotation (new in this branch) is derived from
+   Arduino_DSI_Display's address math but NOT hardware-verified: confirm
+   text reads top-to-bottom in portrait and tap all four corners; if
+   mirrored, flip `INKWELL_ROTATION` 1↔3 in `config/ProjectConfig.h`.
+   Then: page draw correctness (baseline placement is a 3/4-line-box
+   approximation), flash timing feel, tap zones.
+2. `+USE_INKWELL_SD` with a FAT32 card holding a few real books incl. a
+   large EPUB: scan time, catalog reuse on reboot, position save/load,
+   sidecar writes.
+3. Covers: open an EPUB with a JPEG cover, then one with PNG; reboot and
+   confirm the grid blits the cache.
+
+Known-unverified risk list: rotation quadrant mapping; GT911 remap
+agreement with the panel; GFX baseline placement; JPEGDEC/PNGdec decode
+paths (never executed); SD single-owner interaction if another subsystem
+ever mounts; long-chapter DRAM pressure.

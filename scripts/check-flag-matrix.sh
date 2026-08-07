@@ -197,6 +197,10 @@ ROWS=(
   # Task 9: SD-backed library (/books scan, catalog cache, positions, sidecars).
   # Display rows land with Task 11 once the touch UI exists.
   "$P25|sd|-DUSE_INKWELL_SD=1|"
+  "$P25|display|-DUSE_DISPLAY=1|GFX Library for Arduino,SensorLib"
+  "$P25|kitchen-sink|-DUSE_DISPLAY=1 -DUSE_INKWELL_SD=1|GFX Library for Arduino,SensorLib,JPEGDEC,PNGdec"
+  "$P25|display|-DUSE_DISPLAY=1|GFX Library for Arduino,SensorLib"
+  "$P25|kitchen-sink|-DUSE_DISPLAY=1 -DUSE_INKWELL_SD=1|GFX Library for Arduino,SensorLib,JPEGDEC,PNGdec"
 )
 
 echo "Flag matrix: ${#ROWS[@]} rows on $FQBN"

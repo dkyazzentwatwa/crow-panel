@@ -1,49 +1,72 @@
-# Inkwell
+# 25 — Inkwell Reader
 
-Portrait e-ink-style ebook reader for the CrowPanel Advanced 7-inch ESP32-P4.
-Under construction.
+> This is Project 25 in the CrowPanel Arduino suite: a portrait,
+> Kindle-style ebook reader with an e-ink aesthetic — on an IPS LCD that
+> is honest about imitating one.
 
-> This is Project 25 in the [CrowPanel Arduino suite](../../README.md). It
-> stays under `in-progress/` until a real reading experience is observed on a
-> panel.
+Inkwell reads **TXT, Markdown, and EPUB** books. All three formats feed one
+pipeline (`InkBook` → `Paginator`), so the serial demo, the host test
+suite, and the touch UI all exercise the same shipping code.
 
 ## Status
 
-**Serial reader, compile-ready.** The text/EPUB pipeline (TXT/Markdown/
-XHTML parsers, EPUB container walk, paginator) is wired up end to end and
-driven entirely over Serial. `LibraryStore` has two backends behind one
-interface: the default mock (three embedded sample books — one TXT, one
-Markdown exercising every supported block, one 3-chapter EPUB; positions
-don't survive a reboot) and, behind `USE_INKWELL_SD` (off by default), a
-real SD-backed `/books` library with a metadata cache and on-card reading
-positions — **compile-verified only, never run against a real card** (see
-[TECHNICAL.md](TECHNICAL.md)). Either way books page through the same
-`books` / `open` / `page` / `next` / `prev` / `goto` / `toc` / `chapter` /
-`font` / `spacing` / `margin` / `close` commands. Still no display or touch
-— pages render as plain text to Serial. The host test suite is at 501
-checks. A full walkthrough (screenshots, wiring, the actual portrait
-render) is still Task 14.
+Everything below is **compile-ready only** — nothing has run on a real
+panel yet. The serial mock (all flags off) is the fully working surface:
+three embedded sample books (a TXT short story, a Markdown feature demo,
+and a 3-chapter in-RAM EPUB) with page turns, TOC jumps, font/spacing/
+margin re-layout, and resume. The host suite proves the core:
 
-See the [technical reference](TECHNICAL.md).
+```bash
+./scripts/test-inkwell.sh   # 501 g++ checks: parsers, EPUB, paginator, facade
+```
 
-## Serial commands
+Hardware paths behind flags: `USE_DISPLAY` (portrait panel + touch UI),
+`USE_INKWELL_SD` (real `/books` library + positions + covers). See the
+[technical reference](TECHNICAL.md) for bring-up order and risks.
 
-At 115200 baud, Newline line ending:
+## Serial demo (115200, Newline)
 
-- `help` — list commands
-- `status` — reader status: open book, chapter/page, layout settings
-- `history` — recent event history
-- `books` — list the library
-- `open N` — open a library book by index
-- `page` — reprint the current page
-- `next` / `prev` — turn the page (crosses chapter boundaries)
-- `goto PCT` — jump to an approximate position (0-100)
-- `toc` — list the open book's table of contents
-- `chapter N` — jump to TOC entry N
-- `font 1-3`, `spacing 100|115|130`, `margin 32|48|64` — re-layout settings
-- `close` — save position and return to the library
+```
+> books
+library:
+0: The Lighthouse Year by  [TXT] 2659 bytes, 0% read
+1: Inkwell Markdown Sampler by  [MD] 1053 bytes, 0% read
+2: The Inkwell Sampler by Project 25 [EPUB] 2567 bytes, 0% read
+> open 2
+----------------------------------------------
+# The Blank Page
+The morning the press arrived, the whole village came ...
+-- The Inkwell Sampler · ch 1/3 · p 1/1 · 0% --
+> toc
+0: The Blank Page
+1: The Marginalia
+2: The Long Shelf
+> chapter 1
+> next
+> font 3
+> close
+```
 
-## Roadmap
+Commands: `books`, `open <n>`, `page`, `next`, `prev`, `goto <pct>`,
+`toc`, `chapter <n>`, `font 1-3`, `spacing 100|115|130`,
+`margin 32|48|64`, `close`, plus the standard `help` / `status` /
+`history`.
 
-Later tasks add a portrait DSI render path and touch page-turn UI. See the
-Inkwell design and implementation plan docs for the full sequence.
+## Touch UI (`USE_DISPLAY=1`, portrait)
+
+- **Library** — 2×2 card grid; covers appear after a book has been opened
+  once (see TECHNICAL.md); tap a card to resume where you left off.
+- **Reading** — tap right 40% next page, left 25% previous, center opens
+  the HUD (progress scrubber, Library / Contents / Aa, page-flash toggle,
+  brightness). Optional e-ink-style invert flash on page turns.
+- **Contents** — chapter list from the EPUB TOC or Markdown headings;
+  unresolved entries are greyed.
+- **Aa** — font size (3 FreeSerif steps), line spacing, margins, flash.
+
+## SD layout (`USE_INKWELL_SD=1`)
+
+```
+/books/               your .txt / .md / .epub files (FAT32 card)
+/books/.inkwell/      Inkwell's own files: catalog cache, <book>.pos
+                      positions, page-index sidecars, cover thumbs
+```

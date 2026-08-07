@@ -21,7 +21,7 @@ Each project keeps its `.ino` at the project root, flags and tuning in `config/P
 - `./scripts/compile-all.sh`: compiles every registered project against the default P4 FQBN.
 - `./scripts/check-flag-matrix.sh`: compiles every supported flag combination — the required regression gate.
 - `./scripts/upload-project.sh projects/22-cypher-boy /dev/cu.usbmodem101`: compiles and flashes in one step so the binary matches the script's FQBN and library set.
-- `./scripts/test-litego.sh --quick`, `./scripts/test-cypher-tune.sh`, `./scripts/test-cypher-desk.sh`, `python3 scripts/test-flock-catalog.py`, `python3 scripts/test-flock-protocol.py`, `./scripts/compile-flock-system.sh`: host-side tests that need no board.
+- `./scripts/test-litego.sh --quick`, `./scripts/test-cypher-tune.sh`, `./scripts/test-cypher-desk.sh`, `./scripts/test-inkwell.sh`, `python3 scripts/test-flock-catalog.py`, `python3 scripts/test-flock-protocol.py`, `./scripts/compile-flock-system.sh`: host-side tests that need no board.
 - `./scripts/build-espnow-companions.sh`, `./scripts/build-flock-bridge.sh`, `./scripts/build-flock-bw16.sh`: companion-board firmware.
 - `cd mock-api && npm install && npm start`: optional local API on port `8787`.
 
