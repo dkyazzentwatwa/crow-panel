@@ -4,9 +4,9 @@
 
 The [Elecrow CrowPanel Advanced 7-inch ESP32-P4 HMI AI Display](https://www.awin1.com/cread.php?awinmid=82721&awinaffid=2977153&ued=https%3A%2F%2Fm.elecrow.com%2Fpages%2Fshop%2Fproduct%2Fdetails%3Fid%3D208494) is a remarkably capable piece of hardware. This repository treats it like a product platform rather than a tiny demo screen.
 
-It is a collection of 20 standalone touch applications for field work, creative work, games, dashboards, and hardware experiments. The common thread is simple: give the device interfaces that feel made for a 7-inch screen.
+It is a collection of 22 standalone touch applications for field work, creative work, games, dashboards, and hardware experiments. The common thread is simple: give the device interfaces that feel made for a 7-inch screen.
 
-The result is a portable embedded desktop that can become a camera, groovebox, aircraft radar, writing desk, game system, HID keyboard, network tool, or instrument panel without changing the display hardware.
+The result is a portable embedded desktop that can become a camera, groovebox, aircraft radar, writing desk, game system, HID keyboard, network tool, ebook reader, or instrument panel without changing the display hardware.
 
 The repository is Arduino CLI only. Detailed toolchain setup, hardware notes, feature flags, wiring, companion boards, safety boundaries, and proof requirements live in [TECHNICAL.md](TECHNICAL.md).
 
@@ -45,13 +45,13 @@ The photos below show the suite running on the CrowPanel, including SurveyOps, P
 
 ## Features
 
-- 1024×600 capacitive touch interface with bespoke interfaces for every app
+- 1024×600 capacitive touch interface with bespoke interfaces for every app, landscape or portrait
 - ESP32-P4 rendering with shared display, touch, storage, audio, camera, and serial foundations
 - Onboard ESP32-C6 connectivity for Wi-Fi and BLE applications
-- SD-backed files, photos, audio, ROMs, logs, catalogs, and workspaces
+- SD-backed files, photos, audio, ROMs, books, logs, catalogs, and workspaces
 - Camera, microphone, speaker, USB HID, Bluetooth HID, GPS, NFC, LoRa, and radio-module integrations across the suite
 - Mock-first operation so many projects can be explored before optional hardware is connected
-- Host-side tests for selected game, HID, protocol, and catalog logic
+- Host-side tests for selected game, HID, protocol, catalog, and document-parsing logic
 - Honest proof labels: compile-ready, uploaded, and field-proven are kept separate
 
 ## Apps
@@ -78,6 +78,8 @@ The photos below show the suite running on the CrowPanel, including SurveyOps, P
 | Pip-Boy 3000 Terminal | Fan-prop launcher with stats, map, gallery, and audio | [20](projects/20-pipboy-terminal) |
 | Cypher Keys HID Deck | Touch keyboard, macros, launcher, and USB/Bluetooth HID | [21](projects/21-cypher-keys-hid-deck) |
 | Cypher Boy | SD-backed Game Boy, GBC, NES, and Mega Drive player | [22](projects/22-cypher-boy) |
+| Acid Glass | Touch-playable generative visual instrument with twelve procedural scenes | [in-progress/24](in-progress/24-acid-glass-visualizer) |
+| Inkwell Reader | Portrait e-ink-style ebook reader for TXT, Markdown, and EPUB | [in-progress/25](in-progress/25-inkwell) |
 
 
 ## Start here

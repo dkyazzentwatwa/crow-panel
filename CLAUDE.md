@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-An **Arduino-CLI-only** monorepo of 20 standalone sketches for the Elecrow **CrowPanel Advanced 7-inch ESP32-P4 HMI AI Display** (ESP32-P4NRW32, 16 MB flash / 32 MB PSRAM, 1024x600 MIPI-DSI + GT911 touch, onboard ESP32-C6 radio over SDIO). There is no PlatformIO, no CMake, no IDE project. Everything is driven by `scripts/*.sh` wrapping `arduino-cli`.
+An **Arduino-CLI-only** monorepo of 22 standalone sketches for the Elecrow **CrowPanel Advanced 7-inch ESP32-P4 HMI AI Display** (ESP32-P4NRW32, 16 MB flash / 32 MB PSRAM, 1024x600 MIPI-DSI + GT911 touch, onboard ESP32-C6 radio over SDIO). There is no PlatformIO, no CMake, no IDE project. Everything is driven by `scripts/*.sh` wrapping `arduino-cli`.
 
 Every project is **mock-first**: it boots into a Serial-driven demo with all hardware flags off, and each real driver path lives behind a feature flag as a compile-verified scaffold.
 
@@ -89,7 +89,7 @@ signatures/, mock-api/, docs/
 
 `scripts/project-registry.sh` is the canonical project list — add new projects there or the build scripts skip them. Note the numbering gaps (no 06, 12); that is intentional.
 
-**Two tiers, one build.** `projects/` is release-facing and documented up front in `README.md`; `in-progress/` (01, 03, 11, 16, 19) is work that is not yet featured. The registry exposes `crowpanel_release_projects`, `crowpanel_inprogress_projects`, and `crowpanel_projects` (both tiers) — build scripts iterate the last one, so in-progress projects are still compiled and flag-matrixed exactly like the rest. Numbering is shared across both tiers so a project keeps its number when it graduates; promoting one is a `git mv` plus moving its line between the two registry lists, then updating the `README.md` tables and any `docs/` paths.
+**Two tiers, one build.** `projects/` is release-facing and documented up front in `README.md`; `in-progress/` (01, 03, 11, 16, 19, 24, 25) is work that is not yet featured. The registry exposes `crowpanel_release_projects`, `crowpanel_inprogress_projects`, and `crowpanel_projects` (both tiers) — build scripts iterate the last one, so in-progress projects are still compiled and flag-matrixed exactly like the rest. Numbering is shared across both tiers so a project keeps its number when it graduates; promoting one is a `git mv` plus moving its line between the two registry lists, then updating the `README.md` tables and any `docs/` paths.
 
 `shared/CrowPanelShared/` is the spine. Include it as `#include <CrowPanelShared.h>` (umbrella header). The pieces that matter most:
 

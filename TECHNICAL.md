@@ -62,6 +62,11 @@ Environment variables honoured by the scripts: `FQBN`, `BUILD_ROOT`,
 ```bash
 ./scripts/test-cypher-keys.sh           # project 21 keyboard state machine + sound-pack parsing
 ./scripts/test-litego.sh --quick        # project 10 Go rules fixtures + AI hygiene
+./scripts/test-cypher-tune.sh           # project 09 pitch table + backing-loop tempo lock
+./scripts/test-cypher-desk.sh           # project 18 WAV/AVI/word-wrap parsers
+./scripts/test-pokedex.sh               # project 15 CSV index paging + BMP sprite decode
+./scripts/test-acid-glass.sh            # project 24 scene wrap, touch mapping, PCM validation
+./scripts/test-inkwell.sh               # project 25 TXT/Markdown/EPUB parsers, paginator, gestures
 ./scripts/compile-flock-system.sh       # project 16 catalog + protocol suites, both companions
 python3 scripts/test-flock-catalog.py
 python3 scripts/test-flock-protocol.py
@@ -135,6 +140,7 @@ projects/NN-name/
   src/                    implementation classes
   README.md               what it is and how to drive it
   TECHNICAL.md            wiring, flags, proof state
+in-progress/NN-name/      same layout; not yet featured, but built and flag-matrixed
 shared/CrowPanelShared/   Arduino library passed to every build via --libraries shared
 companions/, espnow/      helper-board firmware (not built by compile-all)
 scripts/                  the entire build system
@@ -143,8 +149,12 @@ signatures/, mock-api/    detector catalog; optional local API for Wi-Fi project
 ```
 
 `scripts/project-registry.sh` is the canonical project list — a project not listed
-there is skipped by every build script. The numbering gaps (no 06, 12) are
-intentional; those projects were retired.
+there is skipped by every build script. It exposes both tiers separately
+(`crowpanel_release_projects`, `crowpanel_inprogress_projects`) and together
+(`crowpanel_projects`, what the build scripts iterate). The numbering gaps
+(no 06, 12, 23) are intentional; those projects were retired. Numbering is shared
+across tiers, so a project keeps its number when it graduates out of
+`in-progress/`.
 
 ---
 
