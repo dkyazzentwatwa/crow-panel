@@ -143,6 +143,11 @@
 #define USE_POKEDEX_AUDIO 0
 #endif
 
+// Project 25 (Inkwell): SD book library. Mock-first, off by default.
+#ifndef USE_INKWELL_SD
+#define USE_INKWELL_SD 0
+#endif
+
 // Project 19 (Starbeam Console): native nRF24/CC1101 stack + UART co-processor
 // link + transmit-arming gate. Off by default so shared TUs and the flag matrix
 // build without the RF24 / SmartRC-CC1101 libraries or a live co-processor.

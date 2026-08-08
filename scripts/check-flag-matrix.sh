@@ -51,6 +51,7 @@ P20="projects/20-pipboy-terminal"
 P21="projects/21-cypher-keys-hid-deck"
 P22="projects/22-cypher-boy"
 P24="in-progress/24-acid-glass-visualizer"
+P25="in-progress/25-inkwell"
 
 # Rows: "<project>|<tag>|<flags>|<required libs, comma-separated>"
 ROWS=(
@@ -75,6 +76,7 @@ ROWS=(
   "$P21|baseline||"
   "$P22|baseline||"
   "$P24|baseline||"
+  "$P25|baseline||"
   "$P1|display|-DUSE_DISPLAY=1|GFX Library for Arduino,SensorLib"
   "$P2|display|-DUSE_DISPLAY=1|GFX Library for Arduino,SensorLib"
   "$P3|display|-DUSE_DISPLAY=1|GFX Library for Arduino,SensorLib"
@@ -205,6 +207,13 @@ ROWS=(
   "$P24|display-sd-audio|-DUSE_DISPLAY=1 -DACID_GLASS_TOUCH_ENABLED=1 -DACID_GLASS_USE_PPA=1 -DUSE_ACID_GLASS_SD=1 -DUSE_ACID_GLASS_AUDIO=1|GFX Library for Arduino,SensorLib"
   "$P24|display-remote|-DUSE_DISPLAY=1 -DUSE_WIFI=1 -DUSE_ACID_GLASS_REMOTE=1|GFX Library for Arduino,SensorLib"
   "$P24|full|-DUSE_DISPLAY=1 -DACID_GLASS_TOUCH_ENABLED=1 -DACID_GLASS_USE_PPA=1 -DUSE_ACID_GLASS_SD=1 -DUSE_ACID_GLASS_AUDIO=1 -DUSE_WIFI=1 -DUSE_ACID_GLASS_REMOTE=1 -DACID_GLASS_REMOTE_AUTOSTART=1|GFX Library for Arduino,SensorLib"
+  # Project 25 portrait reader: SD library (/books scan, catalog cache,
+  # positions, sidecars), display touch UI, and the kitchen sink adding
+  # JPEGDEC/PNGdec cover decode. (Merge note: the branch carried the
+  # display/kitchen-sink rows twice; deduplicated here.)
+  "$P25|sd|-DUSE_INKWELL_SD=1|"
+  "$P25|display|-DUSE_DISPLAY=1|GFX Library for Arduino,SensorLib"
+  "$P25|kitchen-sink|-DUSE_DISPLAY=1 -DUSE_INKWELL_SD=1|GFX Library for Arduino,SensorLib,JPEGDEC,PNGdec"
 )
 
 echo "Flag matrix: ${#ROWS[@]} rows on $FQBN"

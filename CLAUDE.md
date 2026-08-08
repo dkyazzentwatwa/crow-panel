@@ -36,6 +36,7 @@ Host-side tests (no board needed) and companion firmware:
 ./scripts/test-cypher-tune.sh           # project 09 pitch table + backing-loop tempo lock (g++, ~1s)
 ./scripts/test-cypher-desk.sh           # project 18 WAV/AVI/word-wrap parsers (g++, ~2s)
 ./scripts/test-cypher-desk.sh clip.avi  # run the shipping demuxer over a real file
+./scripts/test-inkwell.sh               # project 25 parsers + EPUB + paginator (g++, ~5s)
 ./scripts/compile-flock-system.sh       # Flock catalog checks + protocol fixtures + both companions
 python3 scripts/test-flock-catalog.py   # one catalog/policy suite on its own
 python3 scripts/test-flock-protocol.py  # one UART/session edge-case suite on its own

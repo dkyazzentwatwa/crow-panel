@@ -24,6 +24,8 @@ LIBRARIES=(
   "RF24"                 # optional nRF24-style module in the wireless socket
   "NimBLE-Arduino"       # generic ESP32 Cypher Flock BLE detector companion
   "TinyGPSPlus"          # USE_GPS_DRIVER - NMEA parsing for project 13 SurveyOps
+  "JPEGDEC"              # Project 25 Inkwell EPUB cover thumbnails (JPEG)
+  "PNGdec"               # Project 25 Inkwell EPUB cover thumbnails (PNG)
   # Pinned deliberately: 2.5.7 is the compile-verified version, but the registry
   # now offers 3.0.2 - a major bump that nothing here has built against. An
   # unpinned install would hand a fresh clone untested code while the flag matrix
