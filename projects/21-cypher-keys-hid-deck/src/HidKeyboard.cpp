@@ -44,11 +44,16 @@ const KeyDefinition kLetters2[] = {
     {"V", 'v', kRoleText, 0, 10}, {"B", 'b', kRoleText, 0, 10},
     {"N", 'n', kRoleText, 0, 10}, {"M", 'm', kRoleText, 0, 10},
     {"BACK", kKeyBackspace, kRoleSpecial, 0, 15}};
+// The arrows are a flat four-key cluster, < ^ v >, not just left/right: a
+// terminal is the deck's main workload and shell history is Up/Down. They cost
+// SPACE a little weight rather than a row of their own.
 const KeyDefinition kLetters3[] = {
     {"123", 0, kRoleSymbols, 0, 14}, {"CTRL", 0, kRoleMod, kModCtrl, 12},
     {"OPT", 0, kRoleMod, kModOpt, 12}, {"CMD", 0, kRoleMod, kModCmd, 12},
-    {"SPACE", ' ', kRoleText, 0, 34}, {"<", kKeyLeftArrow, kRoleSpecial, 0, 12},
-    {">", kKeyRightArrow, kRoleSpecial, 0, 12},
+    {"SPACE", ' ', kRoleText, 0, 28}, {"<", kKeyLeftArrow, kRoleSpecial, 0, 11},
+    {"^", kKeyUpArrow, kRoleSpecial, 0, 11},
+    {"v", kKeyDownArrow, kRoleSpecial, 0, 11},
+    {">", kKeyRightArrow, kRoleSpecial, 0, 11},
     {"RETURN", kKeyReturn, kRoleSpecial, 0, 18}};
 
 const KeyDefinition kSymbols0[] = {
@@ -71,9 +76,11 @@ const KeyDefinition kSymbols2[] = {
     {"BACK", kKeyBackspace, kRoleSpecial, 0, 15}};
 const KeyDefinition kSymbols3[] = {
     {"ABC", 0, kRoleSymbols, 0, 14}, {"ESC", kKeyEsc, kRoleSpecial, 0, 12},
-    {"SPACE", ' ', kRoleText, 0, 34}, {"TAB", kKeyTab, kRoleSpecial, 0, 12},
-    {"<", kKeyLeftArrow, kRoleSpecial, 0, 12},
-    {">", kKeyRightArrow, kRoleSpecial, 0, 12},
+    {"SPACE", ' ', kRoleText, 0, 30}, {"TAB", kKeyTab, kRoleSpecial, 0, 12},
+    {"<", kKeyLeftArrow, kRoleSpecial, 0, 11},
+    {"^", kKeyUpArrow, kRoleSpecial, 0, 11},
+    {"v", kKeyDownArrow, kRoleSpecial, 0, 11},
+    {">", kKeyRightArrow, kRoleSpecial, 0, 11},
     {"RETURN", kKeyReturn, kRoleSpecial, 0, 18}};
 
 struct KeyboardRow {
@@ -86,12 +93,12 @@ KeyboardRow rowAt(bool symbols, uint8_t row) {
     if (row == 0) return {kLetters0, 10};
     if (row == 1) return {kLetters1, 9};
     if (row == 2) return {kLetters2, 9};
-    return {kLetters3, 8};
+    return {kLetters3, 10};
   }
   if (row == 0) return {kSymbols0, 10};
   if (row == 1) return {kSymbols1, 10};
   if (row == 2) return {kSymbols2, 9};
-  return {kSymbols3, 7};
+  return {kSymbols3, 9};
 }
 
 // Key ids pack the row and the index within it: row * 16 + keyIndex. 16 is a

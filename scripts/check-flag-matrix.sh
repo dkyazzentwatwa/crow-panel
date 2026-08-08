@@ -50,6 +50,7 @@ P19="in-progress/19-starbeam-console"
 P20="projects/20-pipboy-terminal"
 P21="projects/21-cypher-keys-hid-deck"
 P22="projects/22-cypher-boy"
+P24="in-progress/24-acid-glass-visualizer"
 
 # Rows: "<project>|<tag>|<flags>|<required libs, comma-separated>"
 ROWS=(
@@ -73,6 +74,7 @@ ROWS=(
   "$P20|baseline||"
   "$P21|baseline||"
   "$P22|baseline||"
+  "$P24|baseline||"
   "$P1|display|-DUSE_DISPLAY=1|GFX Library for Arduino,SensorLib"
   "$P2|display|-DUSE_DISPLAY=1|GFX Library for Arduino,SensorLib"
   "$P3|display|-DUSE_DISPLAY=1|GFX Library for Arduino,SensorLib"
@@ -192,6 +194,17 @@ ROWS=(
   "$P22|nes|-DUSE_NES_CORE=1|"
   "$P22|nes-full|-DUSE_DISPLAY=1 -DUSE_GB_SD=1 -DUSE_GB_AUDIO=1 -DUSE_NES_CORE=1|GFX Library for Arduino,SensorLib"
   "$P22|all-systems|-DUSE_DISPLAY=1 -DUSE_GB_SD=1 -DUSE_GB_AUDIO=1 -DUSE_GENESIS_CORE=1 -DUSE_NES_CORE=1|GFX Library for Arduino,SensorLib"
+  # Project 24 renders a 256x150 RGB565 surface and uses the P4 PPA for an
+  # exact 4x scale into the panel framebuffer. SD audio and browser control are
+  # separate rows so hardware bring-up can add one service at a time.
+  "$P24|display-demo|-DUSE_DISPLAY=1|GFX Library for Arduino,SensorLib"
+  "$P24|display-ppa|-DUSE_DISPLAY=1 -DACID_GLASS_USE_PPA=1|GFX Library for Arduino,SensorLib"
+  "$P24|display-touch-ppa|-DUSE_DISPLAY=1 -DACID_GLASS_TOUCH_ENABLED=1 -DACID_GLASS_USE_PPA=1|GFX Library for Arduino,SensorLib"
+  "$P24|display-sd|-DUSE_DISPLAY=1 -DACID_GLASS_TOUCH_ENABLED=1 -DACID_GLASS_USE_PPA=1 -DUSE_ACID_GLASS_SD=1|GFX Library for Arduino,SensorLib"
+  "$P24|sd-audio|-DUSE_ACID_GLASS_SD=1 -DUSE_ACID_GLASS_AUDIO=1|"
+  "$P24|display-sd-audio|-DUSE_DISPLAY=1 -DACID_GLASS_TOUCH_ENABLED=1 -DACID_GLASS_USE_PPA=1 -DUSE_ACID_GLASS_SD=1 -DUSE_ACID_GLASS_AUDIO=1|GFX Library for Arduino,SensorLib"
+  "$P24|display-remote|-DUSE_DISPLAY=1 -DUSE_WIFI=1 -DUSE_ACID_GLASS_REMOTE=1|GFX Library for Arduino,SensorLib"
+  "$P24|full|-DUSE_DISPLAY=1 -DACID_GLASS_TOUCH_ENABLED=1 -DACID_GLASS_USE_PPA=1 -DUSE_ACID_GLASS_SD=1 -DUSE_ACID_GLASS_AUDIO=1 -DUSE_WIFI=1 -DUSE_ACID_GLASS_REMOTE=1 -DACID_GLASS_REMOTE_AUTOSTART=1|GFX Library for Arduino,SensorLib"
 )
 
 echo "Flag matrix: ${#ROWS[@]} rows on $FQBN"

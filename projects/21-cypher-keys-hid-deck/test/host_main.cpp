@@ -90,14 +90,16 @@ const Cell kLetters0[] = {{10}, {10}, {10}, {10}, {10},
                           {10}, {10}, {10}, {10}, {10}};
 const Cell kLetters1[] = {{10}, {10}, {10}, {10}, {10}, {10}, {10}, {10}, {10}};
 const Cell kLetters2[] = {{15}, {10}, {10}, {10}, {10}, {10}, {10}, {10}, {15}};
-const Cell kLetters3[] = {{14}, {12}, {12}, {12}, {34}, {12}, {12}, {18}};
+const Cell kLetters3[] = {{14}, {12}, {12}, {12}, {28},
+                          {11}, {11}, {11}, {11}, {18}};
 
 const Cell kSymbols0[] = {{10}, {10}, {10}, {10}, {10},
                           {10}, {10}, {10}, {10}, {10}};
 const Cell kSymbols1[] = {{10}, {10}, {10}, {10}, {10},
                           {10}, {10}, {10}, {10}, {10}};
 const Cell kSymbols2[] = {{15}, {10}, {10}, {10}, {10}, {10}, {10}, {10}, {15}};
-const Cell kSymbols3[] = {{14}, {12}, {34}, {12}, {12}, {12}, {18}};
+const Cell kSymbols3[] = {{14}, {12}, {30}, {12}, {11},
+                          {11}, {11}, {11}, {18}};
 
 struct Row {
   const Cell *cells;
@@ -109,12 +111,12 @@ Row rowAt(bool symbols, uint8_t row) {
     if (row == 0) return {kLetters0, 10};
     if (row == 1) return {kLetters1, 9};
     if (row == 2) return {kLetters2, 9};
-    return {kLetters3, 8};
+    return {kLetters3, 10};
   }
   if (row == 0) return {kSymbols0, 10};
   if (row == 1) return {kSymbols1, 10};
   if (row == 2) return {kSymbols2, 9};
-  return {kSymbols3, 7};
+  return {kSymbols3, 9};
 }
 
 struct KeyRef {
@@ -134,10 +136,17 @@ const KeyRef kKeyOpt = {3, 2};
 const KeyRef kKeyCmd = {3, 3};
 const KeyRef kKeySpace = {3, 4};
 const KeyRef kKeyLeft = {3, 5};
-const KeyRef kKeyRet = {3, 7};
+const KeyRef kKeyUp = {3, 6};
+const KeyRef kKeyDown = {3, 7};
+const KeyRef kKeyRight = {3, 8};
+const KeyRef kKeyRet = {3, 9};
 // Symbols layer.
 const KeyRef kKeyOne = {0, 0};
 const KeyRef kKeyAbc = {3, 0};
+// The symbols bottom row has no CTRL/OPT/CMD, so its arrow cluster sits two
+// slots earlier than the letters layer's.
+const KeyRef kSymKeyUp = {3, 5};
+const KeyRef kSymKeyDown = {3, 6};
 
 void centerOf(bool symbols, KeyRef k, int16_t &cx, int16_t &cy) {
   Row row = rowAt(symbols, k.row);
@@ -358,6 +367,37 @@ void testRepeat() {
   expect("LEFT press sends the left arrow",
          left.ev.send && left.ev.key == kKeyLeftArrow);
   kb.releaseKey(left.id);
+
+  // Up/Down carry shell history, so they matter as much as Left/Right and must
+  // repeat the same way. The cluster is < ^ v > in BOTH layers.
+  Press up = press(kb, kKeyUp, "UP");
+  expect("UP press sends the up arrow", up.ev.send && up.ev.key == kKeyUpArrow);
+  expect("UP auto-repeats while held", kb.repeats(up.id));
+  kb.releaseKey(up.id);
+  Press down = press(kb, kKeyDown, "DOWN");
+  expect("DOWN press sends the down arrow",
+         down.ev.send && down.ev.key == kKeyDownArrow);
+  expect("DOWN auto-repeats while held", kb.repeats(down.id));
+  kb.releaseKey(down.id);
+  Press right = press(kb, kKeyRight, "RIGHT");
+  expect("RIGHT press sends the right arrow",
+         right.ev.send && right.ev.key == kKeyRightArrow);
+  kb.releaseKey(right.id);
+
+  // The same cluster is in the symbols layer too - so a terminal user does not
+  // lose Up/Down the moment they reach for a digit. Different indices: that row
+  // has no CTRL/OPT/CMD, so the arrows sit two slots earlier.
+  Press toSym = press(kb, kKey123, "123");
+  kb.releaseKey(toSym.id);
+  Press symUp = press(kb, kSymKeyUp, "sym-UP");
+  Press symDown = press(kb, kSymKeyDown, "sym-DOWN");
+  expect("the symbols layer carries the same up/down arrows",
+         kb.symbols() && symUp.ev.send && symUp.ev.key == kKeyUpArrow &&
+             symDown.ev.send && symDown.ev.key == kKeyDownArrow);
+  kb.releaseKey(symUp.id);
+  kb.releaseKey(symDown.id);
+  Press toAbc = press(kb, kKeyAbc, "ABC");
+  kb.releaseKey(toAbc.id);
 
   Press c = press(kb, kKeyC, "C");
   expect("letters never auto-repeat", !kb.repeats(c.id));
@@ -849,12 +889,12 @@ void testKeySoundClassAndRow() {
              kb.keySoundRow(HidKeyboard::kNoKey) == 0);
 
   // Symbols layer: BACK / RETURN / SPACE keep their classes even though the row
-  // is packed differently (SPACE at index 2, RETURN at index 6), and the layer's
+  // is packed differently (SPACE at index 2, RETURN at index 8), and the layer's
   // own extra keys (ESC, TAB) are generic.
   Press sym = press(kb, kKey123, "123");
   (void)sym;
   expect("class: the symbols layer still classes RETURN and SPACE",
-         kb.symbols() && kb.keySoundClass((int16_t)(3 * 16 + 6)) == kClassEnter &&
+         kb.symbols() && kb.keySoundClass((int16_t)(3 * 16 + 8)) == kClassEnter &&
              kb.keySoundClass((int16_t)(3 * 16 + 2)) == kClassSpace);
   expect("class: the symbols layer's BACK is still Backspace",
          kb.keySoundClass(backId) == kClassBackspace);
@@ -867,7 +907,7 @@ void testKeySoundClassAndRow() {
   expect("class: ESC and TAB are generic",
          kb.keySoundClass((int16_t)(3 * 16 + 1)) == kClassGeneric &&
              kb.keySoundClass((int16_t)(3 * 16 + 3)) == kClassGeneric);
-  // A stale id from the other layer (letters RETURN is index 7, which the
+  // A stale id from the other layer (letters RETURN is index 9, which the
   // symbols row does not have) classifies as generic rather than misfiring.
   expect("class: a stale cross-layer id falls back to generic",
          kb.keySoundClass(expectedId(kKeyRet)) == kClassGeneric);
